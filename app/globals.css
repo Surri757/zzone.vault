@@ -346,6 +346,32 @@ section[id] {
 /* Keep utilities last so component-level responsive classes can refine these hooks. */
 @tailwind utilities;
 
+/* Operational views favor legibility over maximum density. */
+.ink-interface .text-\[9px\] {
+  font-size: 0.6875rem;
+  line-height: 1.35;
+}
+
+.ink-interface .text-\[10px\] {
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.ink-interface .text-\[11px\] {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.workspace-view .text-xs {
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.workspace-view .text-sm {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
 @media (min-width: 640px) {
   :root {
     --ink-header-offset: 4.75rem;

@@ -149,6 +149,12 @@ function numberValue(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function marketNumberValue(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const parsed = Number(String(value ?? "").replace(/[$,]/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function cnTimestamp(raw: unknown, minute: boolean) {
   const value = String(raw ?? "").trim();
   if (minute && /^\d{12}$/.test(value)) {
@@ -350,6 +356,81 @@ async function fetchYahooBars(instrument: StockInstrument, config: PeriodConfig)
   return normalized;
 }
 
+async function fetchNasdaqDailyBars(
+  instrument: StockInstrument,
+  config: PeriodConfig
+) {
+  if (config.interval !== "1d") {
+    throw new Error("Nasdaq historical fallback supports daily bars only");
+  }
+
+  const fromDate = new Date();
+  fromDate.setUTCMonth(fromDate.getUTCMonth() - 18);
+  const url = new URL(
+    `https://api.nasdaq.com/api/quote/${encodeURIComponent(instrument.symbol)}/historical`
+  );
+  url.searchParams.set("assetclass", "stocks");
+  url.searchParams.set("fromdate", fromDate.toISOString().slice(0, 10));
+  url.searchParams.set("limit", String(config.limit));
+
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json,text/plain,*/*",
+      Origin: "https://www.nasdaq.com",
+      Referer: "https://www.nasdaq.com/",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Nasdaq historical HTTP ${response.status}`);
+
+  const payload = (await response.json()) as {
+    data?: {
+      tradesTable?: {
+        rows?: Array<{
+          date?: string;
+          close?: string;
+          volume?: string;
+          open?: string;
+          high?: string;
+          low?: string;
+        }>;
+      };
+    } | null;
+  };
+  const rows = payload.data?.tradesTable?.rows ?? [];
+  const bars = rows.flatMap((row): OHLCBar[] => {
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(row.date ?? "");
+    const open = marketNumberValue(row.open);
+    const high = marketNumberValue(row.high);
+    const low = marketNumberValue(row.low);
+    const close = marketNumberValue(row.close);
+    const volume = marketNumberValue(row.volume) ?? 0;
+    if (!match || open === null || high === null || low === null || close === null) {
+      return [];
+    }
+    const [, month, day, year] = match;
+    return [
+      {
+        t: `${year}-${month}-${day}T12:00:00Z`,
+        o: open,
+        h: high,
+        l: low,
+        c: close,
+        v: volume,
+      },
+    ];
+  });
+
+  const normalized = normalizeBars(bars, config.limit);
+  if (normalized.length === 0) {
+    throw new Error("Nasdaq historical returned no valid OHLCV bars");
+  }
+  return normalized;
+}
+
 function eastmoneyTimestamp(raw: string, interval: StockBarInterval) {
   if (
     (interval === "1m" || interval === "5m") &&
@@ -473,6 +554,15 @@ async function fetchFreshBars(
     }
   }
 
+  if (bars.length === 0 && instrument.market === "US" && config.interval === "1d") {
+    try {
+      bars = await fetchNasdaqDailyBars(instrument, config);
+      source = "nasdaq";
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   const yahooPreservesPriceBasis =
     instrument.market === "US" || period === "intraday" || period === "five-day";
   if (bars.length === 0 && yahooPreservesPriceBasis) {
@@ -501,7 +591,9 @@ async function fetchFreshBars(
       ? "TENCENT PUBLIC"
       : source === "eastmoney"
         ? "EASTMONEY PUBLIC"
-        : "YAHOO PUBLIC";
+        : source === "nasdaq"
+          ? "NASDAQ PUBLIC"
+          : "YAHOO PUBLIC";
   const adjustment =
     instrument.market === "CN" && (period === "daily" || period === "monthly")
       ? "qfq"
@@ -543,7 +635,9 @@ async function fetchFreshBars(
         ? "Tencent public OHLCV feed; timing, availability and redistribution rights are not guaranteed."
         : source === "eastmoney"
           ? "Eastmoney public OHLCV feed; timing, availability and redistribution rights are not guaranteed."
-          : "Yahoo public OHLCV feed; timing, availability and redistribution rights are not guaranteed.",
+          : source === "nasdaq"
+            ? "Nasdaq public historical feed; timing, availability and redistribution rights are not guaranteed."
+            : "Yahoo public OHLCV feed; timing, availability and redistribution rights are not guaranteed.",
   };
 }
 

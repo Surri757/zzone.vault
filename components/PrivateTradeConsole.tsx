@@ -7,6 +7,7 @@ import {
   BriefcaseBusiness,
   CandlestickChart,
   FlaskConical,
+  GitCompareArrows,
   LayoutGrid,
   Menu,
   Radar,
@@ -29,6 +30,7 @@ import { useQuoteStream } from "@/hooks/useQuoteStream";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { GlobalDataHub } from "@/components/GlobalDataHub";
 import { SectorWorkspace } from "@/components/SectorWorkspace";
+import { PeerComparisonWorkspace } from "@/components/PeerComparisonWorkspace";
 import { PortfolioCore } from "@/components/PortfolioCore";
 import { StrategyLab } from "@/components/StrategyLab";
 import { CommandLayer } from "@/components/CommandLayer";
@@ -51,6 +53,7 @@ type WorkspaceView =
   | "overview"
   | "stocks"
   | "sectors"
+  | "peers"
   | "portfolio"
   | "strategies"
   | "trade";
@@ -67,6 +70,7 @@ const workspaceNavigation: WorkspaceNavigationItem[] = [
   { id: "overview", label: "观势", detail: "OVERVIEW", icon: BarChart3, mode: "LIVE" },
   { id: "stocks", label: "个股", detail: "OHLCV", icon: CandlestickChart, mode: "LIVE" },
   { id: "sectors", label: "板块", detail: "STRENGTH", icon: LayoutGrid, mode: "LIVE" },
+  { id: "peers", label: "对标", detail: "PEERS", icon: GitCompareArrows, mode: "LIVE" },
   { id: "portfolio", label: "持仓", detail: "PORTFOLIO", icon: BriefcaseBusiness, mode: "SIM" },
   { id: "strategies", label: "策略", detail: "RESEARCH", icon: FlaskConical, mode: "SIM" },
   { id: "trade", label: "指令", detail: "SANDBOX", icon: Send, mode: "SIM" }
@@ -529,6 +533,14 @@ export function PrivateTradeConsole() {
               <div className="workspace-view pt-[4.25rem]">
                 <ErrorBoundary section="板块强弱工作区">
                   <SectorWorkspace />
+                </ErrorBoundary>
+              </div>
+            ) : null}
+
+            {activeView === "peers" ? (
+              <div className="workspace-view pt-[4.25rem]">
+                <ErrorBoundary section="跨市场对标工作区">
+                  <PeerComparisonWorkspace />
                 </ErrorBoundary>
               </div>
             ) : null}
