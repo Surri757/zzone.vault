@@ -356,6 +356,94 @@ async function fetchYahooBars(instrument: StockInstrument, config: PeriodConfig)
   return normalized;
 }
 
+async function fetchNasdaqChartBars(
+  instrument: StockInstrument,
+  config: PeriodConfig
+) {
+  if (config.interval !== "1m" && config.interval !== "5m") {
+    throw new Error("Nasdaq chart fallback supports 1m/5m intraday bars only");
+  }
+
+  const url = new URL(
+    `https://api.nasdaq.com/api/quote/${encodeURIComponent(instrument.symbol)}/chart`
+  );
+  url.searchParams.set("assetclass", "stocks");
+
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json,text/plain,*/*",
+      Origin: "https://www.nasdaq.com",
+      Referer: "https://www.nasdaq.com/",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Nasdaq chart HTTP ${response.status}`);
+
+  const payload = (await response.json()) as {
+    data?: {
+      chart?: Array<{
+        x: number;
+        y: number;
+        z?: { dateTime?: string; value?: string };
+      }>;
+    } | null;
+  };
+  const points = payload.data?.chart ?? [];
+  if (points.length === 0) throw new Error("Nasdaq chart returned no data points");
+
+  // Nasdaq chart timestamps are epoch milliseconds in US Eastern time.
+  // Build 1-minute OHLCV bars from the raw price series.
+  const oneMinuteBars: OHLCBar[] = points.map((point) => ({
+    t: new Date(point.x).toISOString(),
+    o: point.y,
+    h: point.y,
+    l: point.y,
+    c: point.y,
+    v: 0,
+  }));
+
+  if (config.interval === "1m") {
+    const normalized = normalizeBars(oneMinuteBars, config.limit);
+    if (normalized.length === 0) throw new Error("Nasdaq chart produced no 1m OHLCV bars");
+    return normalized;
+  }
+
+  // config.interval === "5m": aggregate 1-minute points into 5-minute buckets.
+  const bucketMs = 5 * 60_000;
+  const buckets = new Map<number, OHLCBar>();
+  for (const bar of oneMinuteBars) {
+    const epoch = Date.parse(bar.t);
+    if (!Number.isFinite(epoch)) continue;
+    const bucketKey = Math.floor(epoch / bucketMs) * bucketMs;
+    const existing = buckets.get(bucketKey);
+    if (existing) {
+      existing.h = Math.max(existing.h, bar.h);
+      existing.l = Math.min(existing.l, bar.l);
+      existing.c = bar.c;
+      existing.v = 0;
+    } else {
+      buckets.set(bucketKey, {
+        t: new Date(bucketKey).toISOString(),
+        o: bar.o,
+        h: bar.h,
+        l: bar.l,
+        c: bar.c,
+        v: 0,
+      });
+    }
+  }
+
+  const fiveMinuteBars = [...buckets.values()].sort(
+    (left, right) => Date.parse(left.t) - Date.parse(right.t)
+  );
+  const normalized = normalizeBars(fiveMinuteBars, config.limit);
+  if (normalized.length === 0) throw new Error("Nasdaq chart produced no 5m OHLCV bars");
+  return normalized;
+}
+
 async function fetchNasdaqDailyBars(
   instrument: StockInstrument,
   config: PeriodConfig
@@ -554,12 +642,21 @@ async function fetchFreshBars(
     }
   }
 
-  if (bars.length === 0 && instrument.market === "US" && config.interval === "1d") {
-    try {
-      bars = await fetchNasdaqDailyBars(instrument, config);
-      source = "nasdaq";
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+  if (bars.length === 0 && instrument.market === "US") {
+    if (config.interval === "1d") {
+      try {
+        bars = await fetchNasdaqDailyBars(instrument, config);
+        source = "nasdaq";
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    } else if (config.interval === "1m" || config.interval === "5m") {
+      try {
+        bars = await fetchNasdaqChartBars(instrument, config);
+        source = "nasdaq";
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
