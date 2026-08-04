@@ -100,6 +100,30 @@ const stockLenses: Array<{
   { id: "depth", label: "盘口", detail: "ORDER BOOK", icon: BookOpen }
 ];
 
+// Decide whether a search box value is "ready to search".
+//
+// Chinese IME workflow: a user types pinyin letters (m-a-o) and only commits
+// them to a character (茅) at the end. Mid-composition the box holds a mix of
+// already-committed Chinese and raw Latin pinyin. We must NOT search then — it
+// would fire on junk letters, waste requests, and return wrong matches.
+//
+// Rules (per the user's spec):
+//   - has Chinese AND has Latin letters  → NOT searchable (pinyin still typing)
+//   - has Chinese, no Latin              → searchable (pure Chinese committed)
+//   - no Chinese                         → searchable (ticker / English / digits,
+//                                           search on every keystroke is desired)
+//   - empty / whitespace only            → searchable (clears back to full list)
+const CJK_PATTERN = /[\u4e00-\u9fff]/u;
+const LATIN_PATTERN = /[A-Za-z]/u;
+
+function isSearchableQuery(value: string): boolean {
+  if (value.trim().length === 0) return true;
+  const hasChinese = CJK_PATTERN.test(value);
+  const hasLatin = LATIN_PATTERN.test(value);
+  // Mixed Chinese + Latin means pinyin composition is in progress.
+  return !(hasChinese && hasLatin);
+}
+
 function isStockMarketOpen(market: StockMarket, date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: market === "CN" ? "Asia/Shanghai" : "America/New_York",
@@ -249,6 +273,11 @@ export function GlobalDataHub({
   useEffect(() => {
     if (!urlStateReady) return;
     if (searchInput.trim() === query) return;
+    // While Chinese pinyin is mid-composition the box holds mixed Chinese +
+    // Latin letters. Suppress the search until the value is searchable — once
+    // the user commits the last character it becomes pure Chinese and the
+    // effect re-runs, firing the search automatically.
+    if (!isSearchableQuery(searchInput)) return;
 
     const timer = window.setTimeout(() => {
       const nextQuery = searchInput.trim();
@@ -265,7 +294,7 @@ export function GlobalDataHub({
         },
         "replace"
       );
-    }, 300);
+    }, 400);
 
     return () => window.clearTimeout(timer);
   }, [query, searchInput, urlStateReady]);
