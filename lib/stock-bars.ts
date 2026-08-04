@@ -4,7 +4,7 @@ export type StockChartPeriod = "intraday" | "five-day" | "daily" | "monthly";
 
 export type StockBarInterval = "1m" | "5m" | "1d" | "1mo";
 
-export type StockBarSource = "tencent" | "eastmoney" | "nasdaq" | "yahoo";
+export type StockBarSource = "tencent" | "eastmoney" | "nasdaq" | "yahoo" | "sina";
 
 export type StockMarketState = "OPEN" | "DELAYED" | "BREAK" | "CLOSED";
 
