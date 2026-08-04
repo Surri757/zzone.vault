@@ -112,6 +112,9 @@ function marketState(
 }
 
 function tencentSymbol(instrument: StockInstrument) {
+  if (instrument.market === "US") {
+    return `us${instrument.symbol.replaceAll("^", "-").replaceAll("/", ".")}`;
+  }
   if (instrument.exchange === "XSHG") return `sh${instrument.symbol}`;
   if (instrument.exchange === "XBSE") return `bj${instrument.symbol}`;
   return `sz${instrument.symbol}`;
@@ -167,6 +170,15 @@ function cnTimestamp(raw: unknown, minute: boolean) {
   return "";
 }
 
+function tencentDailyTimestamp(raw: unknown, market: StockMarket) {
+  const value = String(raw ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return "";
+  // Noon UTC keeps the exchange trading date stable across CN and US time zones,
+  // matching the Eastmoney daily contract so marketState is consistent cross-source.
+  if (market === "US") return `${value}T12:00:00Z`;
+  return `${value}T15:00:00+08:00`;
+}
+
 function isRegularCnMinute(timestamp: string) {
   const match = timestamp.match(/T(\d{2}):(\d{2}):/);
   if (!match) return false;
@@ -174,7 +186,11 @@ function isRegularCnMinute(timestamp: string) {
   return (minutes >= 570 && minutes <= 690) || (minutes >= 780 && minutes <= 900);
 }
 
-function parseTencentRows(rows: unknown, interval: StockBarInterval) {
+function parseTencentRows(
+  rows: unknown,
+  interval: StockBarInterval,
+  market: StockMarket
+) {
   if (!Array.isArray(rows)) return [];
 
   const minute = interval === "1m" || interval === "5m";
@@ -182,7 +198,9 @@ function parseTencentRows(rows: unknown, interval: StockBarInterval) {
   for (const rawRow of rows) {
     if (!Array.isArray(rawRow) || rawRow.length < 6) continue;
 
-    const rawTimestamp = cnTimestamp(rawRow[0], minute);
+    const rawTimestamp = minute
+      ? cnTimestamp(rawRow[0], true)
+      : tencentDailyTimestamp(rawRow[0], market);
     // Tencent's one-minute series includes the 09:30 opening-auction point,
     // while five-minute bars are labelled by bucket end (09:35 = 09:30-09:35).
     // Only the five-minute series needs shifting to the interval-start contract.
@@ -207,8 +225,17 @@ function parseTencentRows(rows: unknown, interval: StockBarInterval) {
       continue;
     }
 
+    // Tencent emits zero high/low for illiquid US issues (e.g. low-volume ETNs)
+    // where only a close prints. A zero high/low alongside a non-zero close is a
+    // stale quote, not a real bar — drop it rather than draw a flat-zero candle.
+    if (close > 0 && (high === 0 || low === 0)) {
+      continue;
+    }
+
     // Tencent reports A-share volume in lots; the public chart contract uses shares.
-    bars.push({ t: timestamp, o: open, h: high, l: low, c: close, v: volume * 100 });
+    // US rows are already share-denominated and must not be scaled.
+    const scaledVolume = market === "US" ? volume : volume * 100;
+    bars.push({ t: timestamp, o: open, h: high, l: low, c: close, v: scaledVolume });
   }
   return bars;
 }
@@ -261,6 +288,9 @@ function limitTradingSessions(
 async function fetchTencentBars(instrument: StockInstrument, config: PeriodConfig) {
   const symbol = tencentSymbol(instrument);
   const minute = config.tencentType === "m1" || config.tencentType === "m5";
+  // Tencent requires the qfq flag for daily/monthly series — without it the US
+  // endpoint returns "bad params". A-share history is forward-adjusted (qfq);
+  // US history is shallow regardless, but the flag is mandatory for a 200 response.
   const url = minute
     ? `https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=${symbol},${config.tencentType},,${config.limit}`
     : `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},${config.tencentType},,,${config.limit},qfq`;
@@ -284,7 +314,10 @@ async function fetchTencentBars(instrument: StockInstrument, config: PeriodConfi
   const rows = minute
     ? node[config.tencentType]
     : node[`qfq${config.tencentType}`] ?? node[config.tencentType];
-  const bars = normalizeBars(parseTencentRows(rows, config.interval), config.limit);
+  const bars = normalizeBars(
+    parseTencentRows(rows, config.interval, instrument.market),
+    config.limit
+  );
   if (bars.length === 0) throw new Error("Tencent K-line returned no OHLCV bars");
   return bars;
 }
@@ -448,18 +481,21 @@ async function fetchNasdaqDailyBars(
   instrument: StockInstrument,
   config: PeriodConfig
 ) {
-  if (config.interval !== "1d") {
-    throw new Error("Nasdaq historical fallback supports daily bars only");
+  if (config.interval !== "1d" && config.interval !== "1mo") {
+    throw new Error("Nasdaq historical fallback supports daily/monthly bars only");
   }
 
+  // Daily needs ~1 year; monthly aggregation needs the full 10-year window so
+  // it can produce the 120 monthly bars the chart contract asks for.
+  const lookbackYears = config.interval === "1mo" ? 10 : 2;
   const fromDate = new Date();
-  fromDate.setUTCMonth(fromDate.getUTCMonth() - 18);
+  fromDate.setUTCFullYear(fromDate.getUTCFullYear() - lookbackYears);
   const url = new URL(
     `https://api.nasdaq.com/api/quote/${encodeURIComponent(instrument.symbol)}/historical`
   );
   url.searchParams.set("assetclass", "stocks");
   url.searchParams.set("fromdate", fromDate.toISOString().slice(0, 10));
-  url.searchParams.set("limit", String(config.limit));
+  url.searchParams.set("limit", String(config.interval === "1mo" ? 3000 : config.limit));
 
   const response = await fetch(url, {
     cache: "no-store",
@@ -489,7 +525,7 @@ async function fetchNasdaqDailyBars(
     } | null;
   };
   const rows = payload.data?.tradesTable?.rows ?? [];
-  const bars = rows.flatMap((row): OHLCBar[] => {
+  const dailyBars = rows.flatMap((row): OHLCBar[] => {
     const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(row.date ?? "");
     const open = marketNumberValue(row.open);
     const high = marketNumberValue(row.high);
@@ -512,11 +548,41 @@ async function fetchNasdaqDailyBars(
     ];
   });
 
-  const normalized = normalizeBars(bars, config.limit);
+  if (config.interval === "1mo") {
+    const monthlyBars = aggregateMonthlyBars(dailyBars);
+    const normalized = normalizeBars(monthlyBars, config.limit);
+    if (normalized.length === 0) {
+      throw new Error("Nasdaq historical returned no valid monthly OHLCV bars");
+    }
+    return normalized;
+  }
+
+  const normalized = normalizeBars(dailyBars, config.limit);
   if (normalized.length === 0) {
     throw new Error("Nasdaq historical returned no valid OHLCV bars");
   }
   return normalized;
+}
+
+// Aggregate a daily OHLCV series into monthly bars keyed by calendar month.
+// Each bar carries the first session's open, the last session's close, the
+// period high/low, and the summed volume. The timestamp anchors to the first
+// trading day of that month at noon UTC, matching the daily contract.
+function aggregateMonthlyBars(dailyBars: OHLCBar[]): OHLCBar[] {
+  const buckets = new Map<string, OHLCBar>();
+  for (const bar of dailyBars) {
+    const monthKey = bar.t.slice(0, 7); // YYYY-MM
+    const existing = buckets.get(monthKey);
+    if (existing) {
+      existing.h = Math.max(existing.h, bar.h);
+      existing.l = Math.min(existing.l, bar.l);
+      existing.c = bar.c;
+      existing.v += bar.v;
+    } else {
+      buckets.set(monthKey, { ...bar });
+    }
+  }
+  return [...buckets.values()];
 }
 
 function eastmoneyTimestamp(raw: string, interval: StockBarInterval) {
@@ -603,15 +669,113 @@ async function fetchEastmoneyBars(instrument: StockInstrument, config: PeriodCon
   return normalized;
 }
 
+// Sina K-line (money.finance.sina.com.cn) covers China A-shares and the Beijing
+// Stock Exchange with full daily/5-minute history that Tencent lacks for BJ.
+// It does NOT cover US equities (gb_ symbols return null) and has no 1-minute
+// series (smallest scale is 5). Volume is share-denominated; no adjustment flag.
+async function fetchSinaBars(instrument: StockInstrument, config: PeriodConfig) {
+  if (instrument.market !== "CN") {
+    throw new Error("Sina K-line supports China markets only");
+  }
+  // scale: 5 → 5-minute, 240 → daily. Monthly is derived by aggregating daily.
+  const scale = config.interval === "5m" ? 5 : 240;
+  const isMonthly = config.interval === "1mo";
+  // For monthly aggregation pull enough daily history to fill the window.
+  const datalen = isMonthly ? Math.max(config.limit * 22, 2500) : config.limit;
+  const url = new URL(
+    "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
+  );
+  url.searchParams.set("symbol", instrument.providerSymbol);
+  url.searchParams.set("scale", String(scale));
+  url.searchParams.set("ma", "no");
+  url.searchParams.set("datalen", String(datalen));
+
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      Referer: "https://finance.sina.com.cn",
+      "User-Agent": "Mozilla/5.0",
+    },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Sina K-line HTTP ${response.status}`);
+
+  const payload = (await response.json()) as Array<{
+    day: string;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
+  }>;
+  if (!Array.isArray(payload) || payload.length === 0) {
+    throw new Error("Sina K-line returned no OHLCV bars");
+  }
+
+  const minute = config.interval === "5m";
+  const dailyBars = payload.flatMap((row): OHLCBar[] => {
+    const open = numberValue(row.open);
+    const close = numberValue(row.close);
+    const high = numberValue(row.high);
+    const low = numberValue(row.low);
+    const volume = numberValue(row.volume) ?? 0;
+    if (open === null || close === null || high === null || low === null) return [];
+
+    const raw = row.day.trim();
+    let timestamp = "";
+    if (minute && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) {
+      // Sina labels 5-minute bars by bucket end in Beijing time; shift to the
+      // interval-start contract used by the rest of the pipeline.
+      const bucketEnd = Date.parse(`${raw.replace(" ", "T")}+08:00`);
+      timestamp = new Date(bucketEnd - 5 * 60_000).toISOString();
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      timestamp = `${raw}T15:00:00+08:00`;
+    }
+    if (!timestamp) return [];
+    return [{ t: timestamp, o: open, h: high, l: low, c: close, v: volume }];
+  });
+
+  if (isMonthly) {
+    const monthlyBars = aggregateMonthlyBars(dailyBars);
+    const normalized = normalizeBars(monthlyBars, config.limit);
+    if (normalized.length === 0) {
+      throw new Error("Sina K-line returned no valid monthly OHLCV bars");
+    }
+    return normalized;
+  }
+
+  const normalized = normalizeBars(dailyBars, config.limit);
+  if (normalized.length === 0) throw new Error("Sina K-line returned no valid OHLCV bars");
+  return normalized;
+}
+
 async function fetchFreshBars(
   instrument: StockInstrument,
   period: StockChartPeriod,
   previous?: StockBarsResult
 ): Promise<StockBarsResult> {
   const config = PERIOD_CONFIG[period];
-  const expectedPrimarySource =
-    instrument.market === "US" || instrument.exchange === "XBSE"
-      ? "eastmoney"
+  const isUs = instrument.market === "US";
+  const isBj = instrument.exchange === "XBSE";
+  const isUsIntraday = isUs && (period === "intraday" || period === "five-day");
+  const isUsDailyMonthly = isUs && (period === "daily" || period === "monthly");
+  // Beijing Stock Exchange: Sina is the only source with full daily/5m history
+  // (Tencent returns just the latest day, Eastmoney is blocked here). Sina has
+  // no 1-minute series, so BJ intraday still relies on Tencent.
+  const isBjSinaPeriod =
+    isBj && (period === "five-day" || period === "daily" || period === "monthly");
+  // Primary source selection:
+  //   A-share (all periods) → Tencent
+  //   Beijing Stock Exchange 5m/daily/monthly → Sina (full history)
+  //   Beijing Stock Exchange intraday(1m) → Tencent (Sina has no 1m)
+  //   US intraday/five-day → Nasdaq chart
+  //   US daily/monthly → Nasdaq historical (full coverage of common stocks);
+  //     Tencent US daily is only 1-2 points, so it is a last-resort ETF fallback,
+  //     not the primary, to avoid returning 2 bars when 250 are available.
+  const expectedPrimarySource: StockBarsResult["source"] = isUs
+    ? "nasdaq"
+    : isBjSinaPeriod
+      ? "sina"
       : "tencent";
   const canFetchTail =
     marketState(instrument.market) === "OPEN" &&
@@ -624,7 +788,28 @@ async function fetchFreshBars(
   let bars: OHLCBar[] = [];
   let source: StockBarsResult["source"] = expectedPrimarySource;
 
-  if (instrument.market === "CN" && instrument.exchange !== "XBSE") {
+  // Tier 1 — primary source per the selection above.
+  if (isBjSinaPeriod) {
+    try {
+      bars = await fetchSinaBars(instrument, primaryConfig);
+      source = "sina";
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  } else if (isUs) {
+    // US primary: Nasdaq chart (intraday/5m) or Nasdaq historical (daily/monthly).
+    try {
+      if (isUsDailyMonthly) {
+        bars = await fetchNasdaqDailyBars(instrument, primaryConfig);
+      } else {
+        bars = await fetchNasdaqChartBars(instrument, primaryConfig);
+      }
+      source = "nasdaq";
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  } else {
+    // A-share (incl. BJ intraday) primary: Tencent.
     try {
       bars = await fetchTencentBars(instrument, primaryConfig);
       source = "tencent";
@@ -633,7 +818,10 @@ async function fetchFreshBars(
     }
   }
 
-  if (instrument.market === "US" || instrument.exchange === "XBSE") {
+  // Tier 2 — Eastmoney fallback when the primary returned nothing. Retained
+  // because Eastmoney offers fuller history where reachable; silently degrades
+  // where the domain is blocked, letting the chain continue below.
+  if (bars.length === 0 && (isUs || isBj)) {
     try {
       bars = await fetchEastmoneyBars(instrument, primaryConfig);
       source = "eastmoney";
@@ -642,24 +830,34 @@ async function fetchFreshBars(
     }
   }
 
-  if (bars.length === 0 && instrument.market === "US") {
-    if (config.interval === "1d") {
-      try {
-        bars = await fetchNasdaqDailyBars(instrument, config);
-        source = "nasdaq";
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
-    } else if (config.interval === "1m" || config.interval === "5m") {
-      try {
-        bars = await fetchNasdaqChartBars(instrument, config);
-        source = "nasdaq";
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
+  // Tier 2b — BJ intraday fallback to Sina 5m when Tencent 1m returned nothing,
+  // covering the case where BJ 1m is unavailable but 5m history exists.
+  if (bars.length === 0 && isBj && period === "intraday") {
+    try {
+      bars = await fetchSinaBars(instrument, { ...config, interval: "5m" });
+      source = "sina";
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
     }
   }
 
+  // Tier 3 — US ETF/ETN fallback. Nasdaq does not cover ETFs/ETNs (returns null)
+  // and Eastmoney is often blocked, so for US daily/monthly with no data yet,
+  // try Tencent's US daily series. It is shallow (often just first listing +
+  // latest) but every point is a real tick — preferable to a hard failure.
+  if (bars.length === 0 && isUsDailyMonthly) {
+    try {
+      bars = await fetchTencentBars(instrument, config);
+      source = "tencent";
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  // Tier 4 — Yahoo last-resort fallback. Yahoo only returns forward-adjusted
+  // prices, which diverge from Tencent/Eastmoney adjusted basis, so it is only
+  // used when the price basis is already forward-adjusted (US, or intraday where
+  // only same-day ticks matter). Returns 403 in some regions.
   const yahooPreservesPriceBasis =
     instrument.market === "US" || period === "intraday" || period === "five-day";
   if (bars.length === 0 && yahooPreservesPriceBasis) {
@@ -690,7 +888,9 @@ async function fetchFreshBars(
         ? "EASTMONEY PUBLIC"
         : source === "nasdaq"
           ? "NASDAQ PUBLIC"
-          : "YAHOO PUBLIC";
+          : source === "sina"
+            ? "SINA PUBLIC"
+            : "YAHOO PUBLIC";
   const adjustment =
     instrument.market === "CN" && (period === "daily" || period === "monthly")
       ? "qfq"
@@ -734,7 +934,9 @@ async function fetchFreshBars(
           ? "Eastmoney public OHLCV feed; timing, availability and redistribution rights are not guaranteed."
           : source === "nasdaq"
             ? "Nasdaq public historical feed; timing, availability and redistribution rights are not guaranteed."
-            : "Yahoo public OHLCV feed; timing, availability and redistribution rights are not guaranteed.",
+            : source === "sina"
+              ? "Sina public OHLCV feed; timing, availability and redistribution rights are not guaranteed."
+              : "Yahoo public OHLCV feed; timing, availability and redistribution rights are not guaranteed.",
   };
 }
 
