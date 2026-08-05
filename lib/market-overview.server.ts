@@ -192,11 +192,13 @@ type SectorStrengthDraft = {
   weightedIssues: WeightedSectorIssue[];
 };
 
-// Eastmoney returns up to 500 rows per page. A larger page keeps the number of
-// fetch subrequests per Worker invocation well under Cloudflare's 50-request
-// cap: at 100 rows/page the full CN snapshot needs ~59 pages and blows the
-// limit ("Too many subrequests by single Worker invocation").
-const EASTMONEY_PAGE_SIZE = 500;
+// Eastmoney silently caps `pz` at 100 rows per page (any larger value still
+// returns only 100 rows), so the page size must match that cap or the snapshot
+// comes back incomplete. The full CN snapshot therefore needs ~59 pages, which
+// exceeds Cloudflare's default 50-subrequest cap. We compensate by raising
+// `limits.subrequests` in wrangler.jsonc (the worker runs on the "standard"
+// usage model, which supports it).
+const EASTMONEY_PAGE_SIZE = 100;
 const EASTMONEY_CONCURRENCY = 12;
 const EASTMONEY_FIELDS = [
   "f2",
