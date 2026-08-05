@@ -56,7 +56,7 @@ function isStockMarketOpen(market: StockMarket, date = new Date()) {
 // Default intervals
 // ---------------------------------------------------------------------------
 
-const DEFAULT_ACTIVE_INTERVAL = 5_000; // 5s during market hours
+const DEFAULT_ACTIVE_INTERVAL = 3_000; // 3s during market hours — live feel
 const DEFAULT_IDLE_INTERVAL = 60_000; // 60s when market is closed
 const MAX_IDS_PER_REQUEST = 200;
 

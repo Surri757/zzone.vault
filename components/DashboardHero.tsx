@@ -18,6 +18,7 @@ import type { Asset } from "@/lib/types";
 import type { LiveQuote } from "@/lib/live-instruments";
 import { MiniSparkline } from "@/components/charts/MiniSparkline";
 import { className, formatQuoteNumber } from "@/components/shared/util";
+import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
 
 function quoteTone(assetId: string, change: number) {
   const chinaMarket = assetId.startsWith("CN:");
@@ -256,11 +257,20 @@ export function DashboardHero({
             </div>
             <div className="shrink-0 text-right">
               <p className={className("font-mono text-3xl font-semibold tabular-nums", quoteTone(focusAsset.id, change))}>
-                {focusQuote && change >= 0 ? "+" : ""}
-                {focusQuote ? `${formatQuoteNumber(change, 2)}%` : "--"}
+                {focusQuote ? (
+                  <AnimatedNumber value={change} digits={2} signed suffix="%" />
+                ) : (
+                  "--"
+                )}
               </p>
               <p className="mt-1 font-mono text-xl tabular-nums text-white/82">
-                {formatQuoteNumber(price, price && price < 100 ? 4 : 2)} {currency}
+                {focusQuote ? (
+                  <>
+                    <AnimatedNumber value={price} digits={price && price < 100 ? 4 : 2} /> {currency}
+                  </>
+                ) : (
+                  "--"
+                )}
               </p>
               <p className="mt-2 inline-flex items-center gap-1.5 font-mono text-[10px] text-white/42">
                 <Radio className="h-3 w-3" aria-hidden="true" />
