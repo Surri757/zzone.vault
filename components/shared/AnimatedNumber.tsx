@@ -79,6 +79,14 @@ export function AnimatedNumber({
     restDelta: 0.001,
   });
 
+  // Keep the motion value in sync with the latest prop. Without this, a
+  // component that mounts with value=null/undefined (its motion value starts at
+  // 0) would stay frozen on 0 even after a real value arrives — e.g. a price
+  // cell that renders before the quote stream loads.
+  useEffect(() => {
+    motionValue.set(numericValue);
+  }, [numericValue, motionValue]);
+
   // Track the last *committed* value so we can detect direction on each update.
   // We compare against the raw prop value, not the spring, so the flash fires
   // immediately on data arrival rather than waiting for the roll to finish.
