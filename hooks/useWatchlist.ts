@@ -49,8 +49,18 @@ export function useWatchlist() {
     try {
       const storedEntries = localStorage.getItem(WATCHLIST_STORAGE_KEY);
       const storedAlerts = localStorage.getItem(ALERTS_STORAGE_KEY);
+      // 只要没有已保存的自选（未访问过，或旧版留下的空数组 []），都播种默认示例，
+      // 让修复前访问过的旧访客也能补上默认自选，避免观势页自选面板空落落。
+      let parsed: WatchlistEntry[] | null = null;
       if (storedEntries) {
-        setEntries(JSON.parse(storedEntries) as WatchlistEntry[]);
+        try {
+          parsed = JSON.parse(storedEntries) as WatchlistEntry[];
+        } catch {
+          parsed = null;
+        }
+      }
+      if (parsed && parsed.length > 0) {
+        setEntries(parsed);
       } else {
         const now = new Date().toISOString();
         setEntries(
