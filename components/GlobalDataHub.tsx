@@ -1237,7 +1237,7 @@ export function GlobalDataHub({
                         hasQuoteChange
                           ? className(
                               marketChangeText(market, selectedQuote.changePct),
-                              selectedQuote.changePct >= 0
+                              (selectedQuote.changePct ?? 0) >= 0
                                 ? marketColorPalette(market).riseBackground
                                 : marketColorPalette(market).fallBackground
                             )
