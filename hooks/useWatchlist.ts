@@ -26,6 +26,16 @@ export interface WatchlistAlert {
 const WATCHLIST_STORAGE_KEY = "zzone-vault-watchlist";
 const ALERTS_STORAGE_KEY = "zzone-vault-alerts";
 
+// 首次访问时播种的默认示例自选，让观势页自选面板不至于空得像死胡同。
+// 用户一旦真正添加过自选，将以用户数据为准，不再重复播种。
+const DEFAULT_WATCHLIST: Array<Pick<WatchlistEntry, "id" | "symbol" | "name">> = [
+  { id: "CN:XSHG:600519", symbol: "600519", name: "贵州茅台" },
+  { id: "CN:XSHE:300750", symbol: "300750", name: "宁德时代" },
+  { id: "CN:XSHE:000001", symbol: "000001", name: "平安银行" },
+  { id: "US:XNAS:NVDA", symbol: "NVDA", name: "NVIDIA" },
+  { id: "US:XNAS:MSFT", symbol: "MSFT", name: "Microsoft" },
+];
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -39,7 +49,14 @@ export function useWatchlist() {
     try {
       const storedEntries = localStorage.getItem(WATCHLIST_STORAGE_KEY);
       const storedAlerts = localStorage.getItem(ALERTS_STORAGE_KEY);
-      setEntries(storedEntries ? (JSON.parse(storedEntries) as WatchlistEntry[]) : []);
+      if (storedEntries) {
+        setEntries(JSON.parse(storedEntries) as WatchlistEntry[]);
+      } else {
+        const now = new Date().toISOString();
+        setEntries(
+          DEFAULT_WATCHLIST.map((item) => ({ ...item, addedAt: now }))
+        );
+      }
       setAlerts(storedAlerts ? (JSON.parse(storedAlerts) as WatchlistAlert[]) : []);
     } catch {
       setEntries([]);
