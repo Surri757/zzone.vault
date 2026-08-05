@@ -206,7 +206,14 @@ export function GlobalDataHub({
   const [market, setMarket] = useState<StockMarket>("CN");
   const [exchange, setExchange] = useState("ALL");
   const [searchInput, setSearchInput] = useState("");
-  const [query, setQuery] = useState("");
+  // Typeahead suggestions for the search box. The main catalog list is NOT
+  // filtered while typing — the box only proposes matches for quick navigation.
+  const [suggestions, setSuggestions] = useState<StockInstrument[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  // A stock picked from the suggestion dropdown may not be on the current
+  // catalog page; pin it so the chart can still resolve and render it.
+  const [pinnedInstrument, setPinnedInstrument] = useState<StockInstrument | null>(null);
   const [page, setPage] = useState(1);
   const [catalog, setCatalog] = useState<StockCatalogResponse | null>(null);
   const [quotes, setQuotes] = useState<LiveQuote[]>([]);
@@ -258,7 +265,6 @@ export function GlobalDataHub({
       setMarket(nextMarket);
       setExchange(validExchange);
       setSearchInput(nextQuery);
-      setQuery(nextQuery.trim());
       setPage(nextPage);
       setSelectedQuoteId((parameters.get("stock") ?? "").toUpperCase());
       setActiveWorkspacePanel(nextPanel);
@@ -271,34 +277,48 @@ export function GlobalDataHub({
     return subscribeWorkspaceUrl(syncFromUrl);
   }, []);
 
+  // Typeahead suggestions. Debounced, lightweight query for the dropdown only —
+  // the main catalog list is left untouched while typing, so input is never
+  // interrupted by a full re-fetch.
   useEffect(() => {
-    if (!urlStateReady) return;
-    if (searchInput.trim() === query) return;
-    // While Chinese pinyin is mid-composition the box holds mixed Chinese +
-    // Latin letters. Suppress the search until the value is searchable — once
-    // the user commits the last character it becomes pure Chinese and the
-    // effect re-runs, firing the search automatically.
-    if (!isSearchableQuery(searchInput)) return;
+    const trimmed = searchInput.trim();
+    if (!urlStateReady || trimmed.length === 0 || !isSearchableQuery(trimmed)) {
+      setSuggestionsOpen(false);
+      setSuggestions([]);
+      setSuggestionsLoading(false);
+      return;
+    }
 
-    const timer = window.setTimeout(() => {
-      const nextQuery = searchInput.trim();
-      setQuery(nextQuery);
-      setPage(1);
-      setSelectedQuoteId("");
-      setActiveWorkspacePanel("catalog");
-      updateWorkspaceUrl(
-        {
-          q: nextQuery || null,
-          page: null,
-          stock: null,
-          panel: "catalog"
-        },
-        "replace"
-      );
-    }, 400);
+    setSuggestionsOpen(true);
+    setSuggestionsLoading(true);
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ market, page: "1", pageSize: "8" });
+        params.set("q", trimmed);
+        const response = await fetch(`/api/live/instruments?${params}`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`instrument suggestions ${response.status}`);
+        const payload = (await response.json()) as StockCatalogResponse;
+        if (!controller.signal.aborted) {
+          setSuggestions(payload.items);
+          setSuggestionsLoading(false);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setSuggestions([]);
+          setSuggestionsLoading(false);
+        }
+      }
+    }, 250);
 
-    return () => window.clearTimeout(timer);
-  }, [query, searchInput, urlStateReady]);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [market, searchInput, urlStateReady]);
 
   useEffect(() => {
     if (!urlStateReady) return;
@@ -316,7 +336,6 @@ export function GlobalDataHub({
           pageSize: "50"
         });
         if (exchange !== "ALL") params.set("exchange", exchange);
-        if (query) params.set("q", query);
 
         const response = await fetch(`/api/live/instruments?${params}`, {
           cache: "no-store",
@@ -345,12 +364,20 @@ export function GlobalDataHub({
 
     loadCatalog();
     return () => controller.abort();
-  }, [exchange, market, page, query, urlStateReady]);
+  }, [exchange, market, page, urlStateReady]);
 
   const currentPageKey = (catalog?.items ?? []).map((instrument) => instrument.id).join(",");
+  // Include the suggestion-pinned stock in the live-quote fetch so its chart
+  // and details panel resolve even when it isn't on the current catalog page.
+  const quoteFetchIds = useMemo(() => {
+    if (pinnedInstrument && !currentPageKey.split(",").includes(pinnedInstrument.id)) {
+      return currentPageKey ? `${currentPageKey},${pinnedInstrument.id}` : pinnedInstrument.id;
+    }
+    return currentPageKey;
+  }, [currentPageKey, pinnedInstrument]);
 
   useEffect(() => {
-    if (!currentPageKey) {
+    if (!quoteFetchIds) {
       setQuotes([]);
       setQuotesLoading(false);
       return;
@@ -366,7 +393,7 @@ export function GlobalDataHub({
       lastQuoteRequestAt = Date.now();
       try {
         const response = await fetch(
-          `/api/live/quotes?ids=${encodeURIComponent(currentPageKey)}`,
+          `/api/live/quotes?ids=${encodeURIComponent(quoteFetchIds)}`,
           { cache: "no-store", signal: controller.signal }
         );
         if (!response.ok) throw new Error(`live quotes ${response.status}`);
@@ -404,7 +431,7 @@ export function GlobalDataHub({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [currentPageKey, market, refreshToken]);
+  }, [quoteFetchIds, market, pinnedInstrument, refreshToken]);
 
   const instruments = catalog?.items ?? [];
   const quoteById = useMemo(
@@ -415,6 +442,9 @@ export function GlobalDataHub({
 
   useEffect(() => {
     if (!urlStateReady || catalogLoading) return;
+    // A suggestion-pinned stock may not be on the current catalog page; keep it
+    // so the auto-select below doesn't override the user's dropdown pick.
+    if (pinnedInstrument && pinnedInstrument.id === selectedQuoteId) return;
     if (instruments.length === 0) {
       setSelectedQuoteId("");
       updateWorkspaceUrl({ stock: null }, "replace");
@@ -427,7 +457,6 @@ export function GlobalDataHub({
         {
           market,
           exchange: exchange === "ALL" ? null : exchange,
-          q: query || null,
           page: page === 1 ? null : page,
           stock: nextId,
           panel: activeWorkspacePanel,
@@ -445,14 +474,16 @@ export function GlobalDataHub({
     instruments,
     market,
     page,
-    query,
+    pinnedInstrument,
     selectedQuoteId,
     stockLens,
     urlStateReady
   ]);
 
   const selectedInstrument =
-    instruments.find((instrument) => instrument.id === selectedQuoteId) ?? instruments[0];
+    pinnedInstrument && pinnedInstrument.id === selectedQuoteId
+      ? pinnedInstrument
+      : instruments.find((instrument) => instrument.id === selectedQuoteId) ?? instruments[0];
   const selectedQuote = selectedInstrument ? quoteById.get(selectedInstrument.id) : undefined;
   const selectedWatched = selectedInstrument
     ? watchlistIdSet.has(selectedInstrument.id)
@@ -529,6 +560,34 @@ export function GlobalDataHub({
 
     if (window.matchMedia("(max-width: 1023px)").matches) {
       window.requestAnimationFrame(() => workspaceTabRefs.current[1]?.focus());
+    }
+  }
+
+  // Pick a stock from the suggestion dropdown. Unlike selectInstrument, the
+  // chosen instrument is pinned so it renders even when it isn't on the current
+  // catalog page.
+  function selectSuggestion(instrument: StockInstrument) {
+    setPinnedInstrument(instrument);
+    setSelectedQuoteId(instrument.id);
+    setActiveWorkspacePanel("chart");
+    setSuggestionsOpen(false);
+    setSearchInput("");
+    updateWorkspaceUrl({
+      stock: instrument.id,
+      panel: "chart",
+      period: chartPeriod,
+      stockLens
+    });
+
+    if (window.matchMedia("(max-width: 1023px)").matches) {
+      window.requestAnimationFrame(() => workspaceTabRefs.current[1]?.focus());
+    }
+  }
+
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setSuggestionsOpen(false);
+      event.currentTarget.blur();
     }
   }
 
@@ -838,16 +897,61 @@ export function GlobalDataHub({
             <label className="relative mb-3 block">
               <span className="sr-only">搜索股票代码或名称</span>
               <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/36"
+                className="pointer-events-none absolute left-3 top-1/2 z-20 h-4 w-4 -translate-y-1/2 text-white/36"
                 aria-hidden="true"
               />
               <input
                 type="search"
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
+                onFocus={() => {
+                  if (searchInput.trim() && isSearchableQuery(searchInput)) {
+                    setSuggestionsOpen(true);
+                  }
+                }}
+                onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 120)}
+                onKeyDown={handleSearchKeyDown}
                 placeholder={market === "CN" ? "代码、中文名或公司名" : "Ticker or company name"}
                 className="h-11 w-full rounded-[8px] border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-white placeholder:text-white/28"
               />
+              {suggestionsOpen ? (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-[8px] border border-white/10 bg-[#0b0d0f]/95 shadow-2xl backdrop-blur">
+                  {suggestionsLoading ? (
+                    <div className="grid h-10 place-items-center font-mono text-[10px] tracking-widest text-white/40">
+                      SEARCHING...
+                    </div>
+                  ) : suggestions.length === 0 ? (
+                    <div className="grid h-10 place-items-center font-mono text-[10px] tracking-widest text-white/40">
+                      没有匹配的股票
+                    </div>
+                  ) : (
+                    <ul className="thin-scrollbar max-h-72 overflow-y-auto">
+                      {suggestions.map((suggestion) => (
+                        <li key={suggestion.id}>
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => selectSuggestion(suggestion)}
+                            className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition hover:bg-acid/10"
+                          >
+                            <span className="min-w-0">
+                              <span className="block font-mono text-sm text-white">
+                                {suggestion.symbol}
+                              </span>
+                              <span className="mt-0.5 block truncate text-xs text-white/48">
+                                {suggestion.name} / {suggestion.exchange}
+                              </span>
+                            </span>
+                            <span className="shrink-0 font-mono text-[9px] tracking-widest text-white/30">
+                              {suggestion.market}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
             </label>
 
             <div className="mb-4 flex flex-wrap gap-2">
