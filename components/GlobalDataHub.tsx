@@ -32,13 +32,14 @@ import { StockChartPanel } from "@/components/charts/StockChartPanel";
 import { StockTechnicalPanel } from "@/components/charts/StockTechnicalPanel";
 import { StockVolumePanel } from "@/components/charts/StockVolumePanel";
 import { className, formatQuoteNumber, formatCompact } from "@/components/shared/util";
+import { IntradaySparkline } from "@/components/charts/IntradaySparkline";
 import type { LiveQuote } from "@/lib/live-instruments";
 import type {
   StockCatalogResponse,
   StockInstrument,
   StockMarket
 } from "@/lib/stock-catalog";
-import { marketChangeText } from "@/lib/market-colors";
+import { marketChangeText, marketColorPalette } from "@/lib/market-colors";
 import { stockChartPeriods, type StockChartPeriod } from "@/lib/stock-bars";
 import {
   readWorkspaceUrl,
@@ -996,34 +997,38 @@ export function GlobalDataHub({
                 const changePct = quote?.changePct;
                 const hasChange =
                   typeof changePct === "number" && Number.isFinite(changePct);
+                const hasCurve =
+                  Boolean(quote) &&
+                  Array.isArray(quote?.series) &&
+                  (quote?.series?.length ?? 0) >= 2;
                 return (
                   <div
                     key={instrument.id}
                     className={className(
-                      "flex w-full min-w-0 items-stretch rounded-[8px] border transition",
+                      "w-full min-w-0 rounded-[8px] border transition",
                       selectedInstrument?.id === instrument.id
                         ? "border-acid bg-acid/10"
                         : "border-white/10 bg-white/[0.035] hover:border-acid/50"
                     )}
                   >
-                    <button
-                      type="button"
-                      onClick={() => selectInstrument(instrument.id)}
-                      aria-pressed={selectedInstrument?.id === instrument.id}
-                      className="min-w-0 flex-1 p-3 text-left"
-                    >
-                      <span className="flex items-start justify-between gap-3">
-                        <span className="min-w-0">
-                          <span className="block font-mono text-sm text-white">
-                            {instrument.symbol}
-                          </span>
-                          <span className="mt-1 block truncate text-xs text-white/48">
-                            {instrument.name} / {instrument.exchange}
-                          </span>
+                    <div className="flex items-center gap-3 p-3 pb-2">
+                      <button
+                        type="button"
+                        onClick={() => selectInstrument(instrument.id)}
+                        aria-pressed={selectedInstrument?.id === instrument.id}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <span className="block font-mono text-base font-semibold tracking-tight text-white">
+                          {instrument.symbol}
                         </span>
+                        <span className="mt-0.5 block truncate text-xs text-white/48">
+                          {instrument.name} / {instrument.exchange}
+                        </span>
+                      </button>
+                      <span className="shrink-0 text-right">
                         <span
                           className={className(
-                            "shrink-0 font-mono text-xs",
+                            "block font-mono text-sm font-bold tabular-nums",
                             hasChange
                               ? marketChangeText(market, changePct)
                               : "text-white/38"
@@ -1035,38 +1040,93 @@ export function GlobalDataHub({
                             "--"
                           )}
                         </span>
-                      </span>
-                      <span className="mt-3 flex items-center justify-between gap-3">
                         <AnimatedNumber
                           value={quote?.price}
                           digits={4}
-                          className="font-mono text-lg text-white"
+                          className={className(
+                            "mt-0.5 block font-mono text-2xl font-bold tabular-nums",
+                            hasChange
+                              ? marketChangeText(market, changePct)
+                              : "text-white"
+                          )}
                         />
-                        <span className="font-mono text-[10px] text-white/38">
-                          {quote ? quoteStatusLabel(quote.feedStatus) : quotesLoading ? "LOADING" : "NO QUOTE"}
-                        </span>
                       </span>
-                    </button>
-                    {onWatchlistAdd && onWatchlistRemove ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleWatchlist(instrument)}
-                        aria-pressed={watched}
-                        aria-label={`${watched ? "移除" : "添加"} ${instrument.name} 自选`}
-                        title={watched ? "移除自选" : "添加自选"}
-                        className={className(
-                          "my-2 mr-2 grid h-10 w-10 shrink-0 place-items-center rounded-[6px] border transition",
-                          watched
-                            ? "border-amberline/45 bg-amberline/10 text-amberline"
-                            : "border-white/10 text-white/38 hover:border-amberline/45 hover:text-amberline"
-                        )}
-                      >
-                        <Star
-                          className={className("h-4 w-4", watched && "fill-current")}
-                          aria-hidden="true"
+                      {onWatchlistAdd && onWatchlistRemove ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleWatchlist(instrument)}
+                          aria-pressed={watched}
+                          aria-label={`${watched ? "移除" : "添加"} ${instrument.name} 自选`}
+                          title={watched ? "移除自选" : "添加自选"}
+                          className={className(
+                            "grid h-9 w-9 shrink-0 place-items-center rounded-[6px] border transition",
+                            watched
+                              ? "border-amberline/45 bg-amberline/10 text-amberline"
+                              : "border-white/10 text-white/38 hover:border-amberline/45 hover:text-amberline"
+                          )}
+                        >
+                          <Star
+                            className={className("h-4 w-4", watched && "fill-current")}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="px-3 pb-3">
+                      {hasCurve && quote ? (
+                        <IntradaySparkline
+                          values={quote.series}
+                          baseline={quote.open}
+                          riseColor={marketColorPalette(market).riseHex}
+                          fallColor={marketColorPalette(market).fallHex}
+                          width={480}
+                          height={64}
+                          className="h-16 w-full"
+                          timeAxis={
+                            market === "CN"
+                              ? [
+                                  { label: "09:30", pos: 0 },
+                                  { label: "09:45", pos: 6.25 },
+                                  { label: "10:00", pos: 12.5 },
+                                  { label: "10:15", pos: 18.75 },
+                                  { label: "10:30", pos: 25 },
+                                  { label: "10:45", pos: 31.25 },
+                                  { label: "11:00", pos: 37.5 },
+                                  { label: "11:15", pos: 43.75 },
+                                  { label: "11:30/13:00", pos: 50 },
+                                  { label: "13:15", pos: 56.25 },
+                                  { label: "13:30", pos: 62.5 },
+                                  { label: "13:45", pos: 68.75 },
+                                  { label: "14:00", pos: 75 },
+                                  { label: "14:15", pos: 81.25 },
+                                  { label: "14:30", pos: 87.5 },
+                                  { label: "14:45", pos: 93.75 },
+                                  { label: "15:00", pos: 100 }
+                                ]
+                              : [
+                                  { label: "09:30", pos: 0 },
+                                  { label: "10:00", pos: 7.69 },
+                                  { label: "10:30", pos: 15.38 },
+                                  { label: "11:00", pos: 23.08 },
+                                  { label: "11:30", pos: 30.77 },
+                                  { label: "12:00", pos: 38.46 },
+                                  { label: "12:30", pos: 46.15 },
+                                  { label: "13:00", pos: 53.85 },
+                                  { label: "13:30", pos: 61.54 },
+                                  { label: "14:00", pos: 69.23 },
+                                  { label: "14:30", pos: 76.92 },
+                                  { label: "15:00", pos: 84.62 },
+                                  { label: "15:30", pos: 92.31 },
+                                  { label: "16:00", pos: 100 }
+                                ]
+                          }
                         />
-                      </button>
-                    ) : null}
+                      ) : (
+                        <div className="grid h-16 w-full place-items-center rounded-[6px] border border-dashed border-white/10 font-mono text-[10px] text-white/30">
+                          {quotesLoading ? "LOADING CURVE..." : "NO CURVE"}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
