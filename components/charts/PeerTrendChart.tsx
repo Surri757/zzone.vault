@@ -168,14 +168,14 @@ export function PeerTrendChart({ lines }: { lines: readonly PeerTrendLine[] }) {
 
   if (lines.every((line) => line.points.length === 0)) {
     return (
-      <div className="grid h-[22rem] place-items-center border border-dashed border-white/10 bg-black/20 px-6 text-center text-base text-white/52">
+      <div className="grid h-[22rem] place-items-center border border-dashed border-white/10 bg-black/6 px-6 text-center text-base text-white/52">
         暂无可比较的历史行情
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden border border-white/10 bg-black/20">
+    <div className="overflow-hidden border border-white/10 bg-black/6">
       <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           {lines.map((line) => (

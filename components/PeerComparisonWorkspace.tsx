@@ -470,7 +470,7 @@ export function PeerComparisonWorkspace() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="grid grid-cols-3 border border-white/10 bg-black/20 p-1" role="group" aria-label="选择比较窗口">
+            <div className="grid grid-cols-3 border border-white/10 bg-black/6 p-1" role="group" aria-label="选择比较窗口">
               {comparisonRanges.map((option) => (
                 <button
                   key={option}
@@ -529,7 +529,7 @@ export function PeerComparisonWorkspace() {
           </div>
         ) : null}
 
-        <div className="mt-4 grid grid-cols-2 border border-white/10 bg-black/20 p-1 lg:hidden" role="tablist" aria-label="跨市场对标视图">
+        <div className="mt-4 grid grid-cols-2 border border-white/10 bg-black/6 p-1 lg:hidden" role="tablist" aria-label="跨市场对标视图">
           {mobilePanels.map((panel, index) => {
             const Icon = panel.icon;
             const selected = mobilePanel === panel.id;
@@ -706,7 +706,7 @@ export function PeerComparisonWorkspace() {
                 <p className="text-sm text-white/46">按各自交易日收盘比较，不受币种绝对价格影响</p>
               </div>
               {loading && lines.every((line) => line.points.length === 0) ? (
-                <div className="grid h-[22rem] place-items-center border border-white/10 bg-black/20">
+                <div className="grid h-[22rem] place-items-center border border-white/10 bg-black/6">
                   <div className="text-center">
                     <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-acid" aria-hidden="true" />
                     <p className="mt-3 text-base text-white/52">正在同步两地历史行情</p>

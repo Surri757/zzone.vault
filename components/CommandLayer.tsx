@@ -93,7 +93,7 @@ export function CommandLayer({
           onSubmit={submitOrder}
           className="mt-6 grid gap-3 md:grid-cols-[0.72fr_1fr_0.8fr_auto]"
         >
-          <div className="grid grid-cols-2 rounded-[8px] border border-white/10 bg-black/30 p-1">
+          <div className="grid grid-cols-2 rounded-[8px] border border-white/10 bg-black/8 p-1">
             {(["buy", "sell"] as const).map((side) => (
               <button
                 key={side}
@@ -121,7 +121,7 @@ export function CommandLayer({
               onChange={(event) =>
                 setDraft((current) => ({ ...current, assetId: event.target.value }))
               }
-              className="h-12 w-full rounded-[8px] border border-white/10 bg-black/40 px-3 font-mono text-sm text-white"
+              className="h-12 w-full rounded-[8px] border border-white/10 bg-black/10 px-3 font-mono text-sm text-white"
             >
               {markets.map((asset) => (
                 <option key={asset.id} value={asset.id}>
@@ -141,7 +141,7 @@ export function CommandLayer({
               onChange={(event) =>
                 setDraft((current) => ({ ...current, quantity: event.target.value }))
               }
-              className="h-12 w-full rounded-[8px] border border-white/10 bg-black/40 px-3 font-mono text-sm text-white"
+              className="h-12 w-full rounded-[8px] border border-white/10 bg-black/10 px-3 font-mono text-sm text-white"
               placeholder="Quantity"
             />
           </label>

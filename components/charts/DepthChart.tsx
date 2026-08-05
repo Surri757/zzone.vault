@@ -150,7 +150,7 @@ export function DepthChart({
       : null;
 
   return (
-    <div className="overflow-hidden rounded-[8px] border border-white/10 bg-black/24 p-3">
+    <div className="overflow-hidden rounded-[8px] border border-white/10 bg-black/6 p-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-mono text-sm text-white">ORDER BOOK DEPTH</span>
         {spread !== null && (

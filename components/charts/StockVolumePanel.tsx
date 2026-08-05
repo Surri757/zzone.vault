@@ -353,7 +353,7 @@ export function StockVolumePanel({
       </div>
 
       {loading && !data ? (
-        <div className="mt-3 grid h-[430px] place-items-center border border-dashed border-white/10 bg-black/15">
+        <div className="mt-3 grid h-[430px] place-items-center border border-dashed border-white/10 bg-black/6">
           <div className="text-center">
             <RefreshCw className="mx-auto h-5 w-5 animate-spin text-acid" aria-hidden="true" />
             <p className="mt-3 font-mono text-xs text-white/48">正在同步真实成交量</p>
@@ -391,7 +391,7 @@ export function StockVolumePanel({
             ))}
           </div>
 
-          <div className="border border-white/10 bg-black/20 p-3 sm:p-4">
+          <div className="border border-white/10 bg-black/6 p-3 sm:p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Scale className="h-4 w-4 text-amberline" aria-hidden="true" />
@@ -404,14 +404,14 @@ export function StockVolumePanel({
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <div className="border border-white/10 bg-black/20 p-3 sm:p-4">
+            <div className="border border-white/10 bg-black/6 p-3 sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-2 font-mono text-xs">
                 <span className="text-white/72">OBV</span>
                 <span className="text-white/42">收盘方向累计量</span>
               </div>
               <OBVChart values={analysis.obv} />
             </div>
-            <div className="border border-white/10 bg-black/20 p-3 sm:p-4">
+            <div className="border border-white/10 bg-black/6 p-3 sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-2 font-mono text-xs">
                 <span className="text-white/72">CMF 20</span>
                 <span className="text-white/42">OHLCV 派生</span>

@@ -89,7 +89,7 @@ export function WatchlistPanel({
 
   if (entries.length === 0 && alerts.length === 0) {
     return (
-      <div className="rounded-[8px] border border-dashed border-white/10 bg-[#070807]/90 p-4 shadow-panel-edge backdrop-blur-xl">
+      <div className="rounded-[8px] border border-dashed border-white/10 bg-[#070807]/8 p-4 shadow-panel-edge backdrop-blur-md">
         <div className="flex items-center gap-2 text-sm text-white/48">
           <Star className="h-4 w-4" aria-hidden="true" />
           <span>尚未建立自选列表</span>
@@ -99,7 +99,7 @@ export function WatchlistPanel({
   }
 
   return (
-    <div className="rounded-[8px] border border-white/10 bg-[#070807]/90 p-4 shadow-panel-edge backdrop-blur-xl">
+    <div className="rounded-[8px] border border-white/10 bg-[#070807]/8 p-4 shadow-panel-edge backdrop-blur-md">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <button

@@ -475,7 +475,7 @@ export function SectorWorkspace() {
 
           <div className="grid w-full grid-cols-[minmax(10rem,1fr)_minmax(0,1fr)_2.75rem] items-center gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
             <div
-              className="grid min-w-0 grid-cols-2 border border-white/10 bg-black/20 p-1"
+              className="grid min-w-0 grid-cols-2 border border-white/10 bg-black/6 p-1"
               role="group"
               aria-label="选择板块市场"
             >
@@ -573,7 +573,7 @@ export function SectorWorkspace() {
         ) : null}
 
         <div
-          className="mt-3 grid grid-cols-2 border border-white/10 bg-black/20 p-1 lg:hidden"
+          className="mt-3 grid grid-cols-2 border border-white/10 bg-black/6 p-1 lg:hidden"
           role="tablist"
           aria-label="板块工作区视图"
         >

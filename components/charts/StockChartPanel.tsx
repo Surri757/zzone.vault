@@ -141,7 +141,7 @@ export function StockChartPanel({
       </div>
 
       <div
-        className="mt-4 grid grid-cols-4 border border-white/10 bg-black/20 p-1"
+        className="mt-4 grid grid-cols-4 border border-white/10 bg-black/6 p-1"
         role="tablist"
         aria-label="K 线周期"
         aria-orientation="horizontal"
@@ -180,7 +180,7 @@ export function StockChartPanel({
         aria-busy={loading || refreshing}
       >
         {loading && !data ? (
-          <div className="grid h-[430px] place-items-center border border-dashed border-white/10 bg-black/15 sm:h-[500px]">
+          <div className="grid h-[430px] place-items-center border border-dashed border-white/10 bg-black/6 sm:h-[500px]">
             <div className="text-center">
               <RefreshCw className="mx-auto h-5 w-5 animate-spin text-acid" aria-hidden="true" />
               <p className="mt-3 font-mono text-xs text-white/46">正在同步真实 OHLCV 行情</p>
