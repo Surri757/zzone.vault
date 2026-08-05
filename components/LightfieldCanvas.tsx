@@ -8,6 +8,7 @@ import * as THREE from "three";
 import type { Asset } from "@/lib/types";
 import { MarketMountainRidge } from "@/components/MarketMountainRidge";
 import { MarketFlowField } from "@/components/MarketFlowField";
+import { FocusPulseRing } from "@/components/FocusPulseRing";
 
 interface StockNode3D {
   id: string;
@@ -563,6 +564,13 @@ export function LightfieldCanvas({
         />
         {/* Data river + force-field particles — currents flowing around the range. */}
         <MarketFlowField assets={assets} liveQuotes={liveQuotes} animate={!reduceMotion} />
+        {/* Focus halo — rises above the selected stock's peak, pulsing with ticks. */}
+        <FocusPulseRing
+          assets={assets}
+          liveQuotes={liveQuotes}
+          highlightedIds={highlightedIds}
+          animate={!reduceMotion}
+        />
         <AssetInkTrails
           assets={assets}
           interactive={interactive}
