@@ -193,7 +193,11 @@ export function EnergyOrb({
     const focusedId = highlightedIds[0];
     const focusedAsset = assets.find((a) => a.id === focusedId);
     const live = focusedAsset ? liveQuotes?.get(focusedAsset.id) : undefined;
-    const target = live?.changePct ?? focusedAsset?.change24h ?? 0;
+    const raw = live?.changePct ?? focusedAsset?.change24h ?? 0;
+    // Guard against NaN change values: the orb breathes by writing computed
+    // positions into the geometry each frame, so a single NaN would poison the
+    // whole particle attribute and break its bounding sphere.
+    const target = Number.isFinite(raw) ? raw : 0;
     changeRef.current = THREE.MathUtils.damp(changeRef.current, target, 3.0, delta);
 
     // Slow global rotation + a faint scale link to the market move.

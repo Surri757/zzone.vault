@@ -157,7 +157,9 @@ export function PrivateTradeConsole() {
           price > 0 && quote && quote.high !== null && quote.low !== null
             ? Math.abs((quote.high - quote.low) / price)
             : 0;
-        const change = quote?.changePct ?? 0;
+        const rawChange = quote?.changePct;
+        const change =
+          typeof rawChange === "number" && Number.isFinite(rawChange) ? rawChange : 0;
 
         return {
           id: instrument.id,
@@ -507,6 +509,7 @@ export function PrivateTradeConsole() {
                         alerts={watchlist.alerts}
                         onClearAlert={watchlist.clearTriggered}
                         quotes={quoteStream.quotes}
+                        onOpenCatalog={() => selectView("stocks")}
                       />
                     </div>
                   </div>

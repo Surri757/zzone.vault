@@ -6,6 +6,7 @@ import {
   BellRing,
   Eye,
   EyeOff,
+  Plus,
   Star,
   Trash2,
 } from "lucide-react";
@@ -26,6 +27,8 @@ interface WatchlistPanelProps {
   onClearAlert: (id: string) => void;
   /** Live quotes for watchlist entries (fetched by parent) */
   quotes: Map<string, LiveQuote>;
+  /** Navigate to the stock catalog to add entries (used by the empty state) */
+  onOpenCatalog?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +71,7 @@ export function WatchlistPanel({
   alerts,
   onClearAlert,
   quotes,
+  onOpenCatalog,
 }: WatchlistPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -91,9 +95,22 @@ export function WatchlistPanel({
     return (
       <div className="rounded-[8px] border border-dashed border-white/10 bg-[#070807]/8 p-4 shadow-panel-edge backdrop-blur-md">
         <div className="flex items-center gap-2 text-sm text-white/48">
-          <Star className="h-4 w-4" aria-hidden="true" />
-          <span>尚未建立自选列表</span>
+          <Star className="h-4 w-4 text-acid/70" aria-hidden="true" />
+          <span>自选列表为空</span>
         </div>
+        <p className="mt-3 max-w-md text-xs leading-relaxed text-white/38">
+          在「个股 OHLCV」目录中点击任意股票卡片上的星标，即可把它加入自选，实时跟踪涨跌与价格。
+        </p>
+        {onOpenCatalog && (
+          <button
+            type="button"
+            onClick={onOpenCatalog}
+            className="mt-4 inline-flex items-center gap-2 rounded-[6px] border border-acid/40 bg-acid/[0.08] px-3 py-1.5 text-xs font-medium text-acid transition hover:border-acid/70 hover:bg-acid/[0.14]"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            去个股页添加自选
+          </button>
+        )}
       </div>
     );
   }

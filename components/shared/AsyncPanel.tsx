@@ -61,21 +61,18 @@ export function AsyncPanel({
         className={className(
           "relative mt-4",
           minBodyClassName,
-          !hasData && "grid place-items-center"
+          !hasData && "grid",
+          loading ? "place-items-stretch" : "place-items-center"
         )}
       >
         {hasData ? (
           children
+        ) : loading ? (
+          <AsyncPanelSkeleton ariaLabel={loadingLabel} minBodyClassName={minBodyClassName} />
         ) : (
           <div className="flex max-w-sm flex-col items-center gap-2 px-4 text-center">
-            {loading ? (
-              <LoaderCircle className="h-5 w-5 animate-spin text-acid" aria-hidden="true" />
-            ) : (
-              <AlertTriangle className="h-5 w-5 text-cinnabar" aria-hidden="true" />
-            )}
-            <p className="text-sm text-white/58">
-              {loading ? loadingLabel : "暂时无法读取公开行情"}
-            </p>
+            <AlertTriangle className="h-5 w-5 text-cinnabar" aria-hidden="true" />
+            <p className="text-sm text-white/58">暂时无法读取公开行情</p>
           </div>
         )}
       </div>
@@ -117,5 +114,37 @@ export function AsyncPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function AsyncPanelSkeleton({
+  ariaLabel,
+  minBodyClassName,
+}: {
+  ariaLabel: string;
+  minBodyClassName: string;
+}) {
+  return (
+    <div
+      className={className(
+        "flex w-full flex-col gap-3 py-1",
+        minBodyClassName
+      )}
+      role="status"
+      aria-busy="true"
+      aria-label={ariaLabel}
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div className="ink-skeleton h-3.5 w-1/3 rounded-[4px]" />
+        <div className="ink-skeleton h-3.5 w-16 rounded-[4px]" />
+      </div>
+      <div className="ink-skeleton h-3.5 w-1/2 rounded-[4px]" />
+      <div className="ink-skeleton flex-1 w-full min-h-16 rounded-[6px]" />
+      <div className="flex items-center justify-between gap-4">
+        <div className="ink-skeleton h-3.5 w-1/4 rounded-[4px]" />
+        <div className="ink-skeleton h-3.5 w-1/4 rounded-[4px]" />
+        <div className="ink-skeleton h-3.5 w-1/4 rounded-[4px]" />
+      </div>
+    </div>
   );
 }

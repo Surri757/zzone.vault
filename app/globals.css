@@ -343,6 +343,38 @@ section[id] {
   }
 }
 
+@keyframes ink-shimmer {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+.ink-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: rgba(229, 221, 202, 0.05);
+}
+
+.ink-skeleton::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(229, 221, 202, 0.09) 40%,
+    rgba(146, 190, 168, 0.14) 50%,
+    rgba(229, 221, 202, 0.09) 60%,
+    transparent 80%
+  );
+  transform: translate3d(-100%, 0, 0);
+  animation: ink-shimmer 1.6s ease-in-out infinite;
+}
+
 /* Keep utilities last so component-level responsive classes can refine these hooks. */
 @tailwind utilities;
 
