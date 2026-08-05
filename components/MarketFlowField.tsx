@@ -95,80 +95,123 @@ const riverFragmentShader = /* glsl */ `
   }
 `;
 
-// ---- Particle force-field shader -------------------------------------------
-// Each particle's vertex shader sums the gravitational pull of every well.
-// Wells with positive change attract (pull toward the well + lift), negative
-// change repel (push away + sink). All on the GPU.
+// ---- Particle choreographed shader ----------------------------------------
+// Particles follow deliberate, readable motion patterns instead of random drift.
+// Each particle picks one of three trajectories by its aPhase attribute:
+//   phase 0 — ring current: orbits the mountain ring at speed driven by momentum
+//   phase 1 — meteor fall:   streaks down from on high at an angle (meteor shower)
+//   phase 2 — converge burst: pulses inward to the center, then explodes outward
+// Speed and twinkle frequency are both ~3× the earlier random version.
 const particleVertexShader = /* glsl */ `
   uniform float uTime;
-  uniform float uAspect;
-  uniform vec3 uWells[${MAX_WELLS}];     // xy = position, z = signed changePct
+  uniform vec3 uWells[${MAX_WELLS}];
   uniform float uVolatility[${MAX_WELLS}];
   uniform int uWellCount;
-  uniform float uIntensity;              // global market activity 0..1
+  uniform float uIntensity;        // market momentum 0..1, speeds everything up
+  uniform float uConverge;         // 0..1, drives the converge-burst pulse
 
-  attribute vec2 aSeed;                  // per-particle random seed
+  attribute vec2 aSeed;
   attribute float aSize;
+  attribute float aPhase;          // 0 ring | 1 meteor | 2 converge
 
-  varying float vForce;
   varying float vLift;
+  varying float vTwinkle;
+  varying float vPhase;
 
   void main() {
-    // Base orbital motion: each particle drifts on its own slow orbit.
-    float orbit = uTime * (0.08 + aSeed.x * 0.14);
+    float t = uTime;
     vec3 pos = position;
-    pos.x += cos(orbit + aSeed.y * 6.28) * (0.3 + aSeed.x * 0.5);
-    pos.z += sin(orbit * 0.8 + aSeed.y * 6.28) * (0.3 + aSeed.x * 0.5);
-
-    // Sum force contributions from all gravity wells (mountains).
-    vec2 force = vec2(0.0);
     float lift = 0.0;
+
+    if (aPhase < 0.5) {
+      // ---- Ring current: orbit the mountain ring ----
+      float orbitRadius = 1.8 + aSeed.x * 2.6;
+      float baseAngle = aSeed.y * 6.28318;
+      // High-speed flow: momentum + a baseline so it's always alive.
+      float speed = (0.5 + uIntensity * 2.2) * (0.7 + aSeed.x * 0.6);
+      float angle = baseAngle + t * speed;
+      pos.x = cos(angle) * orbitRadius;
+      pos.z = sin(angle) * orbitRadius;
+      pos.y = 0.8 + aSeed.x * 2.4 + sin(t * 1.8 + baseAngle * 3.0) * 0.4;
+      lift = sin(t * 2.0 + baseAngle) * 0.3;
+    } else if (aPhase < 1.5) {
+      // ---- Meteor fall: streak down from the sky at an angle ----
+      float cycle = fract((t * (0.18 + uIntensity * 0.5) + aSeed.y) );
+      float startAngle = aSeed.y * 6.28318;
+      float radial = 3.8 + aSeed.x * 1.5;
+      // Start high and outside, fall toward the ring center diagonally.
+      pos.x = cos(startAngle) * radial * (1.0 - cycle * 0.55);
+      pos.z = sin(startAngle) * radial * (1.0 - cycle * 0.55);
+      pos.y = 5.5 - cycle * 5.0 + aSeed.x * 0.8;
+      lift = -0.6 + cycle * 0.3;
+    } else {
+      // ---- Converge burst: pulse toward center then explode out ----
+      // The converge uniform breathes 0→1→0; particles track it.
+      float pulse = uConverge;
+      float cycle = fract(t * (0.12 + uIntensity * 0.4) + aSeed.x);
+      float angle = aSeed.y * 6.28318 + t * 0.3;
+      // radius: large → small (converge) → large (burst)
+      float radius = mix(4.2, 0.5, pulse) + cycle * (1.0 - pulse) * 3.0;
+      pos.x = cos(angle) * radius;
+      pos.z = sin(angle) * radius;
+      pos.y = 1.0 + aSeed.x * 2.0 + pulse * 2.0;
+      lift = pulse * 0.8 - 0.2;
+    }
+
+    // Gravity-well tint: still sample the wells so color follows the market.
+    vec2 force = vec2(0.0);
     for (int i = 0; i < ${MAX_WELLS}; i++) {
       if (i >= uWellCount) break;
       vec3 well = uWells[i];
       vec2 toWell = well.xy - pos.xz;
-      float dist = length(toWell) + 0.35;
-      float invDist = 1.0 / dist;
-      // Signed strength: positive change = attract, negative = repel.
-      float strength = well.z * invDist * invDist * 0.9;
+      float dist = length(toWell) + 0.4;
+      float strength = well.z / (dist * dist);
       force += normalize(toWell) * strength;
-      // Lift: up-wells push particles upward, down-wells pull them down.
-      lift += strength * uVolatility[i] * 1.4;
+      lift += strength * uVolatility[i];
     }
 
-    pos.xz += force * (0.8 + uIntensity * 1.2);
-    pos.y += lift + sin(uTime * 0.6 + aSeed.y * 9.0) * 0.12;
-
-    vForce = force.x * 0.5 + force.y * 0.5;
     vLift = lift;
+    vPhase = aPhase;
+
+    // High-frequency twinkle: each particle flickers fast, phase-offset.
+    vTwinkle = 0.5 + 0.5 * sin(t * (8.0 + aSeed.x * 14.0) + aSeed.y * 20.0);
 
     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-    gl_PointSize = aSize * (300.0 / -mvPosition.z) * (0.6 + uIntensity * 0.8);
+    gl_PointSize = aSize * (340.0 / -mvPosition.z) * (0.7 + uIntensity * 1.1) * (0.6 + vTwinkle * 0.6);
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
 
 const particleFragmentShader = /* glsl */ `
   precision highp float;
-  varying float vForce;
   varying float vLift;
+  varying float vTwinkle;
+  varying float vPhase;
 
   void main() {
-    // Soft circular point.
     vec2 c = gl_PointCoord - 0.5;
     float r = length(c);
     if (r > 0.5) discard;
-    float glow = smoothstep(0.5, 0.0, r);
 
-    // Color by direction: lifted (up-well) → acid, sunk (down-well) → cinnabar.
+    // Brighter core + softer halo for a luminous mote, not a flat dot.
+    float core = smoothstep(0.18, 0.0, r);
+    float halo = smoothstep(0.5, 0.1, r);
+    float glow = core * 0.8 + halo * 0.4;
+
     vec3 acid = vec3(0.498, 0.718, 0.639);
     vec3 cinnabar = vec3(0.831, 0.353, 0.259);
     vec3 parchment = vec3(0.898, 0.867, 0.792);
-    vec3 tint = mix(parchment, acid, clamp(vLift * 2.5, 0.0, 1.0));
-    tint = mix(tint, cinnabar, clamp(-vLift * 2.5, 0.0, 1.0));
+    vec3 meteor = vec3(0.92, 0.88, 0.74);
 
-    float alpha = glow * (0.35 + abs(vLift) * 0.6 + abs(vForce) * 0.3);
-    gl_FragColor = vec4(tint * (0.7 + glow * 0.6), alpha);
+    vec3 tint = mix(parchment, acid, clamp(vLift * 3.0, 0.0, 1.0));
+    tint = mix(tint, cinnabar, clamp(-vLift * 3.0, 0.0, 1.0));
+    // Meteors read warm-white hot.
+    tint = mix(tint, meteor, step(0.5, vPhase) * step(vPhase, 1.5));
+
+    // Twinkle modulates both brightness and alpha — fast flicker.
+    float bright = 0.5 + vTwinkle * 0.9;
+    float alpha = glow * (0.3 + abs(vLift) * 0.5) * bright;
+    gl_FragColor = vec4(tint * bright, alpha);
   }
 `;
 
@@ -207,8 +250,8 @@ export function MarketFlowField({ assets, liveQuotes, animate = true }: MarketFl
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     const seeds = new Float32Array(PARTICLE_COUNT * 2);
     const sizes = new Float32Array(PARTICLE_COUNT);
+    const phases = new Float32Array(PARTICLE_COUNT);
     for (let i = 0; i < PARTICLE_COUNT; i++) {
-      // Distribute particles in a disc around the mountains, slightly above.
       const angle = Math.random() * Math.PI * 2;
       const radius = 0.8 + Math.random() * 3.8;
       positions[i * 3] = Math.cos(angle) * radius;
@@ -216,12 +259,16 @@ export function MarketFlowField({ assets, liveQuotes, animate = true }: MarketFl
       positions[i * 3 + 2] = Math.sin(angle) * radius;
       seeds[i * 2] = Math.random();
       seeds[i * 2 + 1] = Math.random();
-      sizes[i] = 0.02 + Math.random() * 0.05;
+      sizes[i] = 0.03 + Math.random() * 0.06;
+      // Choreography split: ~55% ring current, ~30% meteor, ~15% converge burst.
+      const roll = Math.random();
+      phases[i] = roll < 0.55 ? 0 : roll < 0.85 ? 1 : 2;
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geo.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 2));
     geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
     return geo;
   }, []);
 
@@ -239,7 +286,8 @@ export function MarketFlowField({ assets, liveQuotes, animate = true }: MarketFl
       uWells: { value: wellArrays.positions },
       uVolatility: { value: wellArrays.volatility },
       uWellCount: { value: assets.length },
-      uIntensity: { value: 0.3 }
+      uIntensity: { value: 0.3 },
+      uConverge: { value: 0.0 }
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [wellArrays]
@@ -305,16 +353,18 @@ export function MarketFlowField({ assets, liveQuotes, animate = true }: MarketFl
       u.uAdvanceRatio.value = THREE.MathUtils.damp(u.uAdvanceRatio.value, advanceRatio, 3.0, delta);
     }
     if (particleMaterialRef.current) {
-      particleMaterialRef.current.uniforms.uIntensity.value = THREE.MathUtils.damp(
-        particleMaterialRef.current.uniforms.uIntensity.value,
-        momentum,
-        2.5,
+      const pu = particleMaterialRef.current.uniforms;
+      pu.uIntensity.value = THREE.MathUtils.damp(pu.uIntensity.value, momentum, 2.5, delta);
+      // Converge-burst: a breathing pulse whose strength scales with volatility.
+      // High-volatility markets trigger dramatic gather-then-explode cycles.
+      const burstStrength = Math.min(1, avgVolatility * 1.6);
+      const pulse = 0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 0.7);
+      pu.uConverge.value = THREE.MathUtils.damp(
+        pu.uConverge.value,
+        pulse * burstStrength,
+        3.0,
         delta
       );
-      // Notify the GPU that the well textures changed.
-      if (particleGeometry.attributes.position) {
-        // wells live in a separate uniform array, just mark via needsUpdate n/a.
-      }
     }
   });
 
