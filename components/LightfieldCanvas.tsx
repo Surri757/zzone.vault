@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Asset } from "@/lib/types";
 import { MarketMountainRidge } from "@/components/MarketMountainRidge";
+import { MarketFlowField } from "@/components/MarketFlowField";
 
 interface StockNode3D {
   id: string;
@@ -560,6 +561,8 @@ export function LightfieldCanvas({
           highlightedIds={highlightedIds}
           animate={!reduceMotion}
         />
+        {/* Data river + force-field particles — currents flowing around the range. */}
+        <MarketFlowField assets={assets} liveQuotes={liveQuotes} animate={!reduceMotion} />
         <AssetInkTrails
           assets={assets}
           interactive={interactive}
