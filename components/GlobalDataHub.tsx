@@ -1026,12 +1026,27 @@ export function GlobalDataHub({
                         </span>
                       </button>
                       <span className="shrink-0 text-right">
-                        <span
+                        <AnimatedNumber
+                          value={quote?.price}
+                          digits={4}
                           className={className(
-                            "block font-mono text-sm font-bold tabular-nums",
+                            "block font-mono text-3xl font-extrabold tabular-nums leading-none",
                             hasChange
                               ? marketChangeText(market, changePct)
-                              : "text-white/38"
+                              : "text-white"
+                          )}
+                        />
+                        <span
+                          className={className(
+                            "mt-1.5 inline-flex items-center justify-center rounded-[6px] px-2 py-0.5 font-mono text-base font-extrabold tabular-nums",
+                            hasChange
+                              ? className(
+                                  marketChangeText(market, changePct),
+                                  changePct >= 0
+                                    ? marketColorPalette(market).riseBackground
+                                    : marketColorPalette(market).fallBackground
+                                )
+                              : "bg-white/10 text-white/38"
                           )}
                         >
                           {hasChange ? (
@@ -1040,16 +1055,6 @@ export function GlobalDataHub({
                             "--"
                           )}
                         </span>
-                        <AnimatedNumber
-                          value={quote?.price}
-                          digits={4}
-                          className={className(
-                            "mt-0.5 block font-mono text-2xl font-bold tabular-nums",
-                            hasChange
-                              ? marketChangeText(market, changePct)
-                              : "text-white"
-                          )}
-                        />
                       </span>
                       {onWatchlistAdd && onWatchlistRemove ? (
                         <button
