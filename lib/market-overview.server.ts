@@ -192,7 +192,11 @@ type SectorStrengthDraft = {
   weightedIssues: WeightedSectorIssue[];
 };
 
-const EASTMONEY_PAGE_SIZE = 100;
+// Eastmoney returns up to 500 rows per page. A larger page keeps the number of
+// fetch subrequests per Worker invocation well under Cloudflare's 50-request
+// cap: at 100 rows/page the full CN snapshot needs ~59 pages and blows the
+// limit ("Too many subrequests by single Worker invocation").
+const EASTMONEY_PAGE_SIZE = 500;
 const EASTMONEY_CONCURRENCY = 12;
 const EASTMONEY_FIELDS = [
   "f2",
