@@ -127,7 +127,7 @@ export function PrivateTradeConsole() {
   const quoteStream = useQuoteStream({
     ids: requestedQuoteIds,
     market: activeMarket,
-    enabled: activeView === "overview"
+    enabled: true
   });
 
   useEffect(() => {
@@ -238,15 +238,13 @@ export function PrivateTradeConsole() {
   return (
     <MotionConfig reducedMotion="user">
       <main className="ink-interface noise-field scanline relative min-h-screen overflow-hidden bg-carbon text-ink">
-      {activeView === "overview" ? (
-        <LightfieldCanvas
-          assets={marketAssets}
-          interactive
-          onAssetSelect={setFocusAssetId}
-          highlightedIds={[focusAssetId]}
-          liveQuotes={quoteStream.quotes}
-        />
-      ) : null}
+      <LightfieldCanvas
+        assets={marketAssets}
+        interactive={activeView === "overview"}
+        onAssetSelect={setFocusAssetId}
+        highlightedIds={[focusAssetId]}
+        liveQuotes={quoteStream.quotes}
+      />
 
       <div className="relative z-10 min-h-screen">
         <header className="vault-header fixed inset-x-0 top-0 z-50 border-b border-white/10 px-4 sm:px-6 lg:px-8">
