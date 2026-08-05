@@ -179,77 +179,75 @@ const mountainFragmentShader = /* glsl */ `
   void main() {
     float heightRatio = uPeakHeight > 0.01 ? clamp(vHeight / (uPeakHeight * 1.25), 0.0, 1.0) : 0.0;
 
-    // ---- Directional lighting ----
-    // A high sun from the upper-left-front lights the mountain so one face is
-    // bright and the opposite falls into shade — the core of solid form.
-    vec3 lightDir = normalize(vec3(-0.45, 0.78, 0.45));
+    // ---- Directional lighting (dramatic chiaroscuro) ----
+    // Strong contrast between sunlit and shadowed faces is what gives a mountain
+    // mass. Low ambient so shadows go deep; high diffuse so lit faces glow.
+    vec3 lightDir = normalize(vec3(-0.5, 0.72, 0.48));
     float diffuse = max(dot(vNormal, lightDir), 0.0);
-    // Ambient fill from the sky so shadowed faces aren't pure black.
-    float ambient = 0.32 + 0.18 * vNormal.y;
-    float light = ambient + diffuse * 0.85;
+    // Wrap lighting so the terminator (day/night boundary) is soft, not a hard line.
+    float wrapDiffuse = max(dot(vNormal, lightDir) * 0.5 + 0.5, 0.0);
+    float ambient = 0.16 + 0.12 * vNormal.y;
+    float light = ambient + wrapDiffuse * 1.25 + diffuse * 0.3;
 
-    // Rim light along the silhouette edges so the mountain's outline glows
-    // faintly against the dark background — an ink-wash convention.
+    // Specular sheen on the crest where the surface faces the light — reads as
+    // light catching a rocky ridge.
+    vec3 halfDir = normalize(lightDir + normalize(uCameraPos - vWorldPos));
+    float spec = pow(max(dot(vNormal, halfDir), 0.0), 12.0);
+
+    // Rim light along the silhouette edges.
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
-    float rim = pow(1.0 - max(dot(vNormal, viewDir), 0.0), 3.0);
+    float rim = pow(1.0 - max(dot(vNormal, viewDir), 0.0), 2.5);
 
     // ---- Base color by direction + height ----
     float dir = clamp(uChange / 4.0, -1.0, 1.0);
-    vec3 upTint = mix(vec3(0.229, 0.302, 0.259), uColorUp, 0.7);
-    vec3 downTint = mix(vec3(0.229, 0.302, 0.259), uColorDown, 0.7);
+    vec3 upTint = mix(vec3(0.229, 0.302, 0.259), uColorUp, 0.75);
+    vec3 downTint = mix(vec3(0.229, 0.302, 0.259), uColorDown, 0.75);
     vec3 dirColor = mix(vec3(0.229, 0.302, 0.259), upTint, max(0.0, dir));
     dirColor = mix(dirColor, downTint, max(0.0, -dir));
 
-    // Vertical stratigraphy: ink-dark base, lighter mineral mid, pale crest.
-    vec3 footColor = vec3(0.038, 0.048, 0.040);
-    vec3 crestColor = vec3(0.82, 0.79, 0.70);
-    vec3 heightColor = mix(footColor, dirColor, smoothstep(0.0, 0.6, heightRatio));
-    heightColor = mix(heightColor, crestColor, smoothstep(0.75, 1.0, heightRatio) * 0.5);
+    // Vertical stratigraphy: deep ink base, mineral mid, pale crest.
+    vec3 footColor = vec3(0.024, 0.032, 0.028);
+    vec3 crestColor = vec3(0.85, 0.82, 0.72);
+    vec3 heightColor = mix(footColor, dirColor, smoothstep(0.0, 0.55, heightRatio));
+    heightColor = mix(heightColor, crestColor, smoothstep(0.7, 1.0, heightRatio) * 0.55);
 
     vec3 color = heightColor * light;
+    color += crestColor * spec * 0.35 * smoothstep(0.4, 1.0, heightRatio);
 
-    // ---- 皴法 (cūn) texture strokes ----
     // ---- 皴法 (cūn fǎ) brush-stroke texture ----
-    // Two layers of stroke texture give the surface the look of painted stone:
-    //
-    //   (a) Directional fall-line striations — the "hemp-fibre" (披麻皴) lines
-    //       that run down the steepest gradient. Built from a high-frequency
-    //       sine field warped by fbm so the lines wiggle like real brush drag.
-    //
-    //   (b) Coarser ink dabs — the斧劈皴 (axe-cut) blocks that give rock faces
-    //       their chunky, faceted mass. Lower frequency, higher contrast.
+    // Two layers of stroke texture give the surface the look of painted stone.
     float slope = 1.0 - vNormal.y;
 
-    // (a) Hemp-fibre strokes: the fall direction is where slope is steepest.
-    // Sample a ridge-making function along the local angle so lines radiate
-    // outward from the peak like ink dragged downhill.
+    // (a) Hemp-fibre strokes (披麻皴): narrow high-frequency radial lines warped
+    // by fbm. Use a sharp ridge (abs(sin)) so each stroke is a thin dark vein,
+    // not a broad band — reads as individual brush drags down the rock face.
     float strokeAngle = atan(vLocal.y, vLocal.x);
     float radialDist = length(vLocal);
-    float lineWarp = fbm(vLocal * 3.0 + uTime * 0.02) * 1.5;
-    float hempLines = sin((strokeAngle + lineWarp) * 22.0 + radialDist * 16.0);
-    hempLines = smoothstep(0.2, 0.8, hempLines * 0.5 + 0.5);
+    float lineWarp = fbm(vLocal * 4.0 + uTime * 0.02) * 2.0;
+    float hempRaw = abs(sin((strokeAngle + lineWarp) * 40.0 + radialDist * 28.0));
+    float hempLines = 1.0 - smoothstep(0.0, 0.22, hempRaw);
 
-    // (b) Axe-cut blocks: chunky faceted noise on steep faces.
-    float axeCut = smoothstep(0.45, 0.7, fbm(vLocal * (8.0 + uVolatility * 14.0)));
+    // (b) Axe-cut blocks (斧劈皴): faceted steps via quantized fbm, giving
+    // chunky rock shelves rather than smooth noise.
+    float axeNoise = fbm(vLocal * (10.0 + uVolatility * 18.0));
+    float axeCut = step(0.52, axeNoise) * smoothstep(0.48, 0.6, axeNoise);
 
-    // Combine: strokes dominate on steep slopes, fade toward the rounded crest.
-    float strokeMask = slope * (0.5 + 0.5 * (1.0 - heightRatio));
-    float inkStrokes = mix(hempLines, axeCut, 0.4) * strokeMask;
+    // Combine with a strong slope mask — strokes bite hardest on steep rock.
+    float strokeMask = pow(slope, 0.6) * (0.65 + 0.35 * (1.0 - heightRatio));
+    float inkStrokes = clamp(mix(hempLines, axeCut, 0.5) * strokeMask, 0.0, 1.0);
 
-    // Ink tones: strokes darken the surface but with tonal variation (浓淡),
-    // not a flat multiply — some strokes are deep ink, others light wash.
-    // Strong contrast so the brushwork reads clearly as ink on paper.
-    float inkTone = mix(0.4, 0.95, fbm(vLocal * 5.0));
-    color *= 1.0 - inkStrokes * (1.0 - inkTone) * 0.9;
-    // A few bright strokes read as dry-brush highlights on exposed ridges.
-    color += crestColor * inkStrokes * heightRatio * 0.12;
+    // Ink tones with deep contrast:浓墨 (deep) to 淡墨 (light wash).
+    float inkTone = mix(0.28, 0.95, fbm(vLocal * 5.0));
+    color *= 1.0 - inkStrokes * (1.0 - inkTone) * 1.05;
+    // Dry-brush highlights on ridge-facing strokes.
+    color += crestColor * inkStrokes * heightRatio * abs(dir) * 0.15;
 
     // Fine paper-fibre grain across the whole surface.
-    float fibre = hash21(vLocal * 280.0) - 0.5;
-    color += vec3(0.76, 0.73, 0.65) * fibre * 0.022;
+    float fibre = hash21(vLocal * 320.0) - 0.5;
+    color += vec3(0.76, 0.73, 0.65) * fibre * 0.025;
 
-    // Crest highlight + rim glow.
-    color += crestColor * rim * 0.18;
+    // Crest highlight + rim glow — brighter so peaks read against the dark sky.
+    color += crestColor * rim * 0.28;
 
     // ---- Atmospheric depth (层次远近) ----
     // Distance fog dissolves far mountains into the background haze, and a
@@ -366,7 +364,7 @@ function SingleMountain({
     // Resolve the latest quote for this asset and damp the uniforms toward it,
     // so a new tick eases the mountain rather than snapping.
     const live = liveQuotes?.get(instance.assetId);
-    const targetPeak = Math.max(0.4, Math.min(3.2, (Math.abs(live?.changePct ?? instance.change) / 5) * 2.4 + 0.4));
+    const targetPeak = Math.max(0.6, Math.min(4.5, (Math.abs(live?.changePct ?? instance.change) / 5) * 3.4 + 0.6));
     const targetChange = live?.changePct ?? instance.change;
 
     if (animate) {
@@ -441,9 +439,9 @@ export function MarketMountainRidge({
           0,
           Math.sin(angle) * ringRadius
         ),
-        baseScale: 0.85 + asset.liquidity * 0.9,
+        baseScale: 1.15 + asset.liquidity * 1.1,
         trendTexture: buildTrendTexture(asset.trend),
-        peakHeight: Math.max(0.4, Math.min(3.2, asset.heat * 2.4 + 0.4)),
+        peakHeight: Math.max(0.6, Math.min(4.5, asset.heat * 3.4 + 0.6)),
         change: asset.change24h,
         volatility: Math.max(0.12, asset.volatility)
       };
@@ -461,9 +459,64 @@ export function MarketMountainRidge({
     []
   );
 
+  // Distant ridge silhouettes — two rings of low, hazy mountains behind the
+  // main peaks. They add the layer depth (层峦叠嶂) that ink-wash landscapes
+  // rely on: near peaks are crisp and dark, far ones fade into the mist.
+  const distantRidgeUniforms = useMemo(
+    () => ({
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color("#0d1310") },
+      uMist: { value: new THREE.Color("#070906") }
+    }),
+    []
+  );
+  const distantRidgeRef = useRef<THREE.ShaderMaterial>(null);
+  const distantRidgeGeometry = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(26, 8, 200, 48);
+    geo.rotateX(-Math.PI / 2);
+    return geo;
+  }, []);
+
   useFrame((state) => {
     groundUniforms.uTime.value = state.clock.elapsedTime;
+    if (distantRidgeRef.current) {
+      distantRidgeRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    }
   });
+
+  const distantRidgeVertex = useMemo(() => /* glsl */ `
+    ${noiseAndFbm}
+    uniform float uTime;
+    varying float vH;
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      // A long ridge line: fbm carves a mountain skyline along X, repeated
+      // octaves add foothills. Keep it low so it reads as distant.
+      vec2 p = vec2(uv.x * 8.0 + uTime * 0.01, uv.y);
+      float ridge = fbm(p) * 0.7 + fbm(p * 3.0) * 0.3;
+      float h = pow(ridge, 1.4) * 2.6;
+      vH = h;
+      vec3 displaced = position + vec3(0.0, h, 0.0);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+    }
+  `, [noiseAndFbm]);
+
+  const distantRidgeFragment = useMemo(() => /* glsl */ `
+    precision highp float;
+    uniform vec3 uColor;
+    uniform vec3 uMist;
+    varying float vH;
+    varying vec2 vUv;
+    void main() {
+      // Fade the ridge into mist by height and by horizontal position so the
+      // edges dissolve — the classic "mountains emerging from clouds" effect.
+      float alpha = smoothstep(0.0, 0.4, vH) * 0.85;
+      alpha *= smoothstep(0.0, 0.15, vUv.x) * smoothstep(1.0, 0.85, vUv.x);
+      vec3 c = mix(uMist, uColor, smoothstep(0.0, 0.6, vH));
+      gl_FragColor = vec4(c, alpha);
+    }
+  `, []);
 
   return (
     <group position={[0, -0.2, 0]}>
@@ -473,6 +526,26 @@ export function MarketMountainRidge({
           color={PALETTE.soot}
           transparent
           opacity={0.55}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {/* Distant ridge silhouettes — two layers for depth. */}
+      <mesh geometry={distantRidgeGeometry} position={[0, 0.3, -7]}>
+        <shaderMaterial
+          vertexShader={distantRidgeVertex}
+          fragmentShader={distantRidgeFragment}
+          uniforms={distantRidgeUniforms}
+          transparent
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh geometry={distantRidgeGeometry} position={[2, 0.1, -5.5]}>
+        <shaderMaterial
+          vertexShader={distantRidgeVertex}
+          fragmentShader={distantRidgeFragment}
+          uniforms={distantRidgeUniforms}
+          transparent
           depthWrite={false}
         />
       </mesh>

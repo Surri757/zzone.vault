@@ -546,13 +546,13 @@ export function LightfieldCanvas({
       aria-hidden="true"
     >
       <Canvas
-        camera={{ position: [0, 4.8, 7.2], fov: 52 }}
-        dpr={[1, 1.35]}
+        camera={{ position: [0, 5.4, 6.2], fov: 50 }}
+        dpr={[1, 1.5]}
         frameloop={reduceMotion ? "demand" : "always"}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
       >
         <color attach="background" args={["#070906"]} />
-        <fog attach="fog" args={["#070906", 8, 19]} />
+        <fog attach="fog" args={["#070906", 7, 17]} />
         <InkWashField animate={!reduceMotion} />
         <InkContours animate={!reduceMotion} />
         {/* The market as a living mountain range — data-carved, breathing each tick. */}
