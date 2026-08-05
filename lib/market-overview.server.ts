@@ -375,7 +375,7 @@ async function fetchCatalogQuotes(instruments: readonly StockInstrument[]) {
       const index = nextBatch;
       nextBatch += 1;
       let lastError: unknown;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const result = await fetchEastmoneyUlistBatch(secidBatches[index], providerHost);
           providerHost = result.host;
