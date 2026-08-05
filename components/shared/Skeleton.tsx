@@ -6,7 +6,7 @@
 
 export function SkeletonCard() {
   return (
-    <div className="animate-pulse rounded-[8px] border border-white/10 bg-[#070807]/86 p-4">
+    <div className="animate-pulse rounded-[8px] border border-white/10 bg-[#070807]/8 p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -56,7 +56,7 @@ export function SkeletonListItem() {
 
 export function SkeletonChart() {
   return (
-    <div className="animate-pulse rounded-[8px] border border-white/10 bg-black/24 p-3">
+    <div className="animate-pulse rounded-[8px] border border-white/10 bg-black/10 p-3">
       <div className="mb-2 flex items-center gap-2">
         <div className="h-4 w-4 rounded bg-white/[0.08]" />
         <div className="h-4 w-16 rounded bg-white/[0.08]" />
@@ -68,7 +68,7 @@ export function SkeletonChart() {
 
 export function SkeletonPanel() {
   return (
-    <div className="animate-pulse rounded-[8px] border border-white/10 bg-[#070807]/90 p-4">
+    <div className="animate-pulse rounded-[8px] border border-white/10 bg-[#070807]/8 p-4">
       <div className="mb-4 flex items-center gap-2">
         <div className="h-4 w-4 rounded bg-white/[0.08]" />
         <div className="h-4 w-24 rounded bg-white/[0.08]" />

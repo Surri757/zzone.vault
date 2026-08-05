@@ -204,7 +204,7 @@ export function DashboardHero({
             ))}
           </div>
 
-          <div className="mt-4 border border-white/12 bg-black/24">
+          <div className="mt-4 border border-white/12 bg-black/8">
             <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
               <div>
                 <p className="font-mono text-xs text-acid">NEEDS ATTENTION</p>

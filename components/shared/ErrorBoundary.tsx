@@ -33,7 +33,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       if (this.props.fallback) return this.props.fallback;
 
       return (
-        <div className="rounded-[8px] border border-dangerline/40 bg-[#070807]/90 p-6 shadow-panel-edge backdrop-blur-xl">
+        <div className="rounded-[8px] border border-dangerline/40 bg-[#070807]/8 p-6 shadow-panel-edge backdrop-blur-md">
           <div className="flex items-start gap-4">
             <AlertTriangle className="h-6 w-6 shrink-0 text-dangerline" />
             <div className="min-w-0">

@@ -54,7 +54,7 @@ export function AsyncPanel({
       : `${sourceLabel} / DATA AS OF ${dataTime}`;
 
   return (
-    <section className="rounded-[8px] border border-white/10 bg-[#070807]/90 p-4 shadow-panel-edge backdrop-blur-xl">
+    <section className="rounded-[8px] border border-white/10 bg-[#070807]/8 p-4 shadow-panel-edge backdrop-blur-md">
       {header}
 
       <div

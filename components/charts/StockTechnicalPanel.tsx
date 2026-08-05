@@ -172,7 +172,7 @@ export function StockAnalysisPeriodTabs({
   return (
     <div className="overflow-x-auto pb-1 thin-scrollbar">
       <div
-        className="grid min-w-[360px] grid-cols-4 border border-white/10 bg-black/20 p-1"
+        className="grid min-w-[360px] grid-cols-4 border border-white/10 bg-black/6 p-1"
         role="tablist"
         aria-label={label}
       >
@@ -481,7 +481,7 @@ export function StockTechnicalPanel({
       </div>
 
       {loading && !data ? (
-        <div className="mt-3 grid h-[430px] place-items-center border border-dashed border-white/10 bg-black/15">
+        <div className="mt-3 grid h-[430px] place-items-center border border-dashed border-white/10 bg-black/6">
           <div className="text-center">
             <RefreshCw className="mx-auto h-5 w-5 animate-spin text-acid" aria-hidden="true" />
             <p className="mt-3 font-mono text-xs text-white/48">正在同步真实 OHLCV 并计算指标</p>
@@ -528,7 +528,7 @@ export function StockTechnicalPanel({
             ))}
           </div>
 
-          <div className="border border-white/10 bg-black/20 p-3 sm:p-4">
+          <div className="border border-white/10 bg-black/6 p-3 sm:p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Sigma className="h-4 w-4 text-amberline" aria-hidden="true" />
@@ -553,7 +553,7 @@ export function StockTechnicalPanel({
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <div className="border border-white/10 bg-black/20 p-3 sm:p-4">
+            <div className="border border-white/10 bg-black/6 p-3 sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-2 font-mono text-xs">
                 <span className="text-white/72">MACD 12 / 26 / 9</span>
                 <span className="text-white/42">动量</span>
@@ -566,7 +566,7 @@ export function StockTechnicalPanel({
                 </div>
               )}
             </div>
-            <div className="border border-white/10 bg-black/20 p-3 sm:p-4">
+            <div className="border border-white/10 bg-black/6 p-3 sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-2 font-mono text-xs">
                 <span className="text-white/72">RSI 14</span>
                 <span className="text-white/42">70 / 30</span>

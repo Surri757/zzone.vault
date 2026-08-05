@@ -122,7 +122,7 @@ export function CorrelationHeatmap({
   const cellSize = Math.max(16, Math.min(32, 300 / displayStocks.length));
 
   return (
-    <div className="overflow-hidden rounded-[8px] border border-white/10 bg-black/24 p-3">
+    <div className="overflow-hidden rounded-[8px] border border-white/10 bg-black/6 p-3">
       <div className="mb-3 flex items-center justify-between">
         <span className="font-mono text-sm text-white">CORRELATION MATRIX</span>
       </div>

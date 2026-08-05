@@ -801,7 +801,7 @@ export function GlobalDataHub({
 
         <div
           className={className(
-            "grid grid-cols-3 border border-white/10 bg-black/20 p-1 lg:hidden",
+            "grid grid-cols-3 border border-white/10 bg-black/6 p-1 lg:hidden",
             workspace ? "mt-3" : "mt-5"
           )}
           role="tablist"
@@ -918,7 +918,7 @@ export function GlobalDataHub({
                 onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 120)}
                 onKeyDown={handleSearchKeyDown}
                 placeholder={market === "CN" ? "代码、中文名或公司名" : "Ticker or company name"}
-                className="h-11 w-full rounded-[8px] border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-white placeholder:text-white/28"
+                className="h-11 w-full rounded-[8px] border border-white/10 bg-black/8 pl-10 pr-3 text-sm text-white placeholder:text-white/28"
               />
               {suggestionsOpen ? (
                 <div className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-[8px] border border-white/10 bg-[#0b0d0f]/95 shadow-2xl backdrop-blur">
@@ -1408,7 +1408,7 @@ export function GlobalDataHub({
                     ].map(([label, value]) => (
                       <div
                         key={label}
-                        className="rounded-[8px] border border-white/10 bg-black/24 p-3"
+                        className="rounded-[8px] border border-white/10 bg-black/8 p-3"
                       >
                         <p className="font-mono text-xs text-white">{label}</p>
                         <p className="mt-1 break-words text-xs leading-5 text-white/42">{value}</p>

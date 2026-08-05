@@ -170,7 +170,7 @@ export function CandlestickChart({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-[8px] border border-white/10 bg-black/24">
+    <div className="relative overflow-hidden rounded-[8px] border border-white/10 bg-black/6">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}

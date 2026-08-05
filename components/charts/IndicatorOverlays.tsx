@@ -370,19 +370,19 @@ export function IndicatorPanel({
   return (
     <div className="grid gap-3">
       {showMA && (
-        <div className="rounded-[8px] border border-white/10 bg-black/24 p-3">
+        <div className="rounded-[8px] border border-white/10 bg-black/6 p-3">
           <p className="mb-2 font-mono text-[10px] text-white/36">MOVING AVERAGES</p>
           <MAOverlay prices={prices} />
         </div>
       )}
       {showMACD && (
-        <div className="rounded-[8px] border border-white/10 bg-black/24 p-3">
+        <div className="rounded-[8px] border border-white/10 bg-black/6 p-3">
           <p className="mb-2 font-mono text-[10px] text-white/36">MACD (12, 26, 9)</p>
           <MACDSubchart prices={prices} />
         </div>
       )}
       {showRSI && (
-        <div className="rounded-[8px] border border-white/10 bg-black/24 p-3">
+        <div className="rounded-[8px] border border-white/10 bg-black/6 p-3">
           <p className="mb-2 font-mono text-[10px] text-white/36">RSI (14)</p>
           <RSISubchart prices={prices} />
         </div>
