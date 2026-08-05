@@ -44,19 +44,23 @@ const PALETTE = {
 // layers — a radial falloff so the peak is centered, a noise ridge driven by
 // the trend texture, and a jitter scaled by volatility — all summed and lifted
 // by the uniform peak height.
-const mountainVertexShader = /* glsl */ `
-  uniform float uPeakHeight;
-  uniform float uVolatility;
-  uniform float uTime;
-  uniform sampler2D uTrendMap;
-  attribute vec2 aLocal;
+// =============================================================================
+// Ink-wash mountain shaders — rebuilt to read as real Chinese landscape painting.
+//
+// Research sources:
+//   - 皴法 (texture strokes):披麻皴/斧劈皴 give mountains mass via directional
+//     brush strokes along the slope, not flat shading.
+//   - 层次远近 (depth layering): near mountains are dark and crisp, far ones
+//     dissolve into mist — achieved via distance fog + atmospheric scattering.
+//   - Heightmap displacement + analytic normals (Inigo Quilez raymarching/terrain):
+//     fbm noise carves natural ridges; sampling neighbors gives the surface
+//     normal so light wraps around the form instead of a flat-shaded cone.
+// =============================================================================
 
-  varying float vHeight;
-  varying vec2 vLocal;
-  varying vec3 vWorldPos;
-
-  // Cheap value noise so ridges look organic without an external texture.
-  float hash(vec2 p) {
+// Shared noise so both shaders stay in sync. fbm (fractal Brownian motion)
+// layers 5 octaves of value noise — the standard for natural terrain.
+const noiseAndFbm = /* glsl */ `
+  float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
     return fract(p.x * p.y);
@@ -66,89 +70,205 @@ const mountainVertexShader = /* glsl */ `
     vec2 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
     return mix(
-      mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
-      mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
+      mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+      mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x),
       f.y
     );
   }
+  // 5-octave fbm with domain rotation — produces organic mountain ridgelines.
+  float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    mat2 rotation = mat2(0.80, 0.60, -0.60, 0.80);
+    for (int i = 0; i < 5; i++) {
+      value += amplitude * vnoise(p);
+      p = rotation * p * 2.03 + 11.7;
+      amplitude *= 0.5;
+    }
+    return value;
+  }
+`;
+
+// The height function: a mountain shape driven by peak height, trend data
+// (real intraday series modulating the ridge silhouette), volatility
+// (jaggedness), and fbm for natural terrain detail. Shared between the vertex
+// shader (displacement) and a tiny neighbor-sample for the normal.
+const heightFunction = /* glsl */ `
+  uniform float uPeakHeight;
+  uniform float uVolatility;
+  uniform float uTime;
+  uniform sampler2D uTrendMap;
+
+  float mountainHeight(vec2 local) {
+    float radius = length(local);
+    // Base mountain dome: tall narrow peak, broad foot. pow sharpens the summit.
+    float dome = pow(max(0.0, 1.0 - radius * 0.85), 1.8);
+
+    // Trend ridge: the real price path sculpts the skyline as you orbit.
+    float angle = atan(local.y, local.x);
+    float trendU = (angle + 3.14159) / 6.28318;
+    float ridgeSample = texture2D(uTrendMap, vec2(trendU, radius)).r;
+    float trendRidge = (ridgeSample - 0.5) * uVolatility * 2.4 * dome;
+
+    // fbm terrain detail — multi-scale ridges and gullies. The first octave
+    // gives major ridge lines; higher octaves add crags scaled by volatility.
+    vec2 terrainUV = local * 2.2;
+    float major = fbm(terrainUV + vec2(uTime * 0.02, 0.0));
+    float minor = fbm(terrainUV * 3.5 - vec2(5.0, uTime * 0.015));
+    float detail = (major - 0.5) * 1.6 + (minor - 0.5) * 0.7 * uVolatility;
+
+    // Ridged noise: sharpen fbm into crests rather than rolling hills, so the
+    // silhouette has the crisp peaks of an ink-wash mountain.
+    float ridged = 1.0 - abs(major - 0.5) * 2.0;
+    ridged = pow(ridged, 2.0) * uVolatility * 1.2;
+
+    return dome * uPeakHeight + trendRidge + detail * dome * 0.8 + ridged * dome;
+  }
+`;
+
+const mountainVertexShader = /* glsl */ `
+  ${noiseAndFbm}
+  ${heightFunction}
+  attribute vec2 aLocal;
+
+  varying float vHeight;
+  varying vec2 vLocal;
+  varying vec3 vWorldPos;
+  varying vec3 vNormal;
 
   void main() {
-    // aLocal is the vertex position in unit-square space [-1, 1] relative to
-    // the mountain's own center. Radius from center drives the cone falloff.
-    float radius = length(aLocal);
-
-    // Cone profile: sharp peak in the middle, broad skirt at the foot.
-    // pow makes the peak pronounced and the base spread wide.
-    float cone = pow(max(0.0, 1.0 - radius), 1.6);
-
-    // Trend-driven ridge: sample the trend texture along the radial angle so
-    // the skyline silhouette follows the real intraday series.
-    float angle = atan(aLocal.y, aLocal.x);
-    float ridgeSample = texture2D(uTrendMap, vec2((angle + 3.14159) / 6.28318, radius)).r;
-    float ridge = (ridgeSample - 0.5) * uVolatility * 1.8;
-
-    // Fine jitter for crags, scaled by volatility — calm stocks are smooth
-    // domes, volatile stocks are jagged peaks.
-    float crag = (vnoise(aLocal * 6.0 + uTime * 0.04) - 0.5) * uVolatility * 0.9;
-    float microCrag = (vnoise(aLocal * 18.0) - 0.5) * uVolatility * 0.35;
-
-    float displacement = cone * uPeakHeight + ridge * cone + crag + microCrag;
-
-    vHeight = displacement;
+    float h = mountainHeight(aLocal);
+    vHeight = h;
     vLocal = aLocal;
 
-    vec3 displaced = position + vec3(0.0, displacement, 0.0);
+    // Analytic normal: sample the height field at three nearby points and cross
+    // the offsets. This is what gives the mountain real shading — without it the
+    // surface is flat-shaded and reads as a cone, not stone.
+    float eps = 0.04;
+    float hx = mountainHeight(aLocal + vec2(eps, 0.0));
+    float hz = mountainHeight(aLocal + vec2(0.0, eps));
+    vec3 tangentX = normalize(vec3(eps, hx - h, 0.0));
+    vec3 tangentZ = normalize(vec3(0.0, hz - h, eps));
+    vec3 normal = normalize(cross(tangentZ, tangentX));
+
+    vec3 displaced = position + vec3(0.0, h, 0.0);
     vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
     vWorldPos = worldPos.xyz;
+    vNormal = normalize(mat3(modelMatrix) * normal);
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
 
-// Fragment shader: colors the mountain by height + change direction, with a
-// parchment ridge highlight near the peak and an ink-wash darkening at the base.
 const mountainFragmentShader = /* glsl */ `
   precision highp float;
+  ${noiseAndFbm}
 
   uniform vec3 uColorUp;
   uniform vec3 uColorDown;
   uniform float uChange;       // signed changePct, drives color blend
   uniform float uPeakHeight;
   uniform float uTime;
+  uniform vec3 uCameraPos;
+  uniform vec3 uFogColor;
 
   varying float vHeight;
   varying vec2 vLocal;
   varying vec3 vWorldPos;
-
-  float hash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-  }
+  varying vec3 vNormal;
 
   void main() {
-    // Height ratio 0..1 across this mountain's current displacement.
-    float heightRatio = uPeakHeight > 0.01 ? clamp(vHeight / (uPeakHeight * 1.3), 0.0, 1.0) : 0.0;
+    float heightRatio = uPeakHeight > 0.01 ? clamp(vHeight / (uPeakHeight * 1.25), 0.0, 1.0) : 0.0;
 
-    // Direction blend: how far toward up/down color this mountain leans.
-    // Squash tiny moves so flat stocks stay neutral mineral tone.
+    // ---- Directional lighting ----
+    // A high sun from the upper-left-front lights the mountain so one face is
+    // bright and the opposite falls into shade — the core of solid form.
+    vec3 lightDir = normalize(vec3(-0.45, 0.78, 0.45));
+    float diffuse = max(dot(vNormal, lightDir), 0.0);
+    // Ambient fill from the sky so shadowed faces aren't pure black.
+    float ambient = 0.32 + 0.18 * vNormal.y;
+    float light = ambient + diffuse * 0.85;
+
+    // Rim light along the silhouette edges so the mountain's outline glows
+    // faintly against the dark background — an ink-wash convention.
+    vec3 viewDir = normalize(uCameraPos - vWorldPos);
+    float rim = pow(1.0 - max(dot(vNormal, viewDir), 0.0), 3.0);
+
+    // ---- Base color by direction + height ----
     float dir = clamp(uChange / 4.0, -1.0, 1.0);
-    vec3 base = mix(vec3(0.229, 0.302, 0.259), uColorUp, max(0.0, dir) * 0.85);
-    base = mix(base, uColorDown, max(0.0, -dir) * 0.85);
+    vec3 upTint = mix(vec3(0.229, 0.302, 0.259), uColorUp, 0.7);
+    vec3 downTint = mix(vec3(0.229, 0.302, 0.259), uColorDown, 0.7);
+    vec3 dirColor = mix(vec3(0.229, 0.302, 0.259), upTint, max(0.0, dir));
+    dirColor = mix(dirColor, downTint, max(0.0, -dir));
 
-    // Vertical stratigraphy: darker at the foot, lighter mineral near the top.
-    vec3 color = mix(vec3(0.045, 0.055, 0.045), base, smoothstep(0.0, 0.55, heightRatio));
+    // Vertical stratigraphy: ink-dark base, lighter mineral mid, pale crest.
+    vec3 footColor = vec3(0.038, 0.048, 0.040);
+    vec3 crestColor = vec3(0.82, 0.79, 0.70);
+    vec3 heightColor = mix(footColor, dirColor, smoothstep(0.0, 0.6, heightRatio));
+    heightColor = mix(heightColor, crestColor, smoothstep(0.75, 1.0, heightRatio) * 0.5);
 
-    // Parchment ridge line: a thin bright highlight tracing the upper crest.
-    float ridgeLine = smoothstep(0.72, 0.92, heightRatio) - smoothstep(0.92, 1.0, heightRatio);
-    color += vec3(0.76, 0.73, 0.65) * ridgeLine * 0.22;
+    vec3 color = heightColor * light;
 
-    // Paper-fibre grain so the surface reads as ink on paper, not plastic.
-    float fibre = (hash(vLocal * 220.0 + uTime * 0.01) - 0.5);
+    // ---- 皴法 (cūn) texture strokes ----
+    // ---- 皴法 (cūn fǎ) brush-stroke texture ----
+    // Two layers of stroke texture give the surface the look of painted stone:
+    //
+    //   (a) Directional fall-line striations — the "hemp-fibre" (披麻皴) lines
+    //       that run down the steepest gradient. Built from a high-frequency
+    //       sine field warped by fbm so the lines wiggle like real brush drag.
+    //
+    //   (b) Coarser ink dabs — the斧劈皴 (axe-cut) blocks that give rock faces
+    //       their chunky, faceted mass. Lower frequency, higher contrast.
+    float slope = 1.0 - vNormal.y;
+
+    // (a) Hemp-fibre strokes: the fall direction is where slope is steepest.
+    // Sample a ridge-making function along the local angle so lines radiate
+    // outward from the peak like ink dragged downhill.
+    float strokeAngle = atan(vLocal.y, vLocal.x);
+    float radialDist = length(vLocal);
+    float lineWarp = fbm(vLocal * 3.0 + uTime * 0.02) * 1.5;
+    float hempLines = sin((strokeAngle + lineWarp) * 22.0 + radialDist * 16.0);
+    hempLines = smoothstep(0.2, 0.8, hempLines * 0.5 + 0.5);
+
+    // (b) Axe-cut blocks: chunky faceted noise on steep faces.
+    float axeCut = smoothstep(0.45, 0.7, fbm(vLocal * (8.0 + uVolatility * 14.0)));
+
+    // Combine: strokes dominate on steep slopes, fade toward the rounded crest.
+    float strokeMask = slope * (0.5 + 0.5 * (1.0 - heightRatio));
+    float inkStrokes = mix(hempLines, axeCut, 0.4) * strokeMask;
+
+    // Ink tones: strokes darken the surface but with tonal variation (浓淡),
+    // not a flat multiply — some strokes are deep ink, others light wash.
+    // Strong contrast so the brushwork reads clearly as ink on paper.
+    float inkTone = mix(0.4, 0.95, fbm(vLocal * 5.0));
+    color *= 1.0 - inkStrokes * (1.0 - inkTone) * 0.9;
+    // A few bright strokes read as dry-brush highlights on exposed ridges.
+    color += crestColor * inkStrokes * heightRatio * 0.12;
+
+    // Fine paper-fibre grain across the whole surface.
+    float fibre = hash21(vLocal * 280.0) - 0.5;
     color += vec3(0.76, 0.73, 0.65) * fibre * 0.022;
 
-    // Distance fade into the fog so distant mountains dissolve into atmosphere.
-    float depth = clamp((-vWorldPos.z + 4.0) / 12.0, 0.0, 1.0);
-    color *= 0.55 + depth * 0.45;
+    // Crest highlight + rim glow.
+    color += crestColor * rim * 0.18;
+
+    // ---- Atmospheric depth (层次远近) ----
+    // Distance fog dissolves far mountains into the background haze, and a
+    // vertical mist band (山腰云雾) breaks the mid-section like classical
+    // ink-wash "leaving blank" (留白). Stronger falloff so the depth reads.
+    float dist = length(uCameraPos - vWorldPos);
+    float fogFactor = 1.0 - exp(-pow(dist * 0.11, 2.0));
+    color = mix(color, uFogColor, fogFactor * 0.78);
+
+    // Mid-mountain mist band — a horizontal belt of fog around half height,
+    // so the peak floats above the cloud and the foot sinks below it. The
+    // band drifts and varies in density, breaking the silhouette naturally.
+    float mistBand = exp(-pow((heightRatio - 0.45) * 2.8, 2.0));
+    float mistNoise = 0.35 + 0.65 * fbm(vLocal * 3.5 + vec2(uTime * 0.04, 0.0));
+    color = mix(color, uFogColor * 1.12, mistBand * mistNoise * 0.55);
+
+    // Low ground fog pooling at the foot, where the mountain meets the ground.
+    float groundFog = smoothstep(0.2, 0.0, heightRatio) * (0.4 + 0.6 * fbm(vLocal * 5.0 - uTime * 0.02));
+    color = mix(color, uFogColor * 0.9, groundFog * 0.3);
 
     gl_FragColor = vec4(color, 1.0);
   }
@@ -217,17 +337,18 @@ function SingleMountain({
       uTime: { value: 0 },
       uTrendMap: { value: instance.trendTexture },
       uColorUp: { value: PALETTE.acid.clone() },
-      uColorDown: { value: PALETTE.cinnabar.clone() }
+      uColorDown: { value: PALETTE.cinnabar.clone() },
+      uCameraPos: { value: new THREE.Vector3(0, 5, 7) },
+      uFogColor: { value: new THREE.Color("#070906") }
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 
-  // The geometry carries an `aLocal` attribute = vertex position in the unit
-  // square, so the vertex shader can compute radius/angle regardless of the
-  // mesh's world scale.
+  // Higher-density geometry so the fbm displacement and analytic normals have
+  // enough vertices to express real ridge detail (48² → 96²).
   const geometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(2, 2, 48, 48);
+    const geo = new THREE.PlaneGeometry(2, 2, 96, 96);
     geo.rotateX(-Math.PI / 2);
     const local = new Float32Array(geo.attributes.position.count * 2);
     const pos = geo.attributes.position;
@@ -262,6 +383,9 @@ function SingleMountain({
         delta
       );
       uniforms.uTime.value = state.clock.elapsedTime;
+      // Keep the fog/lighting camera-aware so rim + atmospheric depth track
+      // the orbiting viewpoint.
+      uniforms.uCameraPos.value.copy(state.camera.position);
     }
 
     // Highlight pulse: a highlighted mountain lifts slightly and brightens.
