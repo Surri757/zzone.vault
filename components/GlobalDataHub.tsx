@@ -486,6 +486,11 @@ export function GlobalDataHub({
       ? pinnedInstrument
       : instruments.find((instrument) => instrument.id === selectedQuoteId) ?? instruments[0];
   const selectedQuote = selectedInstrument ? quoteById.get(selectedInstrument.id) : undefined;
+  const hasQuoteChange = Boolean(
+    selectedQuote &&
+      typeof selectedQuote.changePct === "number" &&
+      Number.isFinite(selectedQuote.changePct)
+  );
   const selectedWatched = selectedInstrument
     ? watchlistIdSet.has(selectedInstrument.id)
     : false;
@@ -1206,13 +1211,49 @@ export function GlobalDataHub({
                     ? `${selectedInstrument.name} ${selectedInstrument.symbol}`
                     : "暂无标的"}
                 </h3>
-                <p className="mt-1 text-xs leading-5 text-white/68 sm:mt-2 sm:text-sm sm:leading-6">
-                  {selectedQuote
-                    ? `最新价 ${formatQuoteNumber(selectedQuote.price, 4)} ${selectedQuote.instrument.currency} / 涨跌幅 ${formatPercent(selectedQuote.changePct)}`
-                    : selectedInstrument
+                {selectedQuote ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 sm:mt-3">
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-[11px] uppercase tracking-wide text-white/50">
+                        最新价
+                      </span>
+                      <AnimatedNumber
+                        value={selectedQuote.price}
+                        digits={4}
+                        className={className(
+                          "font-mono text-4xl font-extrabold tabular-nums leading-none sm:text-5xl",
+                          hasQuoteChange
+                            ? marketChangeText(market, selectedQuote.changePct)
+                            : "text-white"
+                        )}
+                      />
+                      <span className="text-sm text-white/50">
+                        {selectedQuote.instrument.currency}
+                      </span>
+                    </div>
+                    <span
+                      className={className(
+                        "inline-flex items-center rounded-[8px] px-2.5 py-1 font-mono text-xl font-extrabold tabular-nums sm:px-3 sm:py-1.5 sm:text-2xl",
+                        hasQuoteChange
+                          ? className(
+                              marketChangeText(market, selectedQuote.changePct),
+                              selectedQuote.changePct >= 0
+                                ? marketColorPalette(market).riseBackground
+                                : marketColorPalette(market).fallBackground
+                            )
+                          : "bg-white/10 text-white/38"
+                      )}
+                    >
+                      <AnimatedNumber value={selectedQuote.changePct} digits={2} signed suffix="%" />
+                    </span>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs leading-5 text-white/68 sm:mt-2 sm:text-sm sm:leading-6">
+                    {selectedInstrument
                       ? "正在加载该股票的最新详细行情"
                       : "请从全量证券目录选择股票"}
-                </p>
+                  </p>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {selectedInstrument && onWatchlistAdd && onWatchlistRemove ? (
