@@ -167,6 +167,7 @@ const mountainFragmentShader = /* glsl */ `
   uniform vec3 uColorDown;
   uniform float uChange;       // signed changePct, drives color blend
   uniform float uPeakHeight;
+  uniform float uVolatility;   // day range → how jagged the stroke texture is
   uniform float uTime;
   uniform vec3 uCameraPos;
   uniform vec3 uFogColor;
