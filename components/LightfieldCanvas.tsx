@@ -6,6 +6,7 @@ import { useReducedMotion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Asset } from "@/lib/types";
+import { MarketMountainRidge } from "@/components/MarketMountainRidge";
 
 interface StockNode3D {
   id: string;
@@ -543,15 +544,22 @@ export function LightfieldCanvas({
       aria-hidden="true"
     >
       <Canvas
-        camera={{ position: [0, 0.35, 8.6], fov: 56 }}
+        camera={{ position: [0, 4.8, 7.2], fov: 52 }}
         dpr={[1, 1.35]}
         frameloop={reduceMotion ? "demand" : "always"}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
       >
         <color attach="background" args={["#070906"]} />
-        <fog attach="fog" args={["#070906", 6.5, 15]} />
+        <fog attach="fog" args={["#070906", 8, 19]} />
         <InkWashField animate={!reduceMotion} />
         <InkContours animate={!reduceMotion} />
+        {/* The market as a living mountain range — data-carved, breathing each tick. */}
+        <MarketMountainRidge
+          assets={assets}
+          liveQuotes={liveQuotes}
+          highlightedIds={highlightedIds}
+          animate={!reduceMotion}
+        />
         <AssetInkTrails
           assets={assets}
           interactive={interactive}
@@ -569,8 +577,8 @@ export function LightfieldCanvas({
             rotateSpeed={0.32}
             autoRotate={!reduceMotion}
             autoRotateSpeed={0.18}
-            maxPolarAngle={Math.PI * 0.7}
-            minPolarAngle={Math.PI * 0.3}
+            maxPolarAngle={Math.PI * 0.62}
+            minPolarAngle={Math.PI * 0.18}
           />
         )}
       </Canvas>
