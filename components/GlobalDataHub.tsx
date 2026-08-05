@@ -26,6 +26,7 @@ import {
   type KeyboardEvent
 } from "react";
 import { MetricTile } from "@/components/shared/MetricTile";
+import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
 import { DepthChart } from "@/components/charts/DepthChart";
 import { StockChartPanel } from "@/components/charts/StockChartPanel";
 import { StockTechnicalPanel } from "@/components/charts/StockTechnicalPanel";
@@ -924,13 +925,19 @@ export function GlobalDataHub({
                               : "text-white/38"
                           )}
                         >
-                          {hasChange ? `${formatQuoteNumber(changePct, 2)}%` : "--"}
+                          {hasChange ? (
+                            <AnimatedNumber value={changePct} digits={2} signed suffix="%" />
+                          ) : (
+                            "--"
+                          )}
                         </span>
                       </span>
                       <span className="mt-3 flex items-center justify-between gap-3">
-                        <span className="font-mono text-lg text-white">
-                          {formatQuoteNumber(quote?.price, 4)}
-                        </span>
+                        <AnimatedNumber
+                          value={quote?.price}
+                          digits={4}
+                          className="font-mono text-lg text-white"
+                        />
                         <span className="font-mono text-[10px] text-white/38">
                           {quote ? quoteStatusLabel(quote.feedStatus) : quotesLoading ? "LOADING" : "NO QUOTE"}
                         </span>

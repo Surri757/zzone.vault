@@ -287,6 +287,10 @@ function AssetInkTrails({
   const trailsRef = useRef<THREE.Group>(null);
   const lastRaycastRef = useRef(0);
   const hoveredIdRef = useRef<string | null>(null);
+  // Static baselines (original z + base color) so the frame loop can apply a
+  // live changePct offset on top without accumulating drift each frame.
+  const basePositionsRef = useRef<Float32Array>(new Float32Array(0));
+  const baseColorsRef = useRef<Float32Array>(new Float32Array(0));
   const { camera, raycaster, pointer, gl } = useThree();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [hoveredPos, setHoveredPos] = useState<THREE.Vector3 | null>(null);
@@ -312,14 +316,31 @@ function AssetInkTrails({
     gl.domElement.style.cursor = interactive ? "grab" : "default";
   }, [gl, interactive, supportsHover]);
 
-  const { nodes, positions, colors, trails } = useMemo(() => {
+  const { nodes, positions, colors, trails, assetNodeRanges } = useMemo(() => {
     const generated = generateNodes(assets);
     const positionValues: number[] = [];
     const colorValues: number[] = [];
     const grouped = new Map<string, THREE.Vector3[]>();
     const trailColors = new Map<string, string>();
+    // Track each asset's contiguous vertex slice so the frame loop can offset
+    // just that asset's particles by its live changePct (rise on up, sink on
+    // down) without re-generating the whole cloud every tick.
+    const ranges = new Map<string, { start: number; count: number; baseColor: THREE.Color }>();
+    let cursor = 0;
+    const seen = new Set<string>();
 
     generated.forEach((node) => {
+      if (!seen.has(node.id)) {
+        seen.add(node.id);
+        ranges.set(node.id, {
+          start: cursor,
+          count: 0,
+          baseColor: new THREE.Color(node.color)
+        });
+      }
+      const range = ranges.get(node.id)!;
+      range.count += 1;
+
       positionValues.push(node.position.x, node.position.y, node.position.z);
       const color = new THREE.Color(node.color);
       colorValues.push(color.r, color.g, color.b);
@@ -327,6 +348,7 @@ function AssetInkTrails({
       trail.push(node.position);
       grouped.set(node.id, trail);
       trailColors.set(node.id, node.color);
+      cursor += 1;
     });
 
     return {
@@ -337,14 +359,75 @@ function AssetInkTrails({
         assetId: asset.id,
         points: grouped.get(asset.id) ?? [],
         color: trailColors.get(asset.id) ?? "#82988d"
-      }))
+      })),
+      assetNodeRanges: ranges
     };
   }, [assets]);
 
   const highlightedSet = useMemo(() => new Set(highlightedIds), [highlightedIds]);
 
+  // Refresh baselines whenever the generated geometry changes (new assets).
+  useEffect(() => {
+    basePositionsRef.current = positions.slice();
+    baseColorsRef.current = colors.slice();
+  }, [positions, colors]);
+
+  // Reusable color scratch objects (avoid per-frame allocation).
+  const acidColor = useMemo(() => new THREE.Color("#7fb7a3"), []);
+  const cinnabarColor = useMemo(() => new THREE.Color("#d45a42"), []);
+  const scratchColor = useMemo(() => new THREE.Color(), []);
+
   useFrame((state, delta) => {
-    if (animate) {
+    // Live data-driven particle motion: each asset's particle slice rises or
+    // sinks with its real-time changePct, glows toward the market tone color,
+    // and pulses faster the larger the move. This is what makes the field feel
+    // "breathing with the market" instead of a static decoration.
+    if (animate && pointsRef.current) {
+      const geom = pointsRef.current.geometry;
+      const posAttr = geom.getAttribute("position") as THREE.BufferAttribute | undefined;
+      const colAttr = geom.getAttribute("color") as THREE.BufferAttribute | undefined;
+      const basePos = basePositionsRef.current;
+      const baseCol = baseColorsRef.current;
+
+      if (posAttr && colAttr && basePos && baseCol) {
+        const t = state.clock.elapsedTime;
+        for (const [assetId, range] of assetNodeRanges) {
+          const live = liveQuotes?.get(assetId);
+          const changePct = live?.changePct ?? 0;
+          // Vertical lift driven by sign/magnitude of the move (clamped), plus a
+          // gentle breathing oscillation whose speed scales with volatility.
+          const lift = Math.max(-2.4, Math.min(2.4, changePct / 100 * 2.7));
+          const pulseSpeed = 0.5 + Math.min(Math.abs(changePct) / 6, 2.2);
+          const pulse = Math.sin(t * pulseSpeed + range.start * 0.3) * 0.06;
+          const zOffset = lift + pulse;
+
+          // Color bias: blend the base color toward acid (up) or cinnabar (down)
+          // proportional to move size, capped so the palette stays restrained.
+          const intensity = Math.min(Math.abs(changePct) / 4, 0.5);
+          const target = changePct >= 0 ? acidColor : cinnabarColor;
+
+          for (let i = 0; i < range.count; i++) {
+            const vIdx = range.start + i;
+            const pIdx = vIdx * 3;
+            posAttr.array[pIdx + 2] = basePos[pIdx + 2] + zOffset;
+            if (intensity > 0.01) {
+              scratchColor
+                .setRGB(baseCol[pIdx], baseCol[pIdx + 1], baseCol[pIdx + 2])
+                .lerp(target, intensity);
+              colAttr.array[pIdx] = scratchColor.r;
+              colAttr.array[pIdx + 1] = scratchColor.g;
+              colAttr.array[pIdx + 2] = scratchColor.b;
+            } else {
+              colAttr.array[pIdx] = baseCol[pIdx];
+              colAttr.array[pIdx + 1] = baseCol[pIdx + 1];
+              colAttr.array[pIdx + 2] = baseCol[pIdx + 2];
+            }
+          }
+        }
+        posAttr.needsUpdate = true;
+        colAttr.needsUpdate = true;
+      }
+
       if (pointsRef.current) {
         pointsRef.current.rotation.y += delta * 0.055;
         pointsRef.current.rotation.x = Math.sin(state.clock.elapsedTime * 0.12) * 0.018;

@@ -914,7 +914,7 @@ async function fetchFreshBars(
     sourceLabel,
     timeZone: marketTimeZone(instrument.market),
     marketState: state,
-    refreshAfterMs: state === "OPEN" || state === "DELAYED" ? 5_000 : null,
+    refreshAfterMs: state === "OPEN" || state === "DELAYED" ? 3_000 : null,
     latestBarPartial:
       state === "OPEN" ||
       (period === "daily" && state === "BREAK") ||
@@ -984,14 +984,14 @@ export async function fetchStockBars(
         ...cached.result,
         generatedAt: new Date().toISOString(),
         marketState: state,
-        refreshAfterMs: state === "OPEN" || state === "DELAYED" ? 5_000 : null,
+        refreshAfterMs: state === "OPEN" || state === "DELAYED" ? 3_000 : null,
         cacheHit: true,
         stale: true,
         staleReason,
       };
       barsCache.set(key, {
         result: staleResult,
-        expiresAt: Date.now() + (state === "OPEN" || state === "DELAYED" ? 4_000 : 15_000),
+        expiresAt: Date.now() + (state === "OPEN" || state === "DELAYED" ? 2_000 : 15_000),
       });
       return staleResult;
     })

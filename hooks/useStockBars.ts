@@ -167,9 +167,9 @@ export function useStockBars({
       providerOpen || currentData?.marketState === "DELAYED";
     const scheduledOpen = marketOpen || isScheduledMarketOpen(market);
     const staleProbeDelays = [
-      5_000,
-      5_000,
-      5_000,
+      3_000,
+      3_000,
+      3_000,
       5_000,
       10_000,
       20_000,
@@ -177,12 +177,12 @@ export function useStockBars({
       60_000,
     ];
     const intervalMs = providerPolling
-      ? currentData.refreshAfterMs ?? 5_000
+      ? currentData.refreshAfterMs ?? 3_000
       : scheduledOpen
         ? staleProbeDelays[
             Math.min(staleOpenProbeCountRef.current, staleProbeDelays.length - 1)
           ]
-        : 5_000;
+        : 3_000;
     if (providerPolling || !scheduledOpen) staleOpenProbeCountRef.current = 0;
 
     const timer = window.setInterval(() => {
