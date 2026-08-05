@@ -192,14 +192,14 @@ type SectorStrengthDraft = {
   weightedIssues: WeightedSectorIssue[];
 };
 
-// Eastmoney silently caps `pz` at 100 rows per page (any larger value still
-// returns only 100 rows), so the page size must match that cap or the snapshot
-// comes back incomplete. The full CN snapshot therefore needs ~59 pages, which
-// exceeds Cloudflare's default 50-subrequest cap. We compensate by raising
-// `limits.subrequests` in wrangler.jsonc (the worker runs on the "standard"
-// usage model, which supports it).
-const EASTMONEY_PAGE_SIZE = 100;
-const EASTMONEY_CONCURRENCY = 12;
+// Eastmoney's clist `pz` is silently capped at 100 rows/page, so walking the
+// full CN universe (~5889 rows) needs ~59 pages — well over Cloudflare's
+// default 50-subrequest cap on the free plan. Instead we fetch exactly the
+// catalog instruments via the bulk `ulist.np/get` endpoint, batching secids
+// so the total subrequest count stays under the cap (CN ~37, US ~41 at the
+// batch size below).
+const EASTMONEY_ULIST_BATCH = 150;
+const EASTMONEY_CONCURRENCY = 8;
 const EASTMONEY_FIELDS = [
   "f2",
   "f3",
@@ -216,9 +216,18 @@ const EASTMONEY_FIELDS = [
   "f100",
   "f124",
 ].join(",");
-const EASTMONEY_FILTERS: Record<StockMarket, string> = {
-  CN: "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-  US: "m:105,m:106,m:107",
+// Eastmoney `secids` use a numeric market prefix + security code.
+// CN: 1 = Shanghai, 0 = Shenzhen/Beijing. US: 105 = NASDAQ, 106 = NYSE,
+// 107 = AMEX (ARCX/BATS route through it).
+const EASTMONEY_MARKET_PREFIX: Record<string, string> = {
+  XSHG: "1",
+  XSHE: "0",
+  XBSE: "0",
+  XNAS: "105",
+  XNYS: "106",
+  XASE: "107",
+  ARCX: "107",
+  BATS: "107",
 };
 const UNCLASSIFIED_SECTOR = "未分类";
 const TOP_SECTOR_CONSTITUENT_LIMIT = 8;
@@ -286,16 +295,18 @@ function catalogBySymbol(instruments: readonly StockInstrument[]) {
   return index;
 }
 
-async function fetchEastmoneyPage(
-  market: StockMarket,
-  page: number,
-  preferredHost?: string
-) {
+function secidForInstrument(instrument: StockInstrument) {
+  const market = EASTMONEY_MARKET_PREFIX[instrument.exchange];
+  if (!market) return null;
+  return `${market}.${instrument.symbol}`;
+}
+
+async function fetchEastmoneyUlistBatch(secids: string[], preferredHost?: string) {
   const hosts = [
     ...new Set([
       preferredHost,
-      "https://82.push2.eastmoney.com",
       "https://push2.eastmoney.com",
+      "https://82.push2.eastmoney.com",
       "https://push2delay.eastmoney.com",
     ].filter((host): host is string => Boolean(host))),
   ];
@@ -303,16 +314,10 @@ async function fetchEastmoneyPage(
 
   for (const host of hosts) {
     try {
-      const url = new URL("/api/qt/clist/get", host);
-      url.searchParams.set("pn", String(page));
-      url.searchParams.set("pz", String(EASTMONEY_PAGE_SIZE));
-      url.searchParams.set("po", "1");
-      url.searchParams.set("np", "1");
+      const url = new URL("/api/qt/ulist.np/get", host);
+      url.searchParams.set("secids", secids.join(","));
       url.searchParams.set("fltt", "2");
       url.searchParams.set("invt", "2");
-      // A stable symbol sort prevents page churn while prices are updating.
-      url.searchParams.set("fid", "f12");
-      url.searchParams.set("fs", EASTMONEY_FILTERS[market]);
       url.searchParams.set("fields", EASTMONEY_FIELDS);
 
       const response = await fetch(url, {
@@ -327,61 +332,86 @@ async function fetchEastmoneyPage(
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const payload = (await response.json()) as {
-        data?: {
-          total?: number;
-          diff?: EastmoneyRow[] | Record<string, EastmoneyRow>;
-        } | null;
+        data?: { diff?: EastmoneyRow[] | Record<string, EastmoneyRow> } | null;
       };
       const data = payload.data;
       if (!data) throw new Error("empty market snapshot payload");
       const rows = Array.isArray(data.diff)
         ? data.diff
         : Object.values(data.diff ?? {});
-      const total = Math.max(0, Math.trunc(numberValue(data.total) ?? 0));
-      if (total === 0 || rows.length === 0) throw new Error("market snapshot returned no rows");
-      return { total, rows, host };
+      if (rows.length === 0) throw new Error("market snapshot returned no rows");
+      return { rows, host };
     } catch (error) {
       lastFailure = error instanceof Error ? error.message : String(error);
     }
   }
 
-  throw new Error(`Eastmoney market snapshot page ${page} failed: ${lastFailure}`);
+  throw new Error(`Eastmoney bulk quote failed: ${lastFailure}`);
 }
 
-async function fetchAllEastmoneyRows(market: StockMarket) {
-  const firstPage = await fetchEastmoneyPage(market, 1);
-  const pageCount = Math.ceil(firstPage.total / EASTMONEY_PAGE_SIZE);
-  const rows = [...firstPage.rows];
-  let nextPage = 2;
+// Fetch quotes for exactly the catalog instruments, batching secid lists so
+// the per-invocation subrequest count stays under Cloudflare's cap.
+async function fetchCatalogQuotes(instruments: readonly StockInstrument[]) {
+  const secidBatches: string[][] = [];
+  let batch: string[] = [];
+  for (const instrument of instruments) {
+    const secid = secidForInstrument(instrument);
+    if (!secid) continue;
+    batch.push(secid);
+    if (batch.length >= EASTMONEY_ULIST_BATCH) {
+      secidBatches.push(batch);
+      batch = [];
+    }
+  }
+  if (batch.length > 0) secidBatches.push(batch);
+
+  const rows: EastmoneyRow[] = [];
+  let providerHost = "https://push2.eastmoney.com";
+  let nextBatch = 0;
+  let failedBatches = 0;
 
   async function worker() {
-    while (nextPage <= pageCount) {
-      const page = nextPage;
-      nextPage += 1;
-      const result = await fetchEastmoneyPage(market, page, firstPage.host);
-      rows.push(...result.rows);
+    while (nextBatch < secidBatches.length) {
+      const index = nextBatch;
+      nextBatch += 1;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const result = await fetchEastmoneyUlistBatch(secidBatches[index], providerHost);
+          providerHost = result.host;
+          rows.push(...result.rows);
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (lastError !== undefined) failedBatches += 1;
     }
   }
 
   await Promise.all(
     Array.from(
-      { length: Math.min(EASTMONEY_CONCURRENCY, Math.max(0, pageCount - 1)) },
+      { length: Math.min(EASTMONEY_CONCURRENCY, secidBatches.length) },
       () => worker()
     )
   );
 
-  if (rows.length < firstPage.total) {
+  // A transient batch failure just drops those instruments (lower coverage)
+  // rather than 502-ing the whole request, but a fully empty result means the
+  // provider is unreachable.
+  if (rows.length === 0) {
     throw new Error(
-      `Eastmoney market snapshot incomplete: ${rows.length}/${firstPage.total} rows`
+      `Eastmoney bulk quote returned no data (${failedBatches}/${secidBatches.length} batches failed)`
     );
   }
-  return { providerTotal: firstPage.total, rows, providerHost: firstPage.host };
+  return { providerTotal: rows.length, rows, providerHost };
 }
 
 async function fetchFreshMarketSnapshot(market: StockMarket): Promise<MarketSnapshot> {
   const instruments = getStockInstrumentsByMarket(market);
   const symbolIndex = catalogBySymbol(instruments);
-  const { providerTotal, rows, providerHost } = await fetchAllEastmoneyRows(market);
+  const { providerTotal, rows, providerHost } = await fetchCatalogQuotes(instruments);
   const issuesById = new Map<string, SnapshotIssue>();
   let latestTimestamp = 0;
 
