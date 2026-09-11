@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { LiveInstrument, LiveProvider, LiveQuote } from "@/lib/live-instruments";
+import { isMarketScheduledOpen, marketSessionLabel } from "@/lib/market-session";
 import type { StockInstrument, StockMarket } from "@/lib/stock-catalog";
 
 type ProviderResult = {
@@ -48,46 +49,13 @@ function toLiveInstrument(
     providerSymbol,
     currency: instrument.currency,
     unit: "share",
-    session:
-      instrument.market === "CN"
-        ? "Asia/Shanghai 09:30-11:30 / 13:00-15:00"
-        : "America/New_York 09:30-16:00"
+    session: marketSessionLabel(instrument.market)
   };
-}
-
-function zonedParts(date: Date, timeZone: string) {
-  const values = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((result, part) => {
-      if (part.type !== "literal") result[part.type] = part.value;
-      return result;
-    }, {});
-
-  return {
-    weekday: values.weekday,
-    minutes: Number(values.hour) * 60 + Number(values.minute)
-  };
-}
-
-function isRegularSession(market: StockMarket, date = new Date()) {
-  const parts = zonedParts(date, market === "CN" ? "Asia/Shanghai" : "America/New_York");
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
-  if (market === "US") return parts.minutes >= 570 && parts.minutes < 960;
-  return (
-    (parts.minutes >= 570 && parts.minutes < 690) ||
-    (parts.minutes >= 780 && parts.minutes < 900)
-  );
 }
 
 function licensedStatus(market: StockMarket, timestamp: Date): LiveQuote["feedStatus"] {
   const age = Date.now() - timestamp.getTime();
-  return isRegularSession(market) && age >= 0 && age < 5 * 60 * 1000
+  return isMarketScheduledOpen(market) && age >= 0 && age < 5 * 60 * 1000
     ? "LICENSED_REALTIME"
     : "MARKET_CLOSED_LAST_TICK";
 }
@@ -300,13 +268,6 @@ async function fetchMassiveQuotes(instruments: StockInstrument[], apiKey: string
   }
 
   return quotes;
-}
-
-export function licensedMarketDataConfiguration() {
-  return {
-    CN: Boolean(process.env.TUSHARE_TOKEN),
-    US: Boolean(process.env.MASSIVE_API_KEY)
-  } satisfies Record<StockMarket, boolean>;
 }
 
 export async function fetchLicensedStockQuotes(

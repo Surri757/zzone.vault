@@ -34,6 +34,7 @@ import { StockVolumePanel } from "@/components/charts/StockVolumePanel";
 import { className, formatQuoteNumber, formatCompact } from "@/components/shared/util";
 import { IntradaySparkline } from "@/components/charts/IntradaySparkline";
 import type { LiveQuote } from "@/lib/live-instruments";
+import { isMarketScheduledOpen } from "@/lib/market-session";
 import type {
   StockCatalogResponse,
   StockInstrument,
@@ -124,26 +125,6 @@ function isSearchableQuery(value: string): boolean {
   const hasLatin = LATIN_PATTERN.test(value);
   // Mixed Chinese + Latin means pinyin composition is in progress.
   return !(hasChinese && hasLatin);
-}
-
-function isStockMarketOpen(market: StockMarket, date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: market === "CN" ? "Asia/Shanghai" : "America/New_York",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((result, part) => {
-      if (part.type !== "literal") result[part.type] = part.value;
-      return result;
-    }, {});
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
-
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  if (market === "US") return minutes >= 570 && minutes < 960;
-  return (minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900);
 }
 
 function quoteStatusLabel(status: LiveQuote["feedStatus"]) {
@@ -419,7 +400,7 @@ export function GlobalDataHub({
     setQuotesLoading(true);
     loadQuotes();
     const timer = window.setInterval(() => {
-      const pollingInterval = isStockMarketOpen(market) ? 5_000 : 60_000;
+      const pollingInterval = isMarketScheduledOpen(market) ? 5_000 : 60_000;
       if (
         !document.hidden &&
         Date.now() - lastQuoteRequestAt >= pollingInterval
@@ -451,7 +432,44 @@ export function GlobalDataHub({
       updateWorkspaceUrl({ stock: null }, "replace");
       return;
     }
-    if (!instruments.some((instrument) => instrument.id === selectedQuoteId)) {
+    if (selectedQuoteId === "") {
+      fallBackToFirstRow();
+      return;
+    }
+    if (instruments.some((instrument) => instrument.id === selectedQuoteId)) return;
+
+    // The URL names a stock that isn't on this catalog page — a shared link, or
+    // back/forward. Resolve it once and pin it so the link restores its own
+    // context; only fall back to the first row when it can't be resolved.
+    const controller = new AbortController();
+    const [linkMarket, linkExchange, linkSymbol] = selectedQuoteId.split(":");
+    const params = new URLSearchParams({
+      market: linkMarket === "US" ? "US" : "CN",
+      page: "1",
+      pageSize: "20",
+      q: linkSymbol ?? selectedQuoteId
+    });
+    if (linkExchange) params.set("exchange", linkExchange);
+
+    fetch(`/api/live/instruments?${params}`, { cache: "no-store", signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`instrument lookup ${response.status}`);
+        return response.json() as Promise<StockCatalogResponse>;
+      })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        const match = payload.items.find((instrument) => instrument.id === selectedQuoteId);
+        if (match) {
+          setPinnedInstrument(match);
+          return;
+        }
+        fallBackToFirstRow();
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) fallBackToFirstRow();
+      });
+
+    function fallBackToFirstRow() {
       const nextId = instruments[0].id;
       setSelectedQuoteId(nextId);
       updateWorkspaceUrl(
@@ -467,6 +485,8 @@ export function GlobalDataHub({
         "replace"
       );
     }
+
+    return () => controller.abort();
   }, [
     activeWorkspacePanel,
     catalogLoading,
@@ -1309,26 +1329,109 @@ export function GlobalDataHub({
             ) : null}
 
             {selectedInstrument ? (
-              <StockChartPanel
-                instrument={selectedInstrument}
-                marketOpen={isStockMarketOpen(selectedInstrument.market)}
-                refreshToken={refreshToken}
-                period={chartPeriod}
-                onPeriodChange={changeChartPeriod}
-              />
+              <>
+                <div
+                  id={stockLensTabsId}
+                  className={className(
+                    "grid grid-cols-4 border border-white/10 bg-black/6 p-1",
+                    workspace ? "mt-3" : "mt-5"
+                  )}
+                  role="tablist"
+                  aria-label="个股图表镜头"
+                  aria-orientation="horizontal"
+                >
+                  {stockLenses.map((lens, index) => {
+                    const LensIcon = lens.icon;
+                    const selected = stockLens === lens.id;
+                    return (
+                      <button
+                        key={lens.id}
+                        ref={(node) => {
+                          stockLensTabRefs.current[index] = node;
+                        }}
+                        id={`${stockLensTabsId}-${lens.id}-tab`}
+                        type="button"
+                        role="tab"
+                        aria-selected={selected}
+                        aria-controls={`${stockLensTabsId}-${lens.id}-panel`}
+                        tabIndex={selected ? 0 : -1}
+                        onClick={() => selectStockLens(lens.id)}
+                        onKeyDown={(event) => handleStockLensKeyDown(event, index)}
+                        className={className(
+                          "inline-flex h-10 items-center justify-center gap-2 border-r border-white/[0.07] px-2 font-mono text-xs transition last:border-r-0",
+                          selected
+                            ? "bg-paper text-carbon-deep"
+                            : "text-white/52 hover:bg-white/[0.045] hover:text-white"
+                        )}
+                      >
+                        <LensIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                        {lens.label}
+                        <span className="hidden text-[9px] uppercase tracking-wide opacity-70 xl:inline">
+                          {lens.detail}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div
+                  id={`${stockLensTabsId}-${stockLens}-panel`}
+                  role="tabpanel"
+                  aria-labelledby={`${stockLensTabsId}-${stockLens}-tab`}
+                >
+                  {stockLens === "kline" ? (
+                    <StockChartPanel
+                      instrument={selectedInstrument}
+                      marketOpen={isMarketScheduledOpen(selectedInstrument.market)}
+                      refreshToken={refreshToken}
+                      period={chartPeriod}
+                      onPeriodChange={changeChartPeriod}
+                    />
+                  ) : null}
+
+                  {stockLens === "volume" ? (
+                    <StockVolumePanel
+                      instrument={selectedInstrument}
+                      marketOpen={isMarketScheduledOpen(selectedInstrument.market)}
+                      refreshToken={refreshToken}
+                      period={chartPeriod}
+                      onPeriodChange={changeChartPeriod}
+                    />
+                  ) : null}
+
+                  {stockLens === "technical" ? (
+                    <StockTechnicalPanel
+                      instrument={selectedInstrument}
+                      marketOpen={isMarketScheduledOpen(selectedInstrument.market)}
+                      refreshToken={refreshToken}
+                      period={chartPeriod}
+                      onPeriodChange={changeChartPeriod}
+                    />
+                  ) : null}
+
+                  {stockLens === "depth" ? (
+                    selectedQuote &&
+                    (selectedQuote.depth.bids.length > 0 ||
+                      selectedQuote.depth.asks.length > 0) ? (
+                      <div className="mt-5">
+                        <DepthChart
+                          depth={selectedQuote.depth}
+                          currentPrice={selectedQuote.price}
+                        />
+                      </div>
+                    ) : (
+                      <div className="mt-5 grid min-h-40 place-items-center border border-dashed border-white/10 px-4 text-center text-sm text-white/38">
+                        {quotesLoading
+                          ? "正在获取盘口数据"
+                          : "该标的暂无可用的盘口档位（美股及部分北交所标的仅提供一档或无盘口）"}
+                      </div>
+                    )
+                  ) : null}
+                </div>
+              </>
             ) : (
               <div className="mt-5 grid min-h-64 place-items-center border-y border-dashed border-white/10 text-sm text-white/38">
                 {catalogLoading ? "正在同步证券目录" : "请从全量证券目录选择股票"}
-              </div>
-            )}
-
-            {/* Order Book Depth */}
-            {selectedQuote && (selectedQuote.depth.bids.length > 0 || selectedQuote.depth.asks.length > 0) && (
-              <div className="mt-5">
-                <DepthChart
-                  depth={selectedQuote.depth}
-                  currentPrice={selectedQuote.price}
-                />
               </div>
             )}
           </div>

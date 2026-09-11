@@ -11,7 +11,7 @@ import {
 } from "@/lib/stock-catalog";
 import { fetchLicensedStockQuotes } from "@/lib/licensed-stock-quotes.server";
 import { fetchTencentStockQuotes } from "@/lib/tencent-stock-quotes.server";
-import { quoteCache } from "@/lib/quote-cache";
+import { quoteCache, withQuoteFetchDeduplication } from "@/lib/quote-cache";
 
 // =============================================================================
 // Quote resolution pipeline — defaults to FREE PUBLIC feeds.
@@ -23,7 +23,8 @@ import { quoteCache } from "@/lib/quote-cache";
 // Tier 4 (fallback): Yahoo Finance chart endpoint for US stocks.
 //
 // Public feeds have ~3-10s delay. No SLA. No redistribution rights.
-// Minimum polling interval enforced: 5s during market hours, 60s otherwise.
+// Client cadence (not enforced here): 3s for the overview quote stream, 5s for
+// the stock catalog, 60s when the market is closed.
 // =============================================================================
 
 const MAX_IDS_PER_REQUEST = 200;
@@ -593,15 +594,53 @@ async function fetchQuotes(instruments: LiveInstrument[]) {
   return quotes;
 }
 
+// Resolve cache-missed ids through the full provider ladder: licensed
+// (Tushare/Massive) → Tencent batch → public Sina/Yahoo fallback. Every tier
+// writes through to the cache. The ladder is shared between concurrent
+// identical requests so the Workers subrequest budget is spent once, and it
+// hands back plain data rather than a Response — a Response body can only be
+// consumed by one caller.
+async function resolveCatalogQuotes(staleIds: string[]) {
+  const staleCatalogInstruments = findStockInstrumentsByIds(staleIds);
+  const foundIds = new Set(staleCatalogInstruments.map((instrument) => instrument.id));
+  const unresolvedIds = staleIds.filter((id) => !foundIds.has(id));
+
+  const licensedResult = await fetchLicensedStockQuotes(staleCatalogInstruments);
+  quoteCache.setMany(licensedResult.quotes);
+
+  let tencentQuotes: LiveQuote[] = [];
+  let publicInstruments = licensedResult.unresolved.map(catalogInstrumentToLiveInstrument);
+
+  try {
+    const tencentResult = await fetchTencentStockQuotes(licensedResult.unresolved);
+    tencentQuotes = tencentResult.quotes;
+    quoteCache.setMany(tencentQuotes);
+    publicInstruments = tencentResult.unresolved.map(catalogInstrumentToLiveInstrument);
+  } catch {
+    // Tencent failed — the public ladder still gets the licensed-tier leftovers.
+  }
+
+  const publicQuotes = await fetchQuotes(publicInstruments);
+  quoteCache.setMany(publicQuotes);
+
+  return {
+    licensedQuotes: licensedResult.quotes,
+    licensedProviders: licensedResult.providers,
+    tencentQuotes,
+    publicQuotes,
+    unresolvedIds
+  };
+}
+
 export async function GET(request: Request) {
   const idsParameter = new URL(request.url).searchParams.get("ids");
-  let instruments = liveInstruments;
   let requestedIds = liveInstruments.map((instrument) => instrument.id);
   let unresolvedIds: string[] = [];
   let licensedQuotes: LiveQuote[] = [];
   let tencentQuotes: LiveQuote[] = [];
   let licensedProviders: Array<"tushare" | "massive"> = [];
   let cachedQuotes: LiveQuote[] = [];
+  let publicQuotes: LiveQuote[] = [];
 
   if (idsParameter !== null) {
     requestedIds = [
@@ -650,31 +689,20 @@ export async function GET(request: Request) {
       });
     }
 
-    // Only resolve stale IDs through the pipeline
-    const staleCatalogInstruments = findStockInstrumentsByIds(staleIds);
-    const foundIds = new Set(staleCatalogInstruments.map((instrument) => instrument.id));
-    unresolvedIds = staleIds.filter((id) => !foundIds.has(id));
-
-    const licensedResult = await fetchLicensedStockQuotes(staleCatalogInstruments);
-    licensedQuotes = licensedResult.quotes;
-    licensedProviders = licensedResult.providers;
-    // Cache licensed results
-    quoteCache.setMany(licensedQuotes);
-
-    try {
-      const tencentResult = await fetchTencentStockQuotes(licensedResult.unresolved);
-      tencentQuotes = tencentResult.quotes;
-      // Cache tencent results
-      quoteCache.setMany(tencentQuotes);
-      instruments = tencentResult.unresolved.map(catalogInstrumentToLiveInstrument);
-    } catch {
-      instruments = licensedResult.unresolved.map(catalogInstrumentToLiveInstrument);
-    }
+    // Only resolve stale IDs through the pipeline, once per distinct id set.
+    const resolved = await withQuoteFetchDeduplication(
+      [...staleIds].sort().join(","),
+      () => resolveCatalogQuotes(staleIds)
+    );
+    licensedQuotes = resolved.licensedQuotes;
+    licensedProviders = resolved.licensedProviders;
+    tencentQuotes = resolved.tencentQuotes;
+    publicQuotes = resolved.publicQuotes;
+    unresolvedIds = resolved.unresolvedIds;
+  } else {
+    publicQuotes = await fetchQuotes(liveInstruments);
+    quoteCache.setMany(publicQuotes);
   }
-
-  const publicQuotes = await fetchQuotes(instruments);
-  // Cache public results
-  quoteCache.setMany(publicQuotes);
 
   const quotes = [...cachedQuotes, ...licensedQuotes, ...tencentQuotes, ...publicQuotes].sort((left, right) =>
     left.instrument.id.localeCompare(right.instrument.id)

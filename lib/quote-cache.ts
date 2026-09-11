@@ -31,7 +31,11 @@ const TTL = {
   DEFAULT: 10_000,
 } as const;
 
-const CLEANUP_INTERVAL_MS = 120_000; // purge expired entries every 2 minutes
+// A Workers isolate has no dependable background timer — a module-level
+// setInterval will not fire between invocations — so eviction is lazy instead:
+// reads drop whatever has expired, and a sweep runs before the store grows
+// past this bound.
+const MAX_ENTRIES = 2_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -64,20 +68,10 @@ function isExpired(entry: CacheEntry, now: number): boolean {
 
 const store = new Map<string, CacheEntry>();
 
-// Stats
-let hits = 0;
-let misses = 0;
-
-// Periodic cleanup of expired entries
-if (typeof setInterval !== "undefined") {
-  setInterval(() => {
-    const now = Date.now();
-    for (const [id, entry] of store) {
-      if (isExpired(entry, now)) {
-        store.delete(id);
-      }
-    }
-  }, CLEANUP_INTERVAL_MS);
+function sweepExpired(now: number): void {
+  for (const [id, entry] of store) {
+    if (isExpired(entry, now)) store.delete(id);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -85,31 +79,6 @@ if (typeof setInterval !== "undefined") {
 // ---------------------------------------------------------------------------
 
 export const quoteCache = {
-  /** Get a cached quote by instrument ID. Returns null if missing or expired. */
-  get(id: string): LiveQuote | null {
-    const entry = store.get(id);
-    if (!entry) {
-      misses += 1;
-      return null;
-    }
-    if (isExpired(entry, Date.now())) {
-      store.delete(id);
-      misses += 1;
-      return null;
-    }
-    hits += 1;
-    return entry.quote;
-  },
-
-  /** Store a quote in the cache. */
-  set(id: string, quote: LiveQuote): void {
-    store.set(id, {
-      quote,
-      fetchedAt: Date.now(),
-      ttl: ttlForQuote(quote),
-    });
-  },
-
   /** Batch get — returns found quotes and a list of missing IDs. */
   getMany(ids: readonly string[]): {
     found: Map<string, LiveQuote>;
@@ -122,11 +91,9 @@ export const quoteCache = {
     for (const id of ids) {
       const entry = store.get(id);
       if (entry && !isExpired(entry, now)) {
-        hits += 1;
         found.set(id, entry.quote);
       } else {
         if (entry) store.delete(id); // expired
-        misses += 1;
         missing.push(id);
       }
     }
@@ -136,53 +103,44 @@ export const quoteCache = {
 
   /** Store many quotes at once. */
   setMany(quotes: LiveQuote[]): void {
+    const now = Date.now();
+    if (store.size + quotes.length > MAX_ENTRIES) sweepExpired(now);
+
     for (const quote of quotes) {
       store.set(quote.instrument.id, {
         quote,
-        fetchedAt: Date.now(),
+        fetchedAt: now,
         ttl: ttlForQuote(quote),
       });
     }
   },
-
-  /** Check which IDs are stale (expired or missing) and need a fresh fetch. */
-  staleIds(ids: readonly string[]): string[] {
-    const now = Date.now();
-    return ids.filter((id) => {
-      const entry = store.get(id);
-      return !entry || isExpired(entry, now);
-    });
-  },
-
-  /** Check if an ID has a fresh (non-expired) cached value. */
-  isFresh(id: string): boolean {
-    const entry = store.get(id);
-    return entry !== undefined && !isExpired(entry, Date.now());
-  },
-
-  /** Remove specific IDs from cache. */
-  invalidate(ids?: string[]): void {
-    if (!ids) {
-      store.clear();
-      return;
-    }
-    for (const id of ids) {
-      store.delete(id);
-    }
-  },
-
-  /** Get cache statistics for monitoring. */
-  stats(): {
-    size: number;
-    hits: number;
-    misses: number;
-    hitRate: number;
-  } {
-    return {
-      size: store.size,
-      hits,
-      misses,
-      hitRate: hits + misses > 0 ? hits / (hits + misses) : 0,
-    };
-  },
 };
+
+// ---------------------------------------------------------------------------
+// Single-flight deduplication
+// ---------------------------------------------------------------------------
+
+const inFlight = new Map<string, Promise<unknown>>();
+
+/**
+ * Collapse concurrent identical upstream fetches into one request.
+ *
+ * The quote cache is the only one of the three server caches that had no
+ * in-flight guard, so two overlapping requests for the same stale ids would
+ * each run the full licensed → Tencent → public pipeline and double the
+ * subrequest count. Callers must pass data (not a Response) through `work`,
+ * because a Response body can only be consumed once.
+ */
+export async function withQuoteFetchDeduplication<T>(
+  key: string,
+  work: () => Promise<T>
+): Promise<T> {
+  const existing = inFlight.get(key);
+  if (existing) return existing as Promise<T>;
+
+  const pending = work().finally(() => {
+    inFlight.delete(key);
+  });
+  inFlight.set(key, pending);
+  return pending;
+}

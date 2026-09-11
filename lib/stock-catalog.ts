@@ -171,5 +171,3 @@ export function getStockInstrumentsByMarket(
 ): readonly StockInstrument[] {
   return instrumentsByMarket[market];
 }
-
-export const getStockInstrumentsByIds = findStockInstrumentsByIds;

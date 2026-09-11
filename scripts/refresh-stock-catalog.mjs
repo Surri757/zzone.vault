@@ -555,16 +555,11 @@ try {
   console.log("No existing catalog to use as fallback");
 }
 
-function existingItemsBySource(sourceId) {
-  return existingItems.filter((item) => item.source === sourceId);
-}
-
-function existingSourceById(sourceId) {
-  return existingSources.find((s) => s.id === sourceId) ?? null;
-}
-
-// Fetch each source independently; fall back to existing data on failure
-async function fetchOrFallback(fetcher, sourceId, label, minCount) {
+// Fetch each source independently; fall back to existing data on failure.
+// `sourceIds` may name several catalog sources when one fetcher feeds more than
+// one (Nasdaq publishes a listed file and an other-listed file).
+async function fetchOrFallback(fetcher, sourceIds, label, minCount) {
+  const ids = Array.isArray(sourceIds) ? sourceIds : [sourceIds];
   try {
     const result = await fetcher();
     if (result.items) {
@@ -578,22 +573,32 @@ async function fetchOrFallback(fetcher, sourceId, label, minCount) {
     }
     throw new Error(`${label} returned unexpected format`);
   } catch (error) {
-    const fallbackItems = existingItemsBySource(sourceId);
-    const fallbackSource = existingSourceById(sourceId);
+    const fallbackItems = existingItems.filter((item) => ids.includes(item.source));
+    const cachedSources = ids
+      .map((id) => existingSources.find((source) => source.id === id))
+      .filter((source) => source !== undefined);
+
+    // Emit both shapes: single-source callers read `.source`, the composite
+    // Nasdaq caller reads `.sources`.
     if (fallbackItems.length > 0) {
-      console.warn(`${label} unavailable, using ${fallbackItems.length} cached entries (${error.message})`);
-      return {
-        items: fallbackItems,
-        source: fallbackSource ?? {
-          id: sourceId,
-          name: label,
-          url: "cached",
-          count: fallbackItems.length
-        }
-      };
+      console.warn(
+        `${label} unavailable, using ${fallbackItems.length} cached entries (${error.message})`
+      );
+      const sources =
+        cachedSources.length > 0
+          ? cachedSources
+          : ids.map((id) => ({
+              id,
+              name: label,
+              url: "cached",
+              count: fallbackItems.length
+            }));
+      return { items: fallbackItems, sources, source: sources[0] };
     }
+
     console.warn(`${label} unavailable and no cache, skipping (${error.message})`);
-    return { items: [], source: { id: sourceId, name: label, url: "unavailable", count: 0 } };
+    const sources = ids.map((id) => ({ id, name: label, url: "unavailable", count: 0 }));
+    return { items: [], sources, source: sources[0] };
   }
 }
 
@@ -616,7 +621,10 @@ async function main() {
     fetchBse, "bse-listed", "BSE listed companies", 100
   );
   const usResult = await fetchOrFallback(
-    fetchNasdaqTrader, "nasdaq-combined", "Nasdaq", 2000
+    fetchNasdaqTrader,
+    ["nasdaq-listed", "nasdaq-other-listed"],
+    "Nasdaq",
+    2000
   );
 
   // Flatten US result (which returns { items, sources })

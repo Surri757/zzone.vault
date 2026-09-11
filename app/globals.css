@@ -457,3 +457,492 @@ section[id] {
     outline: 2px solid CanvasText;
   }
 }
+
+/* 星阵公转：卡牌围绕中心核心做 360° 轨道旋转，并反向抵消保持面向观者。 */
+.vault-orbit {
+  animation: ink-orbit var(--orbit-duration, 40s) linear infinite;
+  will-change: transform;
+}
+
+.vault-counter {
+  animation: ink-counter var(--orbit-duration, 40s) linear infinite;
+  will-change: transform;
+}
+
+.vault-orbit.is-paused,
+.vault-counter.is-paused {
+  animation-play-state: paused;
+}
+
+@keyframes ink-orbit {
+  from {
+    transform: rotateY(0deg);
+  }
+
+  to {
+    transform: rotateY(360deg);
+  }
+}
+
+@keyframes ink-counter {
+  from {
+    transform: rotateY(360deg);
+  }
+
+  to {
+    transform: rotateY(0deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-orbit,
+  .vault-counter {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* ============================================================
+   鎏金激光雕刻封面 · Laser Forge Cover
+   === */
+
+/* 模块大厅隐藏系统光标，启用自绘金色光标（桌面端） */
+@media (pointer: fine) {
+  html.laser-hall {
+    cursor: none;
+  }
+
+  html.laser-hall a,
+  html.laser-hall button {
+    cursor: none;
+  }
+}
+
+.gold-cursor {
+  position: fixed;
+  z-index: 1000;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff6d8 0%, #f5d76e 45%, rgba(245, 215, 110, 0) 72%);
+  box-shadow: 0 0 12px 2px rgba(245, 215, 110, 0.6);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.gold-cursor-ring {
+  position: fixed;
+  z-index: 999;
+  top: 0;
+  left: 0;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border: 1px solid rgba(232, 193, 90, 0.55);
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+  transition:
+    width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    height 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    margin 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.28s ease,
+    opacity 0.28s ease;
+}
+
+.gold-cursor-ring.is-active {
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-color: rgba(255, 246, 216, 0.9);
+  opacity: 0.9;
+}
+
+.gold-cursor.is-down {
+  transform: scale(0.6);
+}
+
+/* —— 封面容器：纯黑舞台，无暗角无径向渐变 —— */
+.laser-forge {
+  position: relative;
+  isolation: isolate;
+  min-height: 100svh;
+  overflow: hidden;
+  background: #000;
+  color: #f5f5f7;
+}
+
+.laser-forge .forge-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 1;
+  transform: scale(1.02);
+  filter: blur(3px);
+  transition:
+    transform 0.9s cubic-bezier(0.32, 0.72, 0, 1),
+    filter 0.9s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.laser-forge .forge-canvas.is-focusing {
+  transform: scale(1);
+  filter: blur(0);
+}
+
+.forge-loading {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ink-font-sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* —— 入场编排：位移 0.7s / 透明度 0.9s 双轨交叠，stagger 由 JS 给 —— */
+.forge-eyebrow,
+.forge-sub,
+.enter-gate {
+  opacity: 0;
+  transform: translateY(30px);
+  transition:
+    opacity 0.9s cubic-bezier(0.4, 0, 0.6, 1),
+    transform 0.7s cubic-bezier(0.25, 0.1, 0.3, 1);
+  user-select: none;
+}
+
+.forge-eyebrow.is-visible,
+.forge-sub.is-visible,
+.enter-gate.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.forge-eyebrow {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  top: calc(46% - clamp(7rem, 16vh, 11rem));
+  text-align: center;
+  font-family: var(--ink-font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.56);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.forge-sub {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  top: calc(46% + clamp(4.5rem, 10vh, 7rem));
+  text-align: center;
+  font-family: var(--ink-font-sans);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.56);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* —— Enter：实心单 accent，无边框，hover/active 用 scale 属性 —— */
+.enter-gate {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  right: 0;
+  bottom: clamp(2.2rem, 6vh, 3.8rem);
+  margin-inline: auto;
+  width: fit-content;
+  padding: 0.78rem 2.3rem;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--ink-gold);
+  color: #0a0805;
+  font-family: var(--ink-font-sans);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    opacity 0.9s cubic-bezier(0.4, 0, 0.6, 1),
+    transform 0.7s cubic-bezier(0.25, 0.1, 0.3, 1),
+    scale 0.3s cubic-bezier(0.25, 0.1, 0.3, 1),
+    background-color 0.2s ease;
+}
+
+.enter-gate:hover {
+  scale: 1.016;
+  background-color: #cfa964;
+}
+
+.enter-gate:active {
+  scale: 0.96;
+}
+
+/* EXIT 色调桥接：黑银画面暖化为大厅金棕后再跳转 */
+.exit-tint {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(120% 90% at 50% 0%, #151006 0%, #0b0703 46%, #040301 100%);
+  transition: opacity 0.45s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.exit-tint.is-active {
+  opacity: 0.94;
+}
+
+/* 封面内 focus 轮廓保持银白单色纪律 */
+.laser-forge button:focus-visible {
+  outline: 2px solid rgba(245, 245, 247, 0.8);
+  outline-offset: 3px;
+}
+
+/* —— 封面退出过渡 —— */
+.laser-forge.is-exiting .forge-canvas,
+.laser-forge.is-exiting .forge-eyebrow,
+.laser-forge.is-exiting .forge-sub,
+.laser-forge.is-exiting .enter-gate {
+  transition: opacity 0.45s cubic-bezier(0.4, 0, 0.6, 1);
+  opacity: 0;
+}
+
+/* —— 模块大厅 —— */
+.laser-hall {
+  position: relative;
+  isolation: isolate;
+  min-height: 100svh;
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 0%, #151006 0%, #0b0703 46%, #040301 100%);
+  color: #fff6e0;
+}
+
+.laser-hall .hall-grain {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  background-image: var(--ink-paper-fiber);
+  background-size: 200px 200px;
+}
+
+.hall-inner {
+  position: relative;
+  z-index: 2;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: clamp(4.5rem, 10vh, 7rem) 1.5rem 4rem;
+}
+
+.hall-kicker {
+  font-family: var(--ink-font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: rgba(232, 193, 90, 0.75);
+  margin-bottom: 1rem;
+}
+
+.hall-title {
+  font-family: var(--ink-font-display);
+  font-size: clamp(2.2rem, 6vw, 4rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  color: #fff6e0;
+  text-shadow: 0 22px 60px rgba(232, 193, 90, 0.18);
+}
+
+.hall-title .gold {
+  background: linear-gradient(180deg, #fff3cc 0%, #f5d76e 42%, #c9962f 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hall-sub {
+  margin-top: 1.1rem;
+  max-width: 46ch;
+  color: rgba(255, 246, 224, 0.62);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+.hall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1.1rem;
+  margin-top: 3rem;
+  perspective: 1200px;
+}
+
+.module-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(232, 193, 90, 0.22);
+  border-radius: 6px;
+  padding: 1.5rem 1.4rem 1.4rem;
+  background: linear-gradient(180deg, rgba(232, 193, 90, 0.06), rgba(232, 193, 90, 0.015));
+  color: #fff6e0;
+  transform-style: preserve-3d;
+  transition:
+    transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+  will-change: transform;
+}
+
+.module-card::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: radial-gradient(220px 160px at var(--mx, 50%) var(--my, 50%), rgba(245, 215, 110, 0.16), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.module-card:hover {
+  border-color: rgba(245, 215, 110, 0.6);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5), 0 0 30px rgba(232, 193, 90, 0.18);
+}
+
+.module-card:hover::before {
+  opacity: 1;
+}
+
+.module-card .mc-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(232, 193, 90, 0.4);
+  border-radius: 5px;
+  color: #f5d76e;
+  margin-bottom: 1.1rem;
+  transition:
+    color 0.3s ease,
+    background 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+.module-card:hover .mc-icon {
+  background: rgba(232, 193, 90, 0.14);
+  box-shadow: 0 0 20px rgba(232, 193, 90, 0.3);
+}
+
+.module-card.is-sealed {
+  border-color: rgba(255, 246, 224, 0.1);
+  background: linear-gradient(180deg, rgba(255, 246, 224, 0.03), transparent);
+  color: rgba(255, 246, 224, 0.5);
+}
+
+.module-card.is-sealed .mc-title {
+  color: rgba(255, 246, 224, 0.55);
+}
+
+.module-card.is-sealed .mc-icon {
+  border-color: rgba(255, 246, 224, 0.16);
+  color: rgba(255, 246, 224, 0.4);
+}
+
+.mc-title {
+  font-family: var(--ink-font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #fff6e0;
+}
+
+.mc-sub {
+  font-family: var(--ink-font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.3em;
+  color: rgba(232, 193, 90, 0.7);
+  margin-top: 0.35rem;
+}
+
+.mc-desc {
+  margin-top: 0.9rem;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: rgba(255, 246, 224, 0.62);
+}
+
+.mc-status {
+  position: absolute;
+  top: 1.2rem;
+  right: 1.2rem;
+  font-family: var(--ink-font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.5rem;
+  border-radius: 3px;
+}
+
+.mc-status.is-live {
+  color: #f5d76e;
+  border: 1px solid rgba(232, 193, 90, 0.4);
+  background: rgba(232, 193, 90, 0.1);
+}
+
+.mc-status.is-sealed {
+  color: rgba(255, 246, 224, 0.4);
+  border: 1px solid rgba(255, 246, 224, 0.14);
+}
+
+.hall-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 2.4rem;
+  font-family: var(--ink-font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(232, 193, 90, 0.7);
+  transition: color 0.3s ease;
+}
+
+.hall-back:hover {
+  color: #fff6e0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gold-cursor,
+  .gold-cursor-ring {
+    display: none;
+  }
+
+  .forge-eyebrow,
+  .forge-sub,
+  .enter-gate {
+    transition-duration: 0.01ms;
+    transform: none;
+  }
+
+  .laser-forge .forge-canvas {
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+}

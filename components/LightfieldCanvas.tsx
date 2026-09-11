@@ -9,6 +9,7 @@ import type { Asset } from "@/lib/types";
 import { MarketMountainRidge } from "@/components/MarketMountainRidge";
 import { MarketFlowField } from "@/components/MarketFlowField";
 import { EnergyOrb } from "@/components/EnergyOrb";
+import { finiteOr } from "@/components/shared/util";
 
 interface StockNode3D {
   id: string;
@@ -396,7 +397,7 @@ function AssetInkTrails({
         const t = state.clock.elapsedTime;
         for (const [assetId, range] of assetNodeRanges) {
           const live = liveQuotes?.get(assetId);
-          const changePct = live?.changePct ?? 0;
+          const changePct = finiteOr(live?.changePct, 0);
           // Vertical lift driven by sign/magnitude of the move (clamped), plus a
           // gentle breathing oscillation whose speed scales with volatility.
           const lift = Math.max(-2.4, Math.min(2.4, changePct / 100 * 2.7));
@@ -530,6 +531,31 @@ function AssetInkTrails({
   );
 }
 
+// Under prefers-reduced-motion the canvas runs on frameloop="demand", where
+// nothing renders unless someone calls invalidate(). The scene is static by
+// design in that mode, but it still has to repaint when a new tick arrives —
+// so request exactly one frame per data change instead of animating.
+function DemandInvalidator({
+  enabled,
+  assets,
+  liveQuotes,
+  highlightedIds
+}: {
+  enabled: boolean;
+  assets: Asset[];
+  liveQuotes?: LightfieldCanvasProps["liveQuotes"];
+  highlightedIds?: string[];
+}) {
+  const invalidate = useThree((state) => state.invalidate);
+
+  useEffect(() => {
+    if (!enabled) return;
+    invalidate();
+  }, [enabled, assets, liveQuotes, highlightedIds, invalidate]);
+
+  return null;
+}
+
 export function LightfieldCanvas({
   assets,
   interactive = false,
@@ -553,6 +579,12 @@ export function LightfieldCanvas({
       >
         <color attach="background" args={["#070906"]} />
         <fog attach="fog" args={["#070906", 7, 17]} />
+        <DemandInvalidator
+          enabled={reduceMotion}
+          assets={assets}
+          liveQuotes={liveQuotes}
+          highlightedIds={highlightedIds}
+        />
         <InkWashField animate={!reduceMotion} />
         <InkContours animate={!reduceMotion} />
         {/* The market as a living mountain range — data-carved, breathing each tick. */}

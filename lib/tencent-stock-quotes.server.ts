@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { LiveInstrument, LiveQuote } from "@/lib/live-instruments";
+import { isMarketScheduledOpen, marketSessionLabel } from "@/lib/market-session";
 import type { StockInstrument, StockMarket } from "@/lib/stock-catalog";
 
 function numberOrNull(value: unknown): number | null {
@@ -30,41 +31,8 @@ function toLiveInstrument(instrument: StockInstrument, providerSymbol: string): 
     providerSymbol,
     currency: instrument.currency,
     unit: "share",
-    session:
-      instrument.market === "CN"
-        ? "Asia/Shanghai 09:30-11:30 / 13:00-15:00"
-        : "America/New_York 09:30-16:00"
+    session: marketSessionLabel(instrument.market)
   };
-}
-
-function zonedParts(date: Date, timeZone: string) {
-  const values = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((result, part) => {
-      if (part.type !== "literal") result[part.type] = part.value;
-      return result;
-    }, {});
-
-  return {
-    weekday: values.weekday,
-    minutes: Number(values.hour) * 60 + Number(values.minute)
-  };
-}
-
-function isRegularSession(market: StockMarket, date = new Date()) {
-  const parts = zonedParts(date, market === "CN" ? "Asia/Shanghai" : "America/New_York");
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
-  if (market === "US") return parts.minutes >= 570 && parts.minutes < 960;
-  return (
-    (parts.minutes >= 570 && parts.minutes < 690) ||
-    (parts.minutes >= 780 && parts.minutes < 900)
-  );
 }
 
 function isUsDaylightTime(year: number, month: number, day: number) {
@@ -96,8 +64,9 @@ function parseTimestamp(raw: string, market: StockMarket) {
 
 function publicStatus(market: StockMarket, timestamp: Date): LiveQuote["feedStatus"] {
   const age = Date.now() - timestamp.getTime();
-  if (isRegularSession(market) && age >= 0 && age < 10 * 60 * 1000) return "LIVE_PUBLIC";
-  if (isRegularSession(market) && age >= 0 && age < 45 * 60 * 1000) return "DELAYED_PUBLIC";
+  const scheduledOpen = isMarketScheduledOpen(market);
+  if (scheduledOpen && age >= 0 && age < 10 * 60 * 1000) return "LIVE_PUBLIC";
+  if (scheduledOpen && age >= 0 && age < 45 * 60 * 1000) return "DELAYED_PUBLIC";
   return "MARKET_CLOSED_LAST_TICK";
 }
 

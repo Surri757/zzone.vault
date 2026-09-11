@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { LiveQuote } from "@/lib/live-instruments";
+import { isMarketScheduledOpen } from "@/lib/market-session";
 import type { StockMarket } from "@/lib/stock-catalog";
 
 // ---------------------------------------------------------------------------
@@ -22,34 +23,10 @@ export interface UseQuoteStreamOptions {
   ids: string[];
   /** Active market (affects polling interval) */
   market: StockMarket;
-  /** Poll interval override (ms). Default: 5s during market hours, 60s otherwise. */
+  /** Poll interval override (ms). Default: 3s during market hours, 60s otherwise. */
   interval?: number;
   /** Whether to auto-start polling. Default: true. */
   enabled?: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Market hours helper
-// ---------------------------------------------------------------------------
-
-function isStockMarketOpen(market: StockMarket, date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: market === "CN" ? "Asia/Shanghai" : "America/New_York",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((result, part) => {
-      if (part.type !== "literal") result[part.type] = part.value;
-      return result;
-    }, {});
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
-
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  if (market === "US") return minutes >= 570 && minutes < 960;
-  return (minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900);
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +90,7 @@ export function useQuoteStream({
 
     const pollingInterval = () =>
       intervalOverride ??
-      (isStockMarketOpen(market) ? DEFAULT_ACTIVE_INTERVAL : DEFAULT_IDLE_INTERVAL);
+      (isMarketScheduledOpen(market) ? DEFAULT_ACTIVE_INTERVAL : DEFAULT_IDLE_INTERVAL);
 
     const scheduleNext = () => {
       if (disposed || document.hidden) return;

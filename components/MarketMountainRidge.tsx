@@ -1,8 +1,9 @@
 "use client";
 
-import { useFrame, useThree } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { finiteOr } from "@/components/shared/util";
 import type { Asset } from "@/lib/types";
 
 // =============================================================================
@@ -273,13 +274,30 @@ const mountainFragmentShader = /* glsl */ `
   }
 `;
 
-// Build a radial trend texture (DataTexture) from the real intraday series:
-// the angle around the mountain encodes successive trend points, the radius
-// band fades them toward the foot. One texture per asset, rebuilt when the
-// trend array changes.
-function buildTrendTexture(trend: number[]): THREE.DataTexture {
-  const size = 64;
-  const data = new Uint8Array(size * size);
+// The radial trend texture (DataTexture) encodes the real intraday series: the
+// angle around the mountain is a successive trend point, the radius band fades
+// it toward the foot. One texture is created per mountain and its bytes are
+// rewritten in place on every trend change — the object identity must stay
+// stable because the shader uniform keeps a direct reference to it.
+const TREND_TEXTURE_SIZE = 64;
+
+function createTrendTexture(): THREE.DataTexture {
+  const size = TREND_TEXTURE_SIZE;
+  const tex = new THREE.DataTexture(
+    new Uint8Array(size * size),
+    size,
+    size,
+    THREE.RedFormat,
+    THREE.UnsignedByteType
+  );
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+function writeTrendTexture(trend: number[], tex: THREE.DataTexture): void {
+  const size = TREND_TEXTURE_SIZE;
+  const data = tex.image.data as Uint8Array;
   const clamped = trend.length > 1 ? trend : [50, 50];
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -293,11 +311,7 @@ function buildTrendTexture(trend: number[]): THREE.DataTexture {
       data[y * size + x] = Math.max(0, Math.min(255, Math.round(faded * 255)));
     }
   }
-  const tex = new THREE.DataTexture(data, size, size, THREE.RedFormat, THREE.UnsignedByteType);
   tex.needsUpdate = true;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  return tex;
 }
 
 interface MountainInstance {
@@ -306,7 +320,7 @@ interface MountainInstance {
   name: string;
   position: THREE.Vector3;
   baseScale: number;
-  trendTexture: THREE.DataTexture;
+  trend: number[];
   // Animated uniform targets (damped each frame toward the live quote).
   peakHeight: number;
   change: number;
@@ -327,21 +341,35 @@ function SingleMountain({
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
-  // Per-instance uniforms (created once; we mutate .value each frame).
-  const uniforms = useMemo(
-    () => ({
+  // Per-instance uniforms (created once; we mutate .value each frame). The
+  // trend texture lives here for the lifetime of the mountain — its identity
+  // must never change or the uTrendMap binding would go stale.
+  const uniforms = useMemo(() => {
+    const trendTexture = createTrendTexture();
+    writeTrendTexture(instance.trend, trendTexture);
+    return {
       uPeakHeight: { value: instance.peakHeight },
       uVolatility: { value: instance.volatility },
       uChange: { value: instance.change },
       uTime: { value: 0 },
-      uTrendMap: { value: instance.trendTexture },
+      uTrendMap: { value: trendTexture },
       uColorUp: { value: PALETTE.acid.clone() },
       uColorDown: { value: PALETTE.cinnabar.clone() },
       uCameraPos: { value: new THREE.Vector3(0, 5, 7) },
       uFogColor: { value: new THREE.Color("#070906") }
-    }),
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+  }, []);
+
+  useEffect(() => {
+    writeTrendTexture(instance.trend, uniforms.uTrendMap.value);
+  }, [instance.trend, uniforms]);
+
+  useEffect(
+    () => () => {
+      uniforms.uTrendMap.value.dispose();
+    },
+    [uniforms]
   );
 
   // Higher-density geometry so the fbm displacement and analytic normals have
@@ -359,14 +387,17 @@ function SingleMountain({
     return geo;
   }, []);
 
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
   useFrame((state, delta) => {
     if (!materialRef.current) return;
 
     // Resolve the latest quote for this asset and damp the uniforms toward it,
     // so a new tick eases the mountain rather than snapping.
     const live = liveQuotes?.get(instance.assetId);
-    const targetPeak = Math.max(0.6, Math.min(4.5, (Math.abs(live?.changePct ?? instance.change) / 5) * 3.4 + 0.6));
-    const targetChange = live?.changePct ?? instance.change;
+    const liveChange = finiteOr(live?.changePct, instance.change);
+    const targetPeak = Math.max(0.6, Math.min(4.5, (Math.abs(liveChange) / 5) * 3.4 + 0.6));
+    const targetChange = liveChange;
 
     if (animate) {
       uniforms.uPeakHeight.value = THREE.MathUtils.damp(
@@ -441,7 +472,7 @@ export function MarketMountainRidge({
           Math.sin(angle) * ringRadius
         ),
         baseScale: 1.15 + asset.liquidity * 1.1,
-        trendTexture: buildTrendTexture(asset.trend),
+        trend: asset.trend,
         peakHeight: Math.max(0.6, Math.min(4.5, asset.heat * 3.4 + 0.6)),
         change: asset.change24h,
         volatility: Math.max(0.12, asset.volatility)
@@ -452,37 +483,34 @@ export function MarketMountainRidge({
   // A translucent ground plane catches the mountains' bases so they appear to
   // rise from a shared ink-wash ground rather than floating.
   const groundGeometry = useMemo(() => new THREE.CircleGeometry(8, 64), []);
-  const groundUniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uColor: { value: PALETTE.soot.clone() }
-    }),
-    []
-  );
+  useEffect(() => () => groundGeometry.dispose(), [groundGeometry]);
 
   // Distant ridge silhouettes — two rings of low, hazy mountains behind the
   // main peaks. They add the layer depth (层峦叠嶂) that ink-wash landscapes
   // rely on: near peaks are crisp and dark, far ones fade into the mist.
-  const distantRidgeUniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uColor: { value: new THREE.Color("#0d1310") },
-      uMist: { value: new THREE.Color("#070906") }
-    }),
-    []
-  );
-  const distantRidgeRef = useRef<THREE.ShaderMaterial>(null);
+  // Each layer needs its own uniforms object; sharing one would alias the two
+  // materials together.
   const distantRidgeGeometry = useMemo(() => {
     const geo = new THREE.PlaneGeometry(26, 8, 200, 48);
     geo.rotateX(-Math.PI / 2);
     return geo;
   }, []);
+  useEffect(() => () => distantRidgeGeometry.dispose(), [distantRidgeGeometry]);
+
+  function makeDistantRidgeUniforms() {
+    return {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color("#0d1310") },
+      uMist: { value: new THREE.Color("#070906") }
+    };
+  }
+
+  const farRidgeUniforms = useMemo(makeDistantRidgeUniforms, []);
+  const nearRidgeUniforms = useMemo(makeDistantRidgeUniforms, []);
 
   useFrame((state) => {
-    groundUniforms.uTime.value = state.clock.elapsedTime;
-    if (distantRidgeRef.current) {
-      distantRidgeRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-    }
+    farRidgeUniforms.uTime.value = state.clock.elapsedTime;
+    nearRidgeUniforms.uTime.value = state.clock.elapsedTime;
   });
 
   const distantRidgeVertex = useMemo(() => /* glsl */ `
@@ -536,7 +564,7 @@ export function MarketMountainRidge({
         <shaderMaterial
           vertexShader={distantRidgeVertex}
           fragmentShader={distantRidgeFragment}
-          uniforms={distantRidgeUniforms}
+          uniforms={farRidgeUniforms}
           transparent
           depthWrite={false}
         />
@@ -545,7 +573,7 @@ export function MarketMountainRidge({
         <shaderMaterial
           vertexShader={distantRidgeVertex}
           fragmentShader={distantRidgeFragment}
-          uniforms={distantRidgeUniforms}
+          uniforms={nearRidgeUniforms}
           transparent
           depthWrite={false}
         />

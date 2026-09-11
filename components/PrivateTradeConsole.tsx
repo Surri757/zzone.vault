@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 import {
   BarChart3,
@@ -28,6 +29,7 @@ import { useWatchlist } from "@/hooks/useWatchlist";
 import type { WatchlistEntry } from "@/hooks/useWatchlist";
 import { useQuoteStream } from "@/hooks/useQuoteStream";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
+import { finiteOr } from "@/components/shared/util";
 import { GlobalDataHub } from "@/components/GlobalDataHub";
 import { SectorWorkspace } from "@/components/SectorWorkspace";
 import { PeerComparisonWorkspace } from "@/components/PeerComparisonWorkspace";
@@ -152,11 +154,10 @@ export function PrivateTradeConsole() {
     () =>
       featuredInstruments.map((instrument) => {
         const quote = quoteStream.quotes.get(instrument.id);
-        const price = quote?.price ?? 0;
-        const dayRange =
-          price > 0 && quote && quote.high !== null && quote.low !== null
-            ? Math.abs((quote.high - quote.low) / price)
-            : 0;
+        const price = finiteOr(quote?.price, 0);
+        const high = finiteOr(quote?.high, 0);
+        const low = finiteOr(quote?.low, 0);
+        const dayRange = price > 0 ? Math.abs((high - low) / price) : 0;
         const rawChange = quote?.changePct;
         const change =
           typeof rawChange === "number" && Number.isFinite(rawChange) ? rawChange : 0;
@@ -254,6 +255,15 @@ export function PrivateTradeConsole() {
             className="relative mx-auto flex h-[4.25rem] max-w-[1600px] items-center justify-between gap-4"
             aria-label="主导航"
           >
+            <Link
+              href="/"
+              className="mr-1 grid h-9 w-9 shrink-0 place-items-center rounded-[4px] border border-white/14 text-white/60 transition-colors hover:border-jade/60 hover:text-jade"
+              aria-label="返回首页 · 卡牌星阵"
+              title="返回首页"
+            >
+              <Radar className="h-4 w-4" aria-hidden="true" />
+            </Link>
+
             <button
               type="button"
               onClick={() => selectView("overview")}

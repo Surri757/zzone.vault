@@ -26,9 +26,9 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Zz.one Vault | 黑曜石量化仓",
-  description: "以夜宣水墨为视觉语言的本地私有量化研究、组合分析与模拟交易工作台。",
-  applicationName: "Zz.one Vault",
+  title: "Zz.one | 观墨 · VAULT OF INK",
+  description: "以墨观势，驭数入墨。个人数字门户：本地私有量化研究、组合分析与模拟交易工作台。",
+  applicationName: "Zz.one",
   category: "finance",
   icons: {
     icon: "/icon.svg",

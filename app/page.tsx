@@ -1,5 +1,5 @@
-import { PrivateTradeConsole } from "@/components/PrivateTradeConsole";
+import LaserCarvingCover from "@/components/LaserCarvingCover";
 
 export default function Home() {
-  return <PrivateTradeConsole />;
+  return <LaserCarvingCover />;
 }

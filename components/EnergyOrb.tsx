@@ -1,7 +1,7 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import type { Asset } from "@/lib/types";
 
@@ -114,6 +114,8 @@ function Ring({
     return { offsets, radialOffsets, yOffsets, radiiRef: { current: radii }, geometry: geo };
   }, [def]);
 
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
   useFrame((state, delta) => {
     // Roll the ring around its own axis...
     if (animate && spinRef.current) {
@@ -183,6 +185,7 @@ export function EnergyOrb({
   animate = true
 }: EnergyOrbProps) {
   const softTexture = useMemo(() => makeSoftCircleTexture(), []);
+  useEffect(() => () => softTexture.dispose(), [softTexture]);
   const orbRef = useRef<THREE.Group>(null);
   // Shared sink: the parent dampens the focused change each frame; each ring
   // reads it inside its own useFrame without forcing re-renders.

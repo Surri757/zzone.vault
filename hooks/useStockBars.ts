@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isMarketScheduledOpen } from "@/lib/market-session";
 import type {
   StockBarsApiResponse,
   StockBarsResult,
@@ -31,26 +32,6 @@ async function responseError(response: Response) {
   } catch {
     return `stock bars ${response.status}`;
   }
-}
-
-function isScheduledMarketOpen(market: StockMarket, date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: market === "CN" ? "Asia/Shanghai" : "America/New_York",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((record, part) => {
-      if (part.type !== "literal") record[part.type] = part.value;
-      return record;
-    }, {});
-
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  if (market === "US") return minutes >= 570 && minutes < 960;
-  return (minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900);
 }
 
 export function useStockBars({
@@ -165,7 +146,7 @@ export function useStockBars({
     const providerOpen = currentData?.marketState === "OPEN";
     const providerPolling =
       providerOpen || currentData?.marketState === "DELAYED";
-    const scheduledOpen = marketOpen || isScheduledMarketOpen(market);
+    const scheduledOpen = marketOpen || isMarketScheduledOpen(market);
     const staleProbeDelays = [
       3_000,
       3_000,
@@ -188,7 +169,7 @@ export function useStockBars({
     const timer = window.setInterval(() => {
       if (
         !document.hidden &&
-        (providerPolling || isScheduledMarketOpen(market))
+        (providerPolling || isMarketScheduledOpen(market))
       ) {
         if (!providerPolling) {
           staleOpenProbeCountRef.current = Math.min(
@@ -202,7 +183,7 @@ export function useStockBars({
     const handleVisibility = () => {
       if (
         !document.hidden &&
-        (providerPolling || isScheduledMarketOpen(market))
+        (providerPolling || isMarketScheduledOpen(market))
       ) {
         load(true);
       }

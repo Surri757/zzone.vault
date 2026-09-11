@@ -1,5 +1,6 @@
 import "server-only";
 
+import { MARKET_TIME_ZONE, scheduledSessionState } from "@/lib/market-session";
 import type { StockInstrument, StockMarket } from "@/lib/stock-catalog";
 import type {
   OHLCBar,
@@ -54,7 +55,7 @@ const barsCache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<StockBarsResult>>();
 
 function marketTimeZone(market: StockMarket) {
-  return market === "CN" ? "Asia/Shanghai" : "America/New_York";
+  return MARKET_TIME_ZONE[market];
 }
 
 function marketState(
@@ -63,33 +64,7 @@ function marketState(
   bars: OHLCBar[] = [],
   interval?: StockBarInterval
 ): StockMarketState {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: marketTimeZone(market),
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((record, part) => {
-      if (part.type !== "literal") record[part.type] = part.value;
-      return record;
-    }, {});
-
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return "CLOSED";
-
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  const scheduledState =
-    market === "US"
-      ? minutes >= 570 && minutes < 960
-        ? "OPEN"
-        : "CLOSED"
-      : (minutes >= 570 && minutes < 690) ||
-          (minutes >= 780 && minutes < 900)
-        ? "OPEN"
-        : minutes >= 690 && minutes < 780
-          ? "BREAK"
-          : "CLOSED";
+  const scheduledState = scheduledSessionState(market, date);
 
   if (scheduledState !== "OPEN" || bars.length === 0) return scheduledState;
 

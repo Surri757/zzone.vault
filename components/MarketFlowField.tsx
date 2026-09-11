@@ -1,8 +1,9 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { finiteOr } from "@/components/shared/util";
 import type { Asset } from "@/lib/types";
 
 // =============================================================================
@@ -272,6 +273,16 @@ export function MarketFlowField({ assets, liveQuotes, animate = true }: MarketFl
     return geo;
   }, []);
 
+  // Both geometries are constructed imperatively and handed to the meshes via
+  // the geometry prop, so R3F will not release them for us.
+  useEffect(
+    () => () => {
+      riverGeometry.dispose();
+      particleGeometry.dispose();
+    },
+    [riverGeometry, particleGeometry]
+  );
+
   // Well arrays: packed positions + per-well volatility, uploaded each frame.
   const wellArrays = useMemo(() => {
     const positions = new Float32Array(MAX_WELLS * 3);
@@ -308,6 +319,13 @@ export function MarketFlowField({ assets, liveQuotes, animate = true }: MarketFl
     });
   }, [assets, ringRadius]);
 
+  // uWellCount is captured once by the uniforms memo, so it has to be resynced
+  // whenever the watchlist ring grows or shrinks. The GLSL well arrays are
+  // fixed at MAX_WELLS, so the count is clamped to what is actually packed.
+  useEffect(() => {
+    particleUniforms.uWellCount.value = Math.min(wells.length, MAX_WELLS);
+  }, [wells, particleUniforms]);
+
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
     if (riverMaterialRef.current) {
@@ -327,7 +345,7 @@ export function MarketFlowField({ assets, liveQuotes, animate = true }: MarketFl
 
     wells.forEach((well, i) => {
       const live = liveQuotes?.get(well.assetId);
-      const change = live?.changePct ?? 0;
+      const change = finiteOr(live?.changePct, 0);
       // Pack well position + signed change for the GPU.
       wellArrays.positions[i * 3] = well.x;
       wellArrays.positions[i * 3 + 1] = well.z;

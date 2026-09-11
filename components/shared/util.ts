@@ -2,6 +2,15 @@ export function className(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
 }
 
+/**
+ * `??` substitutes only for null/undefined, so a NaN from upstream math would
+ * pass straight through it. Geometry positions and shader uniforms must never
+ * see NaN — one bad value poisons a whole attribute buffer.
+ */
+export function finiteOr(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 export function formatQuoteNumber(value: number | null | undefined, digits = 2) {
   if (value === null || value === undefined || !Number.isFinite(value)) return "--";
 

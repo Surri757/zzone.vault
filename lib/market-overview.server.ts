@@ -1,5 +1,6 @@
 import "server-only";
 
+import { isMarketScheduledOpen } from "@/lib/market-session";
 import {
   getStockInstrumentsByMarket,
   type StockInstrument,
@@ -256,28 +257,8 @@ function sectorValue(value: unknown) {
   return sector && sector !== "-" ? sector : UNCLASSIFIED_SECTOR;
 }
 
-function marketScheduledOpen(market: StockMarket, date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: market === "CN" ? "Asia/Shanghai" : "America/New_York",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((record, part) => {
-      if (part.type !== "literal") record[part.type] = part.value;
-      return record;
-    }, {});
-
-  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  if (market === "US") return minutes >= 570 && minutes < 960;
-  return (minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900);
-}
-
 function cacheTtl(market: StockMarket) {
-  return marketScheduledOpen(market) ? 30_000 : 5 * 60_000;
+  return isMarketScheduledOpen(market) ? 30_000 : 5 * 60_000;
 }
 
 function symbolAliases(value: string) {
@@ -441,7 +422,7 @@ async function fetchFreshMarketSnapshot(market: StockMarket): Promise<MarketSnap
   if (issues.length === 0) throw new Error("market snapshot did not match the stock catalog");
   const coverageRatio = instruments.length > 0 ? issues.length / instruments.length : 0;
   const generatedAt = new Date().toISOString();
-  const scheduledOpen = marketScheduledOpen(market);
+  const scheduledOpen = isMarketScheduledOpen(market);
   const delayedHost = providerHost.includes("push2delay");
   const feedStatus: MarketSnapshotFeedStatus = scheduledOpen
     ? market === "US" || delayedHost
