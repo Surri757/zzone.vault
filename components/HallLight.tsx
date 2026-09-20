@@ -3,10 +3,11 @@
 import { useEffect, useRef } from "react";
 
 /**
- * 大厅共享光层 —— 与封面同一盏灯的语法（v7/v8 纪律）：
+ * 大厅共享光层 —— 与封面同一盏灯的语法：
  *   1) 入场交接：封面过桥的光落到大厅，一道 anamorphic 横条闪 260ms，仅一次
- *   2) hover 扫光：指针进入卡片的瞬间，一道对角金光一次性扫过该卡（300ms），不循环
- *   3) 卡内 specular：指针在卡内移动时，径向金光跟随；停 400ms 后 RAF 完全停止
+ *   2) hover 扫光：指针进入未封行的瞬间，一道对角金光一次性扫过该行（300ms），不循环
+ *   3) 行内 specular：指针在行内移动时径向金光跟随；停 400ms 后 RAF 完全停止
+ *   4) 进入灌光：hall-board 事件后选中行被金光吞没一次（460ms），随后路由
  *
  * canvas 用 CSS mix-blend-mode: screen 叠在 DOM 之上，光只提亮、永不压暗。
  * reduced-motion / 粗指针：不渲染任何内容。
@@ -15,6 +16,9 @@ import { useEffect, useRef } from "react";
 const GOLD = "245, 215, 110";
 const SWEEP_SEC = 0.3;
 const IDLE_MS = 400;
+
+/** 大厅行被选中时派发：detail = { rect }，HallLight 据此灌光 */
+export const HALL_BOARD_EVENT = "hall-board";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
@@ -50,6 +54,11 @@ export default function HallLight() {
     let hoverCard: HTMLElement | null = null;
     let px = 0, py = 0;
     let lastMoveAt = -1e9;
+
+    /** 进入灌光：选中的行被光吞没一次，460ms 后路由 */
+    let floodRect: DOMRect | null = null;
+    let floodT = 0;
+    let flooding = false;
 
     function resize() {
       DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -97,7 +106,7 @@ export default function HallLight() {
       const bandX = r.left - r.width * 0.3 + p * r.width * 1.6;
       ctx!.translate(bandX, r.top + r.height / 2);
       ctx!.rotate(-0.18);
-      const bw = r.width * 0.14;
+      const bw = r.width * 0.09;
       const g = ctx!.createLinearGradient(-bw, 0, bw, 0);
       g.addColorStop(0, `rgba(${GOLD}, 0)`);
       g.addColorStop(0.5, `rgba(${GOLD}, 0.5)`);
@@ -111,14 +120,28 @@ export default function HallLight() {
       const r = card.getBoundingClientRect();
       ctx!.save();
       cardPath(ctx!, r);
-      const rad = Math.max(140, r.width * 0.5);
+      const rad = Math.min(Math.max(140, r.height * 1.8), r.width * 0.35);
       const g = ctx!.createRadialGradient(px, py, 0, px, py, rad);
-      g.addColorStop(0, `rgba(${GOLD}, 0.3)`);
-      g.addColorStop(0.55, `rgba(${GOLD}, 0.08)`);
+      g.addColorStop(0, `rgba(${GOLD}, 0.24)`);
+      g.addColorStop(0.55, `rgba(${GOLD}, 0.07)`);
       g.addColorStop(1, `rgba(${GOLD}, 0)`);
       ctx!.fillStyle = g;
       ctx!.fillRect(r.left, r.top, r.width, r.height);
       ctx!.restore();
+    }
+
+    function drawFlood(r: DOMRect, p: number) {
+      const k = p < 0.7 ? p / 0.7 : 1;
+      const a = 0.5 * k;
+      ctx!.fillStyle = `rgba(${GOLD}, ${a.toFixed(3)})`;
+      ctx!.fillRect(r.left, r.top, r.width, r.height);
+      const cy = r.top + r.height / 2;
+      const g = ctx!.createLinearGradient(r.left, cy, r.right, cy);
+      g.addColorStop(0, "rgba(255, 255, 255, 0)");
+      g.addColorStop(0.5, `rgba(255, 255, 255, ${(0.7 * k).toFixed(3)})`);
+      g.addColorStop(1, "rgba(255, 255, 255, 0)");
+      ctx!.fillStyle = g;
+      ctx!.fillRect(r.left, cy - 1, r.width, 2);
     }
 
     let last = performance.now();
@@ -148,6 +171,13 @@ export default function HallLight() {
         drawSpecular(hoverCard);
         alive = true;
       }
+      if (flooding && floodRect) {
+        floodT += dt;
+        const p = clamp(floodT / 0.46, 0, 1);
+        drawFlood(floodRect, p);
+        alive = true;
+        if (p >= 1) { flooding = false; floodRect = null; }
+      }
 
       if (alive) {
         raf = requestAnimationFrame(loop);
@@ -169,7 +199,8 @@ export default function HallLight() {
       py = e.clientY;
       lastMoveAt = performance.now();
       const el = document.elementFromPoint(px, py);
-      const card = (el?.closest(".module-card") as HTMLElement) || null;
+      const found = (el?.closest(".hall-line") as HTMLElement) || null;
+      const card = found && !found.classList.contains("is-sealed") ? found : null;
       if (card !== hoverCard) {
         hoverCard = card;
         if (card) {
@@ -183,10 +214,22 @@ export default function HallLight() {
     const onLeave = () => {
       hoverCard = null;
     };
+    const onBoard = (e: Event) => {
+      const rect = (e as CustomEvent<{ rect: DOMRect }>).detail?.rect;
+      if (!rect) return;
+      floodRect = rect;
+      floodT = 0;
+      flooding = true;
+      ensureLoop();
+    };
 
     resize();
+    document.fonts?.ready.then(() => {
+      if (!disposed) resize();
+    });
     ensureLoop();
     window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener(HALL_BOARD_EVENT, onBoard);
     document.documentElement.addEventListener("mouseleave", onLeave);
     let resizeTimer = 0;
     const onResize = () => {
@@ -201,6 +244,7 @@ export default function HallLight() {
       clearTimeout(resizeTimer);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onMove);
+      window.removeEventListener(HALL_BOARD_EVENT, onBoard);
       document.documentElement.removeEventListener("mouseleave", onLeave);
     };
   }, []);

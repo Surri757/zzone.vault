@@ -1,26 +1,44 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { siteModules } from "@/lib/site-modules";
-import HallLight from "@/components/HallLight";
+import HallLight, { HALL_BOARD_EVENT } from "@/components/HallLight";
 
 /**
- * 鎏金模块大厅 —— Enter 后的功能选择页。
- * 观墨（live）可进入 /quant，其余 sealed 占位锁定。
- * 光的行为（交接横条 / hover 扫光 / 卡内 specular）由 HallLight 统一负责；
- * 卡片入场错峰由 --d 变量驱动（组间 80ms）。
+ * 模块大厅 —— 封面的九行续写（B 方案：同构封面目录）。
+ * 一行一门：静止 35% 银，hover/聚焦点火到 92% + 金色序号 + 共享光层扫光；
+ * 进入时该行被光灌满（hall-board 事件 → HallLight flood）后路由。
  */
 export default function ModuleHall() {
+  const router = useRouter();
+  const boardingRef = useRef(false);
+
   useEffect(() => {
     const root = document.documentElement;
     root.classList.add("laser-hall");
     return () => root.classList.remove("laser-hall");
   }, []);
 
+  function board(e: React.MouseEvent, path: string) {
+    if (boardingRef.current) return;
+    boardingRef.current = true;
+    const line = e.currentTarget as HTMLElement;
+    line.classList.add("is-boarding");
+    window.dispatchEvent(
+      new CustomEvent(HALL_BOARD_EVENT, { detail: { rect: line.getBoundingClientRect() } })
+    );
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      router.push(path);
+      return;
+    }
+    setTimeout(() => router.push(path), 460);
+  }
+
   return (
     <div className="laser-hall">
-      <div className="hall-grain" />
       <HallLight />
       <div className="hall-inner">
         <Link href="/" className="hall-back">
@@ -28,49 +46,43 @@ export default function ModuleHall() {
           <span>返回封面</span>
         </Link>
 
-        <p className="hall-kicker">Zz.one · Vault of Ink</p>
-        <h1 className="hall-title">
-          观墨<span className="gold">宝阁</span>
-        </h1>
-        <p className="hall-sub">
-          每一扇门都是一件法器。选择你欲探的模块 —— 金色之门已为君开，墨色之门正待点亮。
-        </p>
+        <p className="hall-kicker">Ninglo · Vault of Ink</p>
+        <h1 className="hall-title">观墨宝阁</h1>
+        <p className="hall-sub">一行一门。已点亮的可以进入，其余正待被写。</p>
 
-        <div className="hall-grid">
+        <nav className="hall-index" aria-label="模块目录">
           {siteModules.map((m, i) => {
-            const Icon = m.icon;
             const live = m.status === "live";
-            const delay = { "--d": `${320 + i * 80}ms` } as React.CSSProperties;
-            const body = (
+            const delay = { "--d": `${240 + i * 80}ms` } as React.CSSProperties;
+            const inner = (
               <>
-                <span className={`mc-status ${live ? "is-live" : "is-sealed"}`}>
-                  {live ? "已点亮" : "即将点亮"}
-                </span>
-                <div className="mc-icon">
-                  <Icon size={20} strokeWidth={1.5} />
-                </div>
-                <div className="mc-title">{m.title}</div>
-                <div className="mc-sub">{m.subtitle}</div>
-                <p className="mc-desc">{m.description}</p>
+                <span className="hl-no">{String(i + 1).padStart(2, "0")}</span>
+                <span className="hl-name">{m.title}</span>
+                <span className="hl-en">{m.subtitle}</span>
+                <span className="hl-state">{live ? "已点亮" : "待点亮"}</span>
               </>
             );
             return live ? (
               <Link
                 key={m.id}
                 href={m.path}
-                aria-label={`进入 ${m.title}`}
-                className="module-card"
+                className="hall-line"
                 style={delay}
+                aria-label={`进入 ${m.title}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  board(e, m.path);
+                }}
               >
-                {body}
+                {inner}
               </Link>
             ) : (
-              <div key={m.id} className="module-card is-sealed" style={delay}>
-                {body}
+              <div key={m.id} className="hall-line is-sealed" style={delay} aria-disabled="true">
+                {inner}
               </div>
             );
           })}
-        </div>
+        </nav>
       </div>
     </div>
   );

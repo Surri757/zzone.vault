@@ -46,7 +46,7 @@ export default function GoldCursor({ tone = "gold" }: { tone?: "gold" | "mono" }
 
     const onOver = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
-      active = !!t.closest("a, button, .module-card, .enter-gate");
+      active = !!t.closest("a, button, .hall-line, .enter-gate");
       ring.classList.toggle("is-active", active);
     };
 
