@@ -1126,6 +1126,7 @@ export default function LaserCarvingCover() {
       disposed = true;
       fontController.abort();
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(bootRafRef.current);
       clearTimeout(resizeTimer);
       window.clearTimeout(idleTimer);
       window.removeEventListener("resize", onResize);
@@ -1136,6 +1137,46 @@ export default function LaserCarvingCover() {
       document.documentElement.classList.remove("laser-forge");
     };
   }, []);
+
+  const bootFillRef = useRef<HTMLElement>(null);
+  const bootPctRef = useRef<HTMLSpanElement>(null);
+  const bootStageRef = useRef<HTMLSpanElement>(null);
+  const bootRafRef = useRef(0);
+
+  /** 阶段色锚点：银 → 金 → 深金，百分比颜色沿其插值 */
+  function bootColor(p: number) {
+    const stops: [number, number, number][] = [
+      [245, 245, 247],
+      [245, 215, 110],
+      [201, 150, 47]
+    ];
+    const t = clamp(p, 0, 1) * 2;
+    const i = t < 1 ? 0 : 1;
+    const k = t < 1 ? t : t - 1;
+    const a = stops[i];
+    const b = stops[i + 1];
+    const c = a.map((v, j) => Math.round(v + (b[j] - v) * k));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  }
+
+  /** 填充/百分比/阶段词同源驱动，节奏与 CSS 的 0.34s 延迟 + 1.05s 填充对齐 */
+  function startBootDriver() {
+    const fill = bootFillRef.current;
+    const pct = bootPctRef.current;
+    const stage = bootStageRef.current;
+    if (!fill || !pct || !stage) return;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const p = easeReveal(clamp((now - t0 - 340) / 1050, 0, 1));
+      fill.style.transform = `scaleX(${p})`;
+      fill.style.backgroundPosition = `${(p * 100).toFixed(1)}% 0`;
+      pct.textContent = `${Math.round(p * 100)}%`;
+      pct.style.color = bootColor(p);
+      stage.textContent = p < 0.34 ? "熄刀" : p < 0.72 ? "过桥" : "落厅";
+      if (p < 1) bootRafRef.current = requestAnimationFrame(tick);
+    };
+    bootRafRef.current = requestAnimationFrame(tick);
+  }
 
   const navigatingRef = useRef(false);
 
@@ -1150,6 +1191,7 @@ export default function LaserCarvingCover() {
       return;
     }
     containerRef.current?.classList.add("is-booting");
+    startBootDriver();
     router.prefetch("/modules");
     // 进度充满 → 徽标淡出 → 落入大厅；节奏对齐 CSS（fill 0.34s+1.05s，leave 1.38s）
     setTimeout(() => containerRef.current?.classList.add("is-leaving"), 1380);
@@ -1165,7 +1207,13 @@ export default function LaserCarvingCover() {
       <div ref={tintRef} className="exit-tint" aria-hidden="true" />
       <div className="boot-layer" aria-hidden="true">
         <div className="boot-mark">N</div>
-        <div className="boot-progress"><i /></div>
+        <div className="boot-gauge">
+          <div className="boot-progress"><i ref={bootFillRef} /></div>
+          <div className="boot-meta">
+            <span ref={bootStageRef} className="boot-stage">熄刀</span>
+            <span ref={bootPctRef} className="boot-pct">0%</span>
+          </div>
+        </div>
       </div>
       {!fontReady && !fontError && <div className="forge-loading">Zz.one</div>}
 
