@@ -4,16 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * 激光点火封面（v7 —— 机器 · 相机 · 重音）
+ * 激光点火封面（v8 —— 火花 · 热浪 · 相机）
  *
- * 时间轴与几何解耦，跨设备恒定 ~3.0s：
- *   0         首帧给出"未点亮蓝图"（轮廓 16% + 填充 5%），画布处于失焦态 scale(1.02)/blur(3px)
- *   0–0.70s   一束激光自顶垂下，沿轮廓一次扫过；熔池过曝余晖 + 1/4 降采样 bloom
- *   0.70s     熄刀：光束与光斑 120ms 内熄灭，anamorphic 横条闪 260ms
- *   0.70–1.26s 静默：熔池冷却回银
- *   1.26–2.16s 显影高潮：金属填充 900ms 扫入；同时画布 rack-focus 到 scale(1)/blur(0)
- *   2.16–2.96s 重音：横条 bookend + 一次整体光呼吸（300ms）
- *   2.16s+    UI 错峰浮现（0/150/300ms），RAF 停止；仅光标 specular 按需唤醒
+ * 时间轴与几何解耦，跨设备恒定 ~3.1s：
+ *   0         首帧给出"未点亮蓝图"（轮廓 16% + 填充 5%），画布失焦 scale(1.02)/blur(3px)，
+ *             相机停在推入起点 scale(1.035)
+ *   0–0.70s   一束激光自顶垂下，沿轮廓一次扫过；熔池过曝余晖 + 1/4 降采样 bloom；
+ *             激光头持续飞溅火花（加法混合 + 重力），热区按行水平扭动（热浪）
+ *   0.70s     熄刀：光束 120ms 内熄灭 + 头部暖白闪 + 一次径向爆花，anamorphic 横条闪 260ms
+ *   0.70–1.26s 静默：熔池冷却回银，热浪幅度随温度衰减归零
+ *   1.26–2.16s 显影高潮：金属填充 900ms 扫入；rack-focus 到 scale(1)/blur(0)，相机归位
+ *   2.16–3.11s 重音：横条 bookend + 光呼吸（300ms）+ 一道掠面高光扫过金属字面
+ *   2.16s+    UI 错峰浮现（0/150/300ms，字距从宽收拢 + 去模糊）；RAF 空闲即停
+ *   settle 后  每 5.5–8.5s 一道待机微光掠过字面，金属保持"活着"；光标 specular 照旧按需唤醒
  *
  * 任意 pointerdown / keydown / wheel 立即跳到终态。reduced-motion 直接终态。
  */
@@ -25,9 +28,14 @@ const T_ENGRAVE = 0.7;
 const T_KILL = 0.26;
 const T_COOL = 0.3;
 const T_REVEAL = 0.9;
-const T_CLIMAX = 0.8;
+const T_CLIMAX = 0.95;
 /** 熔池余晖衰减长度（像素）：激光头后方仍过曝的距离 */
 const MOLTEN_PX = 64;
+/** 掠面高光在重音窗口内的起点与时长（秒） */
+const SHEEN_AT = 0.3;
+const SHEEN_LEN = 0.55;
+/** 待机微光单次时长（秒） */
+const IDLE_SHEEN_LEN = 1.6;
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -164,6 +172,8 @@ interface TextLine {
 
 export default function LaserCarvingCover() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fxCanvasRef = useRef<HTMLCanvasElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const enterRef = useRef<HTMLButtonElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const eyebrowRef = useRef<HTMLDivElement>(null);
@@ -180,6 +190,15 @@ export default function LaserCarvingCover() {
     if (!ctx0) return;
     const canvas: HTMLCanvasElement = canvas0;
     const ctx: CanvasRenderingContext2D = ctx0;
+    const stage = stageRef.current;
+
+    // fx 层：火花与熄刀闪白画在这块无模糊画布上——背景失焦时前景依然锐利，景深感所在
+    const fx0 = fxCanvasRef.current;
+    if (!fx0) return;
+    const fxCanvas: HTMLCanvasElement = fx0;
+    const fxCtx0 = fx0.getContext("2d");
+    if (!fxCtx0) return;
+    const fxCtx: CanvasRenderingContext2D = fxCtx0;
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const finePointer = window.matchMedia("(pointer: fine)").matches;
@@ -208,6 +227,26 @@ export default function LaserCarvingCover() {
     /** 1/4 分辨率 additive 辉光靶：降采样放大即免费高斯模糊 */
     let bloomC: HTMLCanvasElement | null = null;
     let bloomCtx: CanvasRenderingContext2D | null = null;
+    /** 热浪扭曲带：冷却中的刻痕与熔池先渲进这条带，再按行加水平位移贴回 */
+    let bandC: HTMLCanvasElement | null = null;
+    let bandCtx: CanvasRenderingContext2D | null = null;
+    let bandY = 0, bandH = 0;
+    /** 掠面高光靶（常驻：重音一次 + 待机微光复用） */
+    let sheenC: HTMLCanvasElement | null = null;
+    let sheenCtx: CanvasRenderingContext2D | null = null;
+    /** 火花：雕刻期持续飞溅，熄刀一次性爆花 */
+    interface Spark { x: number; y: number; vx: number; vy: number; age: number; life: number; size: number; warm: number; }
+    let sparks: Spark[] = [];
+    let spawnAcc = 0;
+    /** 激光头行进方向（单位向量），火花反向喷出 */
+    let headDirX = 1, headDirY = 0;
+    /** 相机：全程缓推 + 随激光头微漂，显影落焦时归位 */
+    let camX = 0, camY = 0;
+    /** 全局时钟：热浪波形的相位源 */
+    let clock = 0;
+    /** 待机微光：settle 后每 5.5–8.5s 一道弱光掠过字面 */
+    let idleTimer = 0;
+    let idleSheenT = -1;
     let paintedDist = 0;
     let skipped = false;
     let released = false;
@@ -330,6 +369,15 @@ export default function LaserCarvingCover() {
       const bl = makeCanvas(W / 4, H / 4);
       bloomC = bl.c;
       bloomCtx = bl.g;
+      const bandPad = line.size * 0.35;
+      bandY = Math.max(0, line.y - bandPad);
+      bandH = Math.min(H - bandY, line.h + bandPad * 2);
+      const bd = makeCanvas(W, bandH);
+      bandC = bd.c;
+      bandCtx = bd.g;
+      const sh = makeCanvas(line.w, line.h);
+      sheenC = sh.c;
+      sheenCtx = sh.g;
       paintedDist = 0;
     }
 
@@ -423,7 +471,7 @@ export default function LaserCarvingCover() {
       ctx.restore();
     }
 
-    function drawCooled(alpha: number) {
+    function drawCooled(alpha: number, out: CanvasRenderingContext2D = ctx, dy = 0) {
       if (!maskedScratchCtx || !maskedScratch || !strokeMask || alpha <= 0) return;
       const g = maskedScratchCtx;
       g.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -433,41 +481,44 @@ export default function LaserCarvingCover() {
       g.globalCompositeOperation = "destination-in";
       g.drawImage(strokeMask, 0, 0, line!.w, line!.h);
       g.globalCompositeOperation = "source-over";
-      ctx.save();
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      ctx.globalAlpha = alpha;
-      ctx.drawImage(maskedScratch, line!.x, line!.y, line!.w, line!.h);
-      ctx.restore();
+      out.save();
+      out.setTransform(DPR, 0, 0, DPR, 0, dy * DPR);
+      out.globalAlpha = alpha;
+      out.drawImage(maskedScratch, line!.x, line!.y, line!.w, line!.h);
+      out.restore();
     }
 
-    /** 熔池余晖：激光头后方 MOLTEN_PX 内过曝，按 exp(-d/MOLTEN_PX) 冷却 */
-    function drawMolten(headDist: number, scale: number) {
+    /** 熔池余晖主体：激光头后方 MOLTEN_PX 内过曝，按 exp(-d/MOLTEN_PX) 冷却；out/dy 允许渲进热浪带 */
+    function moltenStrokes(headDist: number, scale: number, out: CanvasRenderingContext2D = ctx, dy = 0) {
       if (scale <= 0) return;
       const from = Math.max(0, headDist - MOLTEN_PX);
-      ctx.save();
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      ctx.translate(line!.x, line!.y);
-      ctx.globalCompositeOperation = "lighter";
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
+      out.save();
+      out.setTransform(DPR, 0, 0, DPR, 0, dy * DPR);
+      out.translate(line!.x, line!.y);
+      out.globalCompositeOperation = "lighter";
+      out.lineCap = "round";
+      out.lineJoin = "round";
       const passes: [number, number][] = [
         [line!.size * 0.2, 0.3],
         [line!.size * 0.06, 0.95]
       ];
       for (const [width, amp] of passes) {
-        ctx.lineWidth = width;
+        out.lineWidth = width;
         walk(from, headDist, (sx, sy, ex, ey, d) => {
           const mid = (d + from) * 0.5;
           const k = Math.exp(-(headDist - mid) / MOLTEN_PX) * amp * scale;
           if (k < 0.01) return;
-          ctx.strokeStyle = `rgba(255,255,255,${k.toFixed(3)})`;
-          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+          out.strokeStyle = `rgba(255,255,255,${k.toFixed(3)})`;
+          out.beginPath(); out.moveTo(sx, sy); out.lineTo(ex, ey); out.stroke();
         });
       }
-      ctx.restore();
+      out.restore();
+    }
 
-      // 降采样 bloom：1/4 靶上画宽软笔触，放大回主屏即免费高斯
-      if (!bloomCtx || !bloomC) return;
+    /** 熔池 bloom：1/4 靶上画宽软笔触，放大回主屏即免费高斯（始终合成在主画布） */
+    function moltenBloom(headDist: number, scale: number) {
+      if (scale <= 0 || !bloomCtx || !bloomC) return;
+      const from = Math.max(0, headDist - MOLTEN_PX);
       const g = bloomCtx;
       g.setTransform(DPR, 0, 0, DPR, 0, 0);
       g.globalCompositeOperation = "source-over";
@@ -551,6 +602,118 @@ export default function LaserCarvingCover() {
       ctx.restore();
     }
 
+    // ===== v8：火花（画在 fx 层，不受场景失焦影响）=====
+    function spawnSpark(x: number, y: number, vx: number, vy: number) {
+      if (sparks.length >= 160) return;
+      sparks.push({ x, y, vx, vy, age: 0, life: 0.3 + Math.random() * 0.35, size: 0.7 + Math.random() * 1.2, warm: Math.random() });
+    }
+
+    /** 熄刀爆花：光束死掉的一瞬向外抛一小把火星 */
+    function killBurst() {
+      for (let i = 0; i < 40; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 50 + Math.random() * 200;
+        spawnSpark(headX, headY, Math.cos(a) * sp, Math.sin(a) * sp - 40 - Math.random() * 60);
+      }
+    }
+
+    function updateSparks(dt: number) {
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.age += dt;
+        if (s.age >= s.life) { sparks.splice(i, 1); continue; }
+        s.vy += 320 * dt;
+        s.vx *= Math.exp(-1.6 * dt);
+        s.vy *= Math.exp(-0.6 * dt);
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+      }
+    }
+
+    function drawSparks() {
+      fxCtx.globalCompositeOperation = "lighter";
+      for (const s of sparks) {
+        const k = 1 - s.age / s.life;
+        fxCtx.fillStyle = s.warm > 0.5
+          ? `rgba(255,236,200,${(k * (0.4 + 0.6 * k)).toFixed(3)})`
+          : `rgba(255,255,255,${(k * (0.4 + 0.6 * k)).toFixed(3)})`;
+        fxCtx.beginPath();
+        fxCtx.arc(s.x, s.y, s.size * (0.5 + 0.5 * k), 0, Math.PI * 2);
+        fxCtx.fill();
+      }
+    }
+
+    /** fx 层每帧重绘：火花 + 熄刀闪白（背景失焦时这里保持锐利） */
+    function drawFx() {
+      fxCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      fxCtx.clearRect(0, 0, W, H);
+      if (sparks.length > 0) drawSparks();
+      if (phase === "cool" && phaseT < 0.09 && line) {
+        const fk = 1 - phaseT / 0.09;
+        fxCtx.globalCompositeOperation = "lighter";
+        const fr = line.size * (0.5 + 0.8 * fk);
+        const fg = fxCtx.createRadialGradient(headX, headY, 0, headX, headY, fr);
+        fg.addColorStop(0, `rgba(255,244,224,${(0.34 * fk * fk).toFixed(3)})`);
+        fg.addColorStop(1, "rgba(255,244,224,0)");
+        fxCtx.fillStyle = fg;
+        fxCtx.beginPath(); fxCtx.arc(headX, headY, fr, 0, Math.PI * 2); fxCtx.fill();
+      }
+      fxCtx.globalCompositeOperation = "source-over";
+    }
+
+    /** 热浪：冷却中的刻痕与熔池渲进窄带，再按行加水平正弦位移贴回（高斯加权，随温度衰减） */
+    function drawHotLayers(dist: number, moltenScale: number, heat: number) {
+      const shimmerAmp = heat * Math.max(0.5, line!.size * 0.02);
+      if (bandCtx && bandC && shimmerAmp >= 0.12) {
+        const g = bandCtx;
+        g.setTransform(DPR, 0, 0, DPR, 0, 0);
+        g.clearRect(0, 0, W, bandH);
+        drawCooled(1, g, -bandY);
+        moltenStrokes(dist, moltenScale, g, -bandY);
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        const SLICE = 2;
+        const mid = bandH / 2;
+        const sigma = Math.max(24, line!.size * 0.62);
+        for (let y = 0; y < bandH; y += SLICE) {
+          const sh = Math.min(SLICE, bandH - y);
+          const wgt = Math.exp(-((y - mid) * (y - mid)) / (2 * sigma * sigma));
+          const off = Math.sin(y * 0.05 + clock * 11) * shimmerAmp * wgt;
+          ctx.drawImage(bandC, 0, y * DPR, W * DPR, sh * DPR, off, bandY + y, W, sh);
+        }
+      } else {
+        drawCooled(1);
+        moltenStrokes(dist, moltenScale);
+      }
+      moltenBloom(dist, moltenScale);
+    }
+
+    /** 掠面高光：一道软光带沿金属字面扫过，mask 锁在字形内 */
+    function drawSheen(p: number, alpha: number) {
+      if (!line || !sheenCtx || !sheenC || alpha <= 0) return;
+      const g = sheenCtx;
+      const lw = line.w, lh = line.h;
+      g.setTransform(DPR, 0, 0, DPR, 0, 0);
+      g.globalCompositeOperation = "source-over";
+      g.clearRect(0, 0, lw, lh);
+      const c = lerp(-0.3, 1.3, p) * lw;
+      const half = line.size * 0.9;
+      const grad = g.createLinearGradient(c - half, 0, c + half, 0);
+      grad.addColorStop(0, "rgba(255,255,255,0)");
+      grad.addColorStop(0.5, "rgba(255,255,255,1)");
+      grad.addColorStop(1, "rgba(255,255,255,0)");
+      g.fillStyle = grad;
+      g.fillRect(0, 0, lw, lh);
+      g.globalCompositeOperation = "destination-in";
+      g.drawImage(line.fill, 0, 0, lw, lh);
+      g.globalCompositeOperation = "source-over";
+      ctx.save();
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(sheenC, line.x, line.y, lw, lh);
+      ctx.restore();
+    }
+
     /** 显影：金属填充沿 X 扫入，软边 + 前缘光 */
     function drawReveal(prog: number) {
       if (!sweepScratchCtx || !sweepScratch) return;
@@ -584,7 +747,7 @@ export default function LaserCarvingCover() {
       ctx.restore();
     }
 
-    /** 收尾重音：横条 bookend + 一次整体光呼吸，播完即止 */
+    /** 收尾重音：横条 bookend + 一次整体光呼吸 + 一道掠面高光，播完即止 */
     function drawClimax(t: number) {
       if (t < T_KILL) drawStreak(1 - t / T_KILL);
 
@@ -597,6 +760,11 @@ export default function LaserCarvingCover() {
         ctx.globalAlpha = 0.2 * k;
         ctx.drawImage(line!.fill, line!.x, line!.y, line!.w, line!.h);
         ctx.restore();
+      }
+
+      if (t >= SHEEN_AT) {
+        const sp = clamp((t - SHEEN_AT) / SHEEN_LEN, 0, 1);
+        if (sp < 1) drawSheen(sp, 0.34 * Math.sin(sp * Math.PI));
       }
     }
 
@@ -637,6 +805,43 @@ export default function LaserCarvingCover() {
     }
 
     // ===== 阶段编排 =====
+    /** 相机：全程缓推 1.035→1.0，雕刻/冷却期随激光头微漂，显影落焦时归位 */
+    function applyCamera() {
+      if (!stage || !line || reduced) return;
+      let s = 1, k = 1;
+      if (phase === "engrave") {
+        const q = clamp(phaseT / T_ENGRAVE, 0, 1);
+        s = lerp(1.035, 1.022, 1 - (1 - q) * (1 - q));
+      } else if (phase === "cool") {
+        const q = clamp(phaseT / (T_KILL + T_COOL), 0, 1);
+        s = lerp(1.022, 1.012, q);
+      } else if (phase === "reveal") {
+        const q = clamp(phaseT / T_REVEAL, 0, 1);
+        s = lerp(1.012, 1, q * q * (3 - 2 * q));
+        k = 1 - q;
+      } else {
+        stage.style.transform = "";
+        return;
+      }
+      const tx = (headX - W / 2) * 0.014 * k;
+      const ty = (headY - H * 0.46) * 0.012 * k;
+      camX += (tx - camX) * 0.085;
+      camY += (ty - camY) * 0.085;
+      stage.style.transform = `translate3d(${(-camX * k).toFixed(2)}px, ${(-camY * k).toFixed(2)}px, 0) scale(${s.toFixed(4)})`;
+    }
+
+    /** 待机微光：settle 后每隔几秒让金属表面再掠过一道弱光 */
+    function scheduleIdleSheen(delay?: number) {
+      if (reduced) return;
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => {
+        if (disposed || !line) return;
+        if (document.hidden) { scheduleIdleSheen(3000); return; }
+        idleSheenT = 0;
+        ensureLoop();
+      }, delay ?? 5500 + Math.random() * 3000);
+    }
+
     function revealUi() {
       const at = (ms: number, fn: () => void) => setTimeout(() => { if (!disposed) fn(); }, ms);
       at(0, () => eyebrowRef.current?.classList.add("is-visible"));
@@ -649,11 +854,18 @@ export default function LaserCarvingCover() {
       phase = "settled";
       phaseT = 0;
       canvas.classList.add("is-focusing");
+      if (stage) stage.style.transform = "";
+      sparks = [];
+      if (fxCanvas) {
+        fxCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        fxCtx.clearRect(0, 0, W, H);
+      }
       revealUi();
       drawSettled(false);
+      scheduleIdleSheen(4200);
     }
 
-    /** 重音播完即销毁：描边遮罩与合成 scratch 此后无人读取 */
+    /** 重音播完即销毁：描边遮罩与合成 scratch 此后无人读取（sheen/spec 常驻） */
     function releaseScratch() {
       strokeMask = null;
       strokeMaskCtx = null;
@@ -663,13 +875,20 @@ export default function LaserCarvingCover() {
       sweepScratchCtx = null;
       bloomC = null;
       bloomCtx = null;
+      bandC = null;
+      bandCtx = null;
     }
 
     function advance(dt: number) {
       phaseT += dt;
       switch (phase) {
         case "engrave": {
-          if (phaseT >= T_ENGRAVE) { phase = "cool"; phaseT = 0; paintCooled(line!.strokeLen); }
+          if (phaseT >= T_ENGRAVE) {
+            phase = "cool";
+            phaseT = 0;
+            paintCooled(line!.strokeLen);
+            killBurst();
+          }
           break;
         }
         case "cool": {
@@ -686,11 +905,12 @@ export default function LaserCarvingCover() {
         }
         case "settled": {
           if (phaseT >= T_CLIMAX) {
-            // 重音播完：进入静止。仅 specular 活动时才继续跑帧
+            // 重音播完：进入静止。仅 specular / 待机微光时才继续跑帧
             specAwake = finePointer && !reduced && performance.now() - lastPointerAt < 400;
             if (!released) {
               released = true;
               releaseScratch();
+              scheduleIdleSheen();
             }
           }
           break;
@@ -709,19 +929,23 @@ export default function LaserCarvingCover() {
         const dist = p * line.strokeLen;
         paintCooled(dist);
         drawGhost();
-        drawCooled(1);
-        drawMolten(dist, 1);
+        drawHotLayers(dist, 1, 0.85);
         const pos = posAt(dist);
-        headX = line.x + pos.x;
-        headY = line.y + pos.y;
+        const nx = line.x + pos.x, ny = line.y + pos.y;
+        if (pos.active) {
+          const dx = nx - headX, ddy = ny - headY;
+          const dl = Math.hypot(dx, ddy);
+          if (dl > 0.01) { headDirX = dx / dl; headDirY = ddy / dl; }
+        }
+        headX = nx;
+        headY = ny;
         drawBeam(headX, headY, pos.active ? 1 : 0.4);
         drawHead(headX, headY, pos.active ? 1 : 0.35);
       } else if (phase === "cool") {
         const coolP = clamp(phaseT / (T_KILL + T_COOL), 0, 1);
         const dieK = clamp(1 - phaseT / 0.12, 0, 1);
         drawGhost();
-        drawCooled(1);
-        drawMolten(line.strokeLen, (1 - coolP) * (1 - coolP));
+        drawHotLayers(line.strokeLen, (1 - coolP) * (1 - coolP), 0.85 * (1 - coolP));
         drawBeam(headX, headY, dieK);
         drawHead(headX, headY, dieK);
         drawStreak(clamp(1 - phaseT / T_KILL, 0, 1));
@@ -732,12 +956,17 @@ export default function LaserCarvingCover() {
       } else if (phase === "settled") {
         drawSettled(specAwake);
         if (phaseT < T_CLIMAX) drawClimax(phaseT);
+        if (idleSheenT >= 0) {
+          const p = clamp(idleSheenT / IDLE_SHEEN_LEN, 0, 1);
+          drawSheen(p, 0.13 * Math.sin(p * Math.PI));
+        }
       }
     }
 
     function shouldContinue() {
       if (phase !== "settled") return true;
       if (phaseT < T_CLIMAX) return true;
+      if (idleSheenT >= 0) return true;
       return specAwake;
     }
 
@@ -746,13 +975,41 @@ export default function LaserCarvingCover() {
       if (disposed) return;
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+      clock += dt;
       if (specAwake) {
         specX += (specTX - specX) * 0.22;
         specY += (specTY - specY) * 0.22;
         if (now - lastPointerAt > 400) specAwake = false;
       }
+      // 雕刻期持续飞溅：火星逆行进方向喷出，带横向散布与上抛初速
+      if (phase === "engrave") {
+        spawnAcc += dt * 90;
+        while (spawnAcc >= 1) {
+          spawnAcc -= 1;
+          const back = 30 + Math.random() * 110;
+          const perp = (Math.random() - 0.5) * 100;
+          const lift = 14 + Math.random() * 58;
+          const px = -headDirY, py = headDirX;
+          spawnSpark(
+            headX + (Math.random() - 0.5) * 3,
+            headY + (Math.random() - 0.5) * 3,
+            -headDirX * back + px * perp,
+            -headDirY * back + py * perp - lift
+          );
+        }
+      }
+      if (idleSheenT >= 0) {
+        idleSheenT += dt;
+        if (idleSheenT >= IDLE_SHEEN_LEN) {
+          idleSheenT = -1;
+          scheduleIdleSheen();
+        }
+      }
+      updateSparks(dt);
       advance(dt);
+      applyCamera();
       drawScene();
+      drawFx();
       if (shouldContinue()) {
         raf = requestAnimationFrame(loop);
       } else {
@@ -769,15 +1026,29 @@ export default function LaserCarvingCover() {
     }
 
     function resize() {
-      DPR = Math.min(window.devicePixelRatio || 1, 2);
-      W = window.innerWidth;
-      H = window.innerHeight;
+      // 同尺寸同 DPR 的假 resize（CDP 度量覆盖、移动端地址栏抖动的无变化回调）不重播动画；
+      // DPR 量化到 2 位小数再比，避免 1.00000003 这类脏值击穿守卫
+      const nDPR = Math.round(Math.min(window.devicePixelRatio || 1, 2) * 100) / 100;
+      const nW = window.innerWidth;
+      const nH = window.innerHeight;
+      if (nDPR === DPR && nW === W && nH === H && line) return;
+      DPR = nDPR;
+      W = nW;
+      H = nH;
       canvas.width = Math.round(W * DPR);
       canvas.height = Math.round(H * DPR);
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      fxCanvas.width = canvas.width;
+      fxCanvas.height = canvas.height;
+      fxCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
       if (!font) return;
       initLayout();
+      sparks = [];
+      spawnAcc = 0;
+      camX = 0;
+      camY = 0;
       if (phase === "settled") {
+        if (stage) stage.style.transform = "";
         drawSettled(false);
       } else if (phase !== "loading") {
         phase = "engrave";
@@ -856,6 +1127,7 @@ export default function LaserCarvingCover() {
       fontController.abort();
       cancelAnimationFrame(raf);
       clearTimeout(resizeTimer);
+      window.clearTimeout(idleTimer);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerdown", onSkip);
@@ -865,16 +1137,36 @@ export default function LaserCarvingCover() {
     };
   }, []);
 
+  const navigatingRef = useRef(false);
+
   function handleEnter() {
+    if (navigatingRef.current) return;
+    navigatingRef.current = true;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     canvasRef.current?.parentElement?.classList.add("is-exiting");
     tintRef.current?.classList.add("is-active");
-    setTimeout(() => router.push("/modules"), 460);
+    if (reduce) {
+      setTimeout(() => router.push("/modules"), 460);
+      return;
+    }
+    containerRef.current?.classList.add("is-booting");
+    router.prefetch("/modules");
+    // 进度充满 → 徽标淡出 → 落入大厅；节奏对齐 CSS（fill 0.34s+1.05s，leave 1.38s）
+    setTimeout(() => containerRef.current?.classList.add("is-leaving"), 1380);
+    setTimeout(() => router.push("/modules"), 1700);
   }
 
   return (
     <div ref={containerRef} className="laser-forge">
-      <canvas ref={canvasRef} className="forge-canvas" />
+      <div ref={stageRef} className="forge-stage" aria-hidden="true">
+        <canvas ref={canvasRef} className="forge-canvas" />
+        <canvas ref={fxCanvasRef} className="forge-fx" />
+      </div>
       <div ref={tintRef} className="exit-tint" aria-hidden="true" />
+      <div className="boot-layer" aria-hidden="true">
+        <div className="boot-mark">N</div>
+        <div className="boot-progress"><i /></div>
+      </div>
       {!fontReady && !fontError && <div className="forge-loading">Zz.one</div>}
 
       <div ref={eyebrowRef} className="forge-eyebrow">Ninglo · Vault of Ink</div>

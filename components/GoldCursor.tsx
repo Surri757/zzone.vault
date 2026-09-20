@@ -21,16 +21,26 @@ export default function GoldCursor({ tone = "gold" }: { tone?: "gold" | "mono" }
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!fine || reduced) return;
 
+    // 初始隐藏：没有真实指针移动前，不让光点悬在屏幕中央发亮
+    dot.style.opacity = "0";
+    ring.style.opacity = "0";
+
     let mx = window.innerWidth / 2;
     let my = window.innerHeight / 2;
     let rx = mx;
     let ry = my;
     let raf = 0;
     let active = false;
+    let shown = false;
 
     const onMove = (e: MouseEvent) => {
       mx = e.clientX;
       my = e.clientY;
+      if (!shown) {
+        shown = true;
+        dot.style.opacity = "1";
+        ring.style.opacity = "1";
+      }
       dot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
     };
 

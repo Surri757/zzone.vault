@@ -3,11 +3,13 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { siteModules } from "@/lib/site-modules";
+import HallLight from "@/components/HallLight";
 
 /**
  * 鎏金模块大厅 —— Enter 后的功能选择页。
  * 观墨（live）可进入 /quant，其余 sealed 占位锁定。
- * 卡片 3D tilt 跟随光标，发光随鼠标位置移动。
+ * 光的行为（交接横条 / hover 扫光 / 卡内 specular）由 HallLight 统一负责；
+ * 卡片入场错峰由 --d 变量驱动（组间 80ms）。
  */
 export default function ModuleHall() {
   useEffect(() => {
@@ -16,44 +18,10 @@ export default function ModuleHall() {
     return () => root.classList.remove("laser-hall");
   }, []);
 
-  // 卡片 tilt + 发光跟随
-  useEffect(() => {
-    const cards = Array.from(document.querySelectorAll<HTMLElement>(".module-card"));
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return;
-
-    let raf = 0;
-    const onMove = (e: MouseEvent) => {
-      for (const card of cards) {
-        const r = card.getBoundingClientRect();
-        const cx = r.left + r.width / 2;
-        const cy = r.top + r.height / 2;
-        const dx = (e.clientX - cx) / (r.width / 2);
-        const dy = (e.clientY - cy) / (r.height / 2);
-        const rx = dy * -6;
-        const ry = dx * 9;
-        const mx = ((e.clientX - r.left) / r.width) * 100;
-        const my = ((e.clientY - r.top) / r.height) * 100;
-        card.style.setProperty("--mx", `${mx}%`);
-        card.style.setProperty("--my", `${my}%`);
-        card.style.transform = `perspective(900px) rotateX(${rx}deg) rotateY(${ry}deg) translateZ(0)`;
-      }
-    };
-    const onLeave = () => {
-      for (const card of cards) card.style.transform = "";
-    };
-    window.addEventListener("mousemove", onMove, { passive: true });
-    document.documentElement.addEventListener("mouseleave", onLeave);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("mousemove", onMove);
-      document.documentElement.removeEventListener("mouseleave", onLeave);
-    };
-  }, []);
-
   return (
     <div className="laser-hall">
       <div className="hall-grain" />
+      <HallLight />
       <div className="hall-inner">
         <Link href="/" className="hall-back">
           <span>←</span>
@@ -69,9 +37,10 @@ export default function ModuleHall() {
         </p>
 
         <div className="hall-grid">
-          {siteModules.map((m) => {
+          {siteModules.map((m, i) => {
             const Icon = m.icon;
             const live = m.status === "live";
+            const delay = { "--d": `${320 + i * 80}ms` } as React.CSSProperties;
             const body = (
               <>
                 <span className={`mc-status ${live ? "is-live" : "is-sealed"}`}>
@@ -91,11 +60,12 @@ export default function ModuleHall() {
                 href={m.path}
                 aria-label={`进入 ${m.title}`}
                 className="module-card"
+                style={delay}
               >
                 {body}
               </Link>
             ) : (
-              <div key={m.id} className="module-card is-sealed">
+              <div key={m.id} className="module-card is-sealed" style={delay}>
                 {body}
               </div>
             );
