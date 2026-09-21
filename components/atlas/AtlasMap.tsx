@@ -1595,6 +1595,7 @@ export default function AtlasMap() {
       t0: number;
       dur: number; // s
       seed: number;
+      fired?: boolean; // 过顶链是否已触发收讫灯爆（一次）
     }
     const beams: Beam[] = [];
     const beamCooldown = new Map<string, number>();
@@ -1770,11 +1771,11 @@ export default function AtlasMap() {
           ctx.beginPath();
           ctx.arc(p[0], p[1], 1.6, 0, Math.PI * 2);
           ctx.fill();
-          // 过顶示意：脉冲抵达灯端一次微辉（收讫感，不改灯色语义）
-          if (bm.kind === 1 && bm.lamp && ph > 0.93) {
-            ctx.globalAlpha = clamp(0.5 * env * (1 - (ph - 0.93) / 0.07), 0, 1);
-            ctx.drawImage(glowSprite(SILVER), bm.lamp.x - 7, bm.lamp.y - 7, 14, 14);
-            ctx.globalAlpha = 1;
+          // 过顶示意：脉冲抵达灯端 → 灯以自身颜色炸开收讫 bloom（扩张环+灯辉增亮，
+          // 金/银/朱语义内点亮——比外挂银点更「这盏灯收到了」；开盘 0.6 / 收讫 0.5 / 扫掠 0.25 三级）
+          if (bm.kind === 1 && bm.lamp && ph > 0.9 && !bm.fired) {
+            bm.fired = true;
+            bm.lamp.bloomT = Math.max(bm.lamp.bloomT, 0.5);
           }
         }
         // 发端微辉（中继链）
