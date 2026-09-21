@@ -346,6 +346,7 @@ const MODEL_BASE: Array<[number, number, number]> = [
   [140, 164, 204], // kind1 太阳翼深蓝
   [170, 182, 198], // kind2 桁架/天线暗银
 ];
+const MODEL_FILL_CACHE: string[] = []; // 材质×亮度档 12 串 rgb 预缓存（α 走 globalAlpha）
 const SAT_MODELS: Record<string, { size: number; extent: number; parts: ModelPartDef[]; faces: ModelFace[] }> = (() => {
   const mk = (size: number, parts: ModelPartDef[]) => {
     let extent = 1;
@@ -564,6 +565,9 @@ export default function AtlasMap() {
     let spinRate = 0; // deg/s（缓入缓出）
     let spinResumeAt = 0;
     let simMs = Date.now(); // 单钟律：卫星传播与自转同一仪表时钟（挂自转积分同门，交互即停同停）
+    let narrowModelsOff = false; // FPS 安全阀：持续掉帧一次性降档（非英雄模型退符号点，永不回升）
+    let fpsEmaMs = 16;
+    let fpsBadSince = 0;
     function spinActive() {
       return (
         !reduced &&
@@ -657,6 +661,8 @@ export default function AtlasMap() {
     let bootDone = reduced;
     let hoverLamp: (typeof lamps)[number] | null = null;
     let hoverSat: SatItem | null = null; // 悬停卫星（全弧展开的钥匙——选中才画轨道线）
+    let tapDownSat: { x: number; y: number; t: number; sat: SatItem | null } | null = null; // 触屏 tap 候选
+    let selectedSatUntil = 0; // 触屏选中驻留期（期内 tip 不被 !finePtr 分支隐藏）
     let px = 0;
     let py = 0;
     let lastMoveAt = -1e9;
@@ -1208,10 +1214,10 @@ export default function AtlasMap() {
       pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.2, len: m.big ? 36 : 16, dx: 0, dy: 0, rmax: 0, a0: 0.95, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
       if (ringsOk) {
         if (m.big) {
-          const rings = W < 640 ? 2 : 4;
+          const rings = W < 640 ? 3 : 4;
           for (let k = 0; k < rings; k++)
             pushFx({ kind: 1, x: m.x, y: m.y, born: nowP + k * 40, dur: 0.5, len: 0, dx: 0, dy: 0, rmax: 160, a0: [0.78, 0.6, 0.45, 0.3][k] ?? 0.3, cr: 255, cg: 170, cb: 80, lineWidth: 2.5 });
-          const sparks = W < 640 ? 5 : 11;
+          const sparks = W < 640 ? 8 : 11;
           for (let k = 0; k < sparks; k++) {
             const a = Math.random() * Math.PI * 2;
             const sp = 40 + Math.random() * 100;
@@ -1229,15 +1235,15 @@ export default function AtlasMap() {
       pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.15, len: m.big ? 20 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.8, cr: 255, cg: 190, cb: 100, lineWidth: 0 });
       pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.42, len: 0, dx: 0, dy: 0, rmax: m.big ? 55 : 30, a0: 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 1.8 });
       if (m.big) {
-        const sparks = W < 640 ? 2 : 5;
+        const sparks = W < 640 ? 4 : 5;
         for (let k = 0; k < sparks; k++) {
           const a = Math.random() * Math.PI * 2;
           const sp = 30 + Math.random() * 70;
           pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.35 + Math.random() * 0.2, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.65, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
         }
-        // 子碎片流星：微尾短命，沿原向 ±20° 偏折前抛（碎裂后多亮块继续飞——物理正确）
-        if (W >= 640) {
-          const n = 2 + (Math.random() < 0.5 ? 1 : 0);
+        // 子碎片流星：微尾短命，沿原向 ±20° 偏折前抛（碎裂后多亮块继续飞——物理正确；窄屏 2 粒）
+        {
+          const n = W < 640 ? 2 : 2 + (Math.random() < 0.5 ? 1 : 0);
           for (let k = 0; k < n; k++) {
             const dv = (Math.random() - 0.5) * 0.7; // ±20°
             const ca = Math.cos(dv), sa = Math.sin(dv);
@@ -1392,11 +1398,11 @@ export default function AtlasMap() {
           }
           // 节拍能量环（指定观感律·v4.13 解禁）：头后 4px 尾喷位、火橙发丝环、≪碎裂环≪终爆环。
           // 四道闸：池余量 / 同屏节拍环≤6 / 碎裂耀斑后 0.3s 不落环 / 微款 50% 隔拍跳环（窄屏仅大款）
-          if (m.flareT <= 0 && fxCount() < 96 && (m.big || Math.random() < 0.5) && (!narrow || m.big)) {
+          if (m.flareT <= 0 && fxCount() < 96 && (m.big || Math.random() < 0.5)) {
             let beatRings = 0;
             for (const fx of fxPool) if (fx && fx.kind === 1 && fx.rmax <= 28) beatRings++;
             if (beatRings < 6) {
-              const rr0 = m.big ? (narrow ? 18 : 20 + Math.random() * 6) : 15;
+              const rr0 = m.big ? (narrow ? 18 : 20 + Math.random() * 6) : narrow ? 13 : 15;
               pushFx({ kind: 1, x: m.x - (m.vx / mag0) * 4, y: m.y - (m.vy / mag0) * 4, born: nowP, dur: 0.25, len: 0, dx: 0, dy: 0, rmax: rr0, a0: m.big ? 0.6 : 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 1.2 });
             }
           }
@@ -1418,7 +1424,7 @@ export default function AtlasMap() {
         g.addColorStop(0.6, `rgba(226, 236, 255, ${(a * 0.6).toFixed(3)})`);
         g.addColorStop(1, `rgba(${hc[0] | 0}, ${hc[1] | 0}, ${hc[2] | 0}, ${a.toFixed(3)})`);
         ctx.strokeStyle = g;
-        ctx.lineWidth = (m.big ? 3.4 : 1.6) * (narrow ? 0.8 : 1);
+        ctx.lineWidth = (m.big ? 3.4 : 1.6) * (narrow ? 1.15 : 1); // 小屏观距近：线要加粗不是减细
         ctx.beginPath();
         ctx.moveTo(tx2, ty2);
         ctx.lineTo(m.x, m.y);
@@ -1549,7 +1555,7 @@ export default function AtlasMap() {
       const Ux = Ty * Wz - Tz * Wy, Uy = Tz * Wx - Tx * Wz, Uz = Tx * Wy - Ty * Wx;
       const rd = s.el.rDisp;
       const fleetK = SAT_ITEMS.length > 22 ? 0.85 : 1; // 星队大了船身整体微缩（船多则小）
-      const scale = ((mdl.size * fleetK * (W < 640 ? 0.65 : 1)) / mdl.extent) * zoom * (0.8 + 0.4 * depth);
+      const scale = ((mdl.size * fleetK * (W < 640 ? 0.75 : 1)) / mdl.extent) * zoom * (0.8 + 0.4 * depth);
       const m = scale / (R * zoom); // 模型半尺寸（球半径单位）
       const Rz2 = R * zoom;
       const scanA = reduced ? 0.7 : (nowWall * 0.0006283); // 扫描碟 ~10s/圈（类别真行为）
@@ -1600,19 +1606,27 @@ export default function AtlasMap() {
       out.sort((a, b2) => b2.z - a.z); // 远面先画
       ctx.save();
       ctx.lineWidth = 0.75;
+      const noStroke = W < 640; // 窄屏去棱线 stroke（×0.75 后难辨，省一半绘制）
+      ctx.globalAlpha = clamp(alphaK, 0, 1);
       for (let i = 0; i < out.length; i++) {
         const q = out[i];
         const base = MODEL_BASE[q.k];
         const f2 = 0.24 + 0.76 * (q.b / 3); // ambient 0.24：背阳面留轮廓不真黑
-        ctx.fillStyle = `rgba(${Math.round(base[0] * f2)}, ${Math.round(base[1] * f2)}, ${Math.round(base[2] * f2)}, ${alphaK.toFixed(3)})`;
-        ctx.strokeStyle = `rgba(190, 205, 228, ${(0.24 * alphaK).toFixed(3)})`; // 棱线（背阳面即 rim）
+        // fillStyle 12 串预缓存（材质×亮度档）——α 走 globalAlpha，26 颗全画不产模板串
+        const ckey = q.k * 4 + q.b;
+        let fillC = MODEL_FILL_CACHE[ckey];
+        if (!fillC) {
+          fillC = MODEL_FILL_CACHE[ckey] = `rgb(${Math.round(base[0] * f2)}, ${Math.round(base[1] * f2)}, ${Math.round(base[2] * f2)})`;
+        }
+        ctx.fillStyle = fillC;
         ctx.beginPath();
         ctx.moveTo(q.pts[0][0], q.pts[0][1]);
         for (let j = 1; j < 4; j++) ctx.lineTo(q.pts[j][0], q.pts[j][1]);
         ctx.closePath();
         ctx.fill();
-        ctx.stroke();
+        if (!noStroke) ctx.stroke();
       }
+      ctx.globalAlpha = 1;
       ctx.restore();
       return true;
     }
@@ -1650,7 +1664,16 @@ export default function AtlasMap() {
         ctx.stroke();
         let bx: { x: number; y: number } | null = null;
         for (const p of pts) if (p.ok && (!bx || p.x > bx.x)) bx = p;
-        if (bx && bx.x < W - 58) {
+        if (W < 640) {
+          // 窄屏：GEO 环右端常出屏（W<537 时永不满足 bx.x<W-58）——改挂环顶可见点上方
+          let tp: { x: number; y: number } | null = null;
+          for (const p of pts) if (p.ok && (!tp || p.y < tp.y)) tp = p;
+          if (tp && tp.y > 16) {
+            ctx.fillStyle = "rgba(201, 212, 228, 0.52)";
+            ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+            ctx.fillText("静止轨道", clamp(tp.x - 24, 4, W - 52), tp.y - 5);
+          }
+        } else if (bx && bx.x < W - 58) {
           ctx.fillStyle = "rgba(201, 212, 228, 0.52)";
           ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
           ctx.fillText("静止轨道", bx.x + 5, clamp(bx.y, 12, H - 12));
@@ -1751,9 +1774,10 @@ export default function AtlasMap() {
         ctx.globalAlpha = 1;
         // 示意模型（zoom≥0.92 淡入；远看符号点、近看形体——画家算法零 GL 改动）
         const modelK = smoothstep(0.92, 1.06, zoom);
-        const heroOnly = W < 640 && !HERO_NORADS.includes(s.el.norad); // 窄屏仅英雄船画模型（移动端预算）
+        // 移动端全量模型（v4.14：空间账可行，绘制预算靠 12 串 fill 缓存+窄屏去棱线+FPS 阀兜底）
+        const modelOff = narrowModelsOff && !HERO_NORADS.includes(s.el.norad);
         let modelDrawn = false;
-        if (modelK > 0.02 && !heroOnly) {
+        if (modelK > 0.02 && !modelOff) {
           const q2 = propagate(s.el, tPos + 20000); // 航向差分（20 sim 秒弧）
           if (q2) {
             const qf2 = Math.cos(q2.lat);
@@ -1792,9 +1816,9 @@ export default function AtlasMap() {
         }
       }
     }
-    function satAt(x: number, y: number): SatItem | null {
+    function satAt(x: number, y: number, r = 16): SatItem | null {
       for (const s of SAT_ITEMS) {
-        if (s.vis && Math.hypot(s.x - x, s.y - y) < 16) return s; // 命中半径随视觉足印放大
+        if (s.vis && Math.hypot(s.x - x, s.y - y) < r) return s; // 命中半径随视觉足印放大（触屏 22）
       }
       return null;
     }
@@ -1844,7 +1868,7 @@ export default function AtlasMap() {
       for (let k = beams.length - 1; k >= 0; k--) if (nowP > beams[k].t0 + beams[k].dur * 1000) beams.splice(k, 1);
       if (reduced || !bootDone) return;
       // 星间链：先试真实中继对（公开架构，强形态），八成概率再泛化到任意互见对（几何示意：互见即通）
-      if (nowP > relayNextAt && beams.length < 8) {
+      if (nowP > relayNextAt && beams.length < (W < 640 ? 6 : 8)) {
         relayNextAt = nowP + 2500 + Math.random() * 2500; // 密一些（原 10-18s）
         let picked: Beam | null = null;
         const tries = RELAY_PAIRS.slice().sort(() => Math.random() - 0.5);
@@ -1896,7 +1920,7 @@ export default function AtlasMap() {
           continue;
         }
         if (bd < 0.88) st.armed = true;
-        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < 8 && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
+        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < (W < 640 ? 6 : 8) && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
           beams.push({ kind: 1, real: false, a: s, b: null, lamp: best, t0: nowP, dur: 2.0, seed: Math.random() });
           beamCooldown.set(`${s.el.norad}:${best.exch.mic}`, nowP + 30000);
           s.flashUntil = nowP + 500;
@@ -1910,7 +1934,7 @@ export default function AtlasMap() {
       for (const l of lamps) {
         const due = lampNextAt.get(l.exch.mic) ?? 0;
         if (nowP < due) continue;
-        if (l.z < 0.15 || beams.length >= 8) {
+        if (l.z < 0.15 || beams.length >= (W < 640 ? 6 : 8)) {
           lampNextAt.set(l.exch.mic, nowP + 3000);
           continue;
         }
@@ -1942,7 +1966,7 @@ export default function AtlasMap() {
         const due = geoNextAt.get(gn) ?? nowP + 5000 + Math.random() * 20000;
         if (nowP < due) continue;
         geoNextAt.set(gn, nowP + 45000 + Math.random() * 45000);
-        if (beams.length >= 8) continue;
+        if (beams.length >= (W < 640 ? 6 : 8)) continue;
         const covered = lamps.filter((l) => l.z > 0.15 && g.ux * l.vx + g.uy * l.vy + g.uz * l.vz > 0.31 && !beams.some((b) => b.kind === 2 && b.lamp === l));
         if (!covered.length) continue;
         const l = covered[(Math.random() * covered.length) | 0];
@@ -1952,6 +1976,7 @@ export default function AtlasMap() {
     }
     function drawBeams(nowP: number) {
       if (!beams.length) return;
+      const sigK = W < 640 ? 1.25 : 1; // 小屏信号球放大（小屏事件要更大才可读）
       ctx.save();
       for (const bm of beams) {
         const sat = bm.a;
@@ -2037,11 +2062,11 @@ export default function AtlasMap() {
           if (!p || !p[2]) continue;
           const fade = Math.sin(Math.PI * ph);
           ctx.globalAlpha = clamp(0.75 * env * fade, 0, 1);
-          ctx.drawImage(glowSprite(SILVER), p[0] - 5, p[1] - 5, 10, 10);
+          ctx.drawImage(glowSprite(SILVER), p[0] - 5 * sigK, p[1] - 5 * sigK, 10 * sigK, 10 * sigK);
           ctx.globalAlpha = 1;
           ctx.fillStyle = `rgba(235, 242, 252, ${clamp(0.9 * env * fade, 0, 1).toFixed(3)})`;
           ctx.beginPath();
-          ctx.arc(p[0], p[1], 1.6, 0, Math.PI * 2);
+          ctx.arc(p[0], p[1], 1.6 * sigK, 0, Math.PI * 2);
           ctx.fill();
         }
         if (arrived > (bm.arrived ?? 0)) {
@@ -2056,8 +2081,9 @@ export default function AtlasMap() {
         // 抵达爆闪演出（过顶链）：扩张环 + 辉斑 0.35s 快收——球到爆一次，多球连环爆
         if (bm.kind === 1 && bm.lamp && bm.lastBurstAt !== undefined) {
           const age = (nowP - bm.lastBurstAt) / 1000;
-          if (age >= 0 && age < 0.35) {
-            const k = age / 0.35;
+          const bw0 = W < 640 ? 0.46 : 0.35; // 小屏爆闪 +30% 时长（更大更慢才被看见）
+          if (age >= 0 && age < bw0) {
+            const k = age / bw0;
             ctx.strokeStyle = `rgba(235, 242, 252, ${(0.8 * (1 - k) * env).toFixed(3)})`;
             ctx.lineWidth = 1.5;
             ctx.beginPath();
@@ -2478,7 +2504,7 @@ export default function AtlasMap() {
             : desktopFull
               ? true
               : narrow
-                ? MAJOR_SET.has(l.exch.mic) || open || focus
+                ? zoom >= 1.4 || MAJOR_SET.has(l.exch.mic) || open || focus // 窄屏放大唤回次要芯片（与中带宽同款逃生门）
                 : zoom >= 1.4 || MAJOR_SET.has(l.exch.mic) || open || focus;
           l.chipOn = on;
           return on;
@@ -2741,8 +2767,19 @@ export default function AtlasMap() {
     }
 
     let last = performance.now();
+    let prevFrameP = 0;
     function loop(nowP: number) {
       if (disposed) return;
+      const rawMs = prevFrameP ? nowP - prevFrameP : 16;
+      prevFrameP = nowP;
+      /* FPS 安全阀（v4.14）：boot 后采样 EMA 帧时长，>22ms 持续 3s → 一次性降档（非英雄模型退符号点，永不回升） */
+      if (bootDone && rawMs > 4 && rawMs < 400) {
+        fpsEmaMs += (rawMs - fpsEmaMs) * 0.05;
+        if (fpsEmaMs > 22) {
+          if (!fpsBadSince) fpsBadSince = nowP;
+          else if (nowP - fpsBadSince > 3000 && !narrowModelsOff) narrowModelsOff = true;
+        } else fpsBadSince = 0;
+      }
       const dt = Math.min(0.05, (nowP - last) / 1000);
       const dtRaw = Math.min(1, (nowP - last) / 1000); // 自转/飞行按真实时间积分：节流环境下不减速
       last = nowP;
@@ -3071,6 +3108,8 @@ export default function AtlasMap() {
         }
       } else {
         setSelectedMic(null);
+        // 触屏 tap 选中卫星（keeptrack/satvis 惯例）：down 记候选，up 短距短时确认
+        tapDownSat = { x, y, t: performance.now(), sat: satAt(x, y, 22) };
       }
       rotDrag = true;
       rotLastX = x;
@@ -3140,8 +3179,39 @@ export default function AtlasMap() {
       pointers.delete(e.pointerId);
       stage.releasePointerCapture?.(e.pointerId);
       killLongPress();
+      // 触屏 tap 选中卫星（keeptrack/satvis 惯例）：单指、位移<10px、<400ms → 实名 tip + 全弧 2.5s 驻留
+      if (tapDownSat?.sat && pointers.size === 0) {
+        const rect = stage.getBoundingClientRect();
+        const d = Math.hypot(e.clientX - rect.left - tapDownSat.x, e.clientY - rect.top - tapDownSat.y);
+        if (d < 10 && performance.now() - tapDownSat.t < 400) {
+          const sat = tapDownSat.sat;
+          hoverSat = sat;
+          selectedSatUntil = performance.now() + 2500;
+          const tip = tipRef.current;
+          if (tip) {
+            const tierZh = sat.el.tier === "leo" ? "近地" : sat.el.tier === "meo" ? "中距" : "静止轨道";
+            const p = propagate(sat.el, simMs); // 高度与显示位置同钟（单钟律）
+            tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · 示意模型 · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前 · 仪表时钟×${Math.round(86400 / SPIN_PERIOD_S)}`;
+            tip.style.transform = `translate(${clamp(tapDownSat.x + 14, 4, Math.max(4, W - 150))}px, ${clamp(tapDownSat.y - 30, 4, Math.max(4, H - 24))}px)`;
+            tip.style.opacity = "1";
+          }
+          window.setTimeout(() => {
+            if (disposed) return;
+            if (hoverSat === sat) {
+              hoverSat = null;
+              const t2 = tipRef.current;
+              if (t2 && !finePtr) t2.style.opacity = "0";
+            }
+            repaint = true;
+            ensureLoop();
+          }, 2550);
+          repaint = true;
+          ensureLoop();
+        }
+      }
+      tapDownSat = null;
       const tip = tipRef.current;
-      if (tip && !finePtr) tip.style.opacity = "0";
+      if (tip && !finePtr && performance.now() > selectedSatUntil) tip.style.opacity = "0";
       if (pointers.size > 0) {
         // 从捏合回到单指：剩余手指接管旋转（锚点取留在屏上的那根，不是抬起的这根——
         // 两指相距 40-120px，用错锚下一帧 yaw 跳 30° 级）
