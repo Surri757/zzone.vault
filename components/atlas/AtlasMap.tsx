@@ -416,8 +416,9 @@ function modelOf(el: SatElement): { size: number; extent: number; parts: ModelPa
   if (el.norad === 25544) return SAT_MODELS.iss;
   if (el.norad === 48274) return SAT_MODELS.css;
   if (el.norad === 20580) return SAT_MODELS.hst;
-  if (el.norad === 42915 || el.norad === 49011) return SAT_MODELS.relay;
-  if (el.norad === 44714 || el.norad === 44718) return SAT_MODELS.sl;
+  if (el.norad === 42915 || el.norad === 49011 || el.norad === 40882 || el.norad === 41380) return SAT_MODELS.relay; // 中继/通信 GEO 同类
+  if (el.norad === 44714 || el.norad === 44718 || (el.norad >= 44057 && el.norad <= 44059)) return SAT_MODELS.sl; // 平板宽带批产类（星链/OneWeb）
+  if (el.norad === 42803 || el.norad === 42811 || el.norad === 41917 || el.norad === 41924) return SAT_MODELS.nav; // 铱星：通信箱+双翼（按类别建档，不新开式样）
   if (el.tier === "meo") return SAT_MODELS.nav;
   if (el.tier === "geo") return SAT_MODELS.wx;
   return SAT_MODELS.wx; // LEO 气象/遥感族（NOAA-19）
@@ -1333,7 +1334,8 @@ export default function AtlasMap() {
       Wz /= wl;
       const Ux = Ty * Wz - Tz * Wy, Uy = Tz * Wx - Tx * Wz, Uz = Tx * Wy - Ty * Wx;
       const rd = s.el.rDisp;
-      const scale = ((mdl.size * (W < 640 ? 0.65 : 1)) / mdl.extent) * zoom * (0.8 + 0.4 * depth);
+      const fleetK = SAT_ITEMS.length > 22 ? 0.85 : 1; // 星队大了船身整体微缩（船多则小）
+      const scale = ((mdl.size * fleetK * (W < 640 ? 0.65 : 1)) / mdl.extent) * zoom * (0.8 + 0.4 * depth);
       const m = scale / (R * zoom); // 模型半尺寸（球半径单位）
       const Rz2 = R * zoom;
       const scanA = reduced ? 0.7 : (nowWall * 0.0006283); // 扫描碟 ~10s/圈（类别真行为）
@@ -1535,8 +1537,9 @@ export default function AtlasMap() {
         ctx.globalAlpha = 1;
         // 示意模型（zoom≥0.92 淡入；远看符号点、近看形体——画家算法零 GL 改动）
         const modelK = smoothstep(0.92, 1.06, zoom);
+        const heroOnly = W < 640 && !HERO_NORADS.includes(s.el.norad); // 窄屏仅英雄船画模型（移动端预算）
         let modelDrawn = false;
-        if (modelK > 0.02) {
+        if (modelK > 0.02 && !heroOnly) {
           const q2 = propagate(s.el, tPos + 20000); // 航向差分（20 sim 秒弧）
           if (q2) {
             const qf2 = Math.cos(q2.lat);
@@ -1587,7 +1590,7 @@ export default function AtlasMap() {
      * 与过顶示意链（真实几何量触发：最近过顶 + 互见；无真实数据关系，形制更低调）。
      * 渲染统一 Beam：底弦 + 正弦行波（仅中继链）+ 行进脉冲 + 若隐若现包络 + 逐点 z 遮挡。 */
     interface Beam {
-      kind: 0 | 1; // 0=星间链 1=过顶示意
+      kind: 0 | 1 | 2; // 0=星间链 1=过顶示意（LEO/MEO 最近过顶）2=GEO 区域波束（通信星锥内轮发，波束为真端点为示意）
       real: boolean; // 真实公开中继架构（强形态：正弦波+3 粒脉冲）vs 几何示意互见链（形制稍敛）
       a: SatItem;
       b: SatItem | null;
@@ -1601,6 +1604,10 @@ export default function AtlasMap() {
     const beams: Beam[] = [];
     const beamCooldown = new Map<string, number>();
     const passState = new Map<number, { mic: string; dot: number; armed: boolean }>();
+    const lampNextAt = new Map<string, number>(); // 公平轮转：每所独立错峰（时机策展律——只挑时机不降几何门槛）
+    const geoNextAt = new Map<number, number>(); // GEO 通信星波束节拍
+    const GEO_COMM = [42915, 49011, 40882, 41380]; // TDRS 13/天链/Inmarsat 5-F3/SES-9（通信 GEO）
+    const HERO_NORADS = [25544, 48274, 20580];
     const RELAY_PAIRS: Array<[number, number]> = [
       [25544, 42915], // ISS → TDRS 13
       [20580, 42915], // 哈勃 → TDRS 13
@@ -1623,7 +1630,7 @@ export default function AtlasMap() {
       for (let k = beams.length - 1; k >= 0; k--) if (nowP > beams[k].t0 + beams[k].dur * 1000) beams.splice(k, 1);
       if (reduced || !bootDone) return;
       // 星间链：先试真实中继对（公开架构，强形态），八成概率再泛化到任意互见对（几何示意：互见即通）
-      if (nowP > relayNextAt && beams.length < 6) {
+      if (nowP > relayNextAt && beams.length < 8) {
         relayNextAt = nowP + 2500 + Math.random() * 2500; // 密一些（原 10-18s）
         let picked: Beam | null = null;
         const tries = RELAY_PAIRS.slice().sort(() => Math.random() - 0.5);
@@ -1655,7 +1662,7 @@ export default function AtlasMap() {
           if (picked.b) picked.b.flashUntil = nowP + 500;
         }
       }
-      // 过顶示意链：最近点（星-灯点积局部极大）触发 + 冷却 45s/对 + 滞回重武装（<0.88 才再武装）
+      // 过顶示意链（被动层）：最近点（星-灯点积局部极大）触发 + 冷却 30s/对 + 滞回重武装（<0.88 才再武装）
       for (const s of SAT_ITEMS) {
         if (!s.vis || s.el.tier === "geo") continue;
         let best: (typeof lamps)[number] | null = null;
@@ -1675,13 +1682,58 @@ export default function AtlasMap() {
           continue;
         }
         if (bd < 0.88) st.armed = true;
-        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < 6 && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
+        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < 8 && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
           beams.push({ kind: 1, real: false, a: s, b: null, lamp: best, t0: nowP, dur: 2.0, seed: Math.random() });
           beamCooldown.set(`${s.el.norad}:${best.exch.mic}`, nowP + 30000);
           s.flashUntil = nowP + 500;
           st.armed = false;
         }
         st.dot = bd;
+      }
+      // 公平轮转层（时机策展律）：每所错峰 25-45s 到点，在「当刻真实达标过顶」（dot>0.92 不降）的卫星里挑最优——
+      // 26 颗 LEO/MEO 单钟 19s/圈下自然覆盖全球，轮转只分配时机保证雨露均沾
+      if (lampNextAt.size === 0) lamps.forEach((l, i) => lampNextAt.set(l.exch.mic, nowP + 2000 + i * 1600 + Math.random() * 4000));
+      for (const l of lamps) {
+        const due = lampNextAt.get(l.exch.mic) ?? 0;
+        if (nowP < due) continue;
+        if (l.z < 0.15 || beams.length >= 8) {
+          lampNextAt.set(l.exch.mic, nowP + 3000);
+          continue;
+        }
+        let pick: SatItem | null = null;
+        let pd = 0.92; // 几何门槛不降（判官条件①）
+        for (const s of SAT_ITEMS) {
+          if (!s.vis || s.el.tier === "geo") continue;
+          if ((beamCooldown.get(`${s.el.norad}:${l.exch.mic}`) ?? 0) > nowP) continue;
+          const d = s.ux * l.vx + s.uy * l.vy + s.uz * l.vz;
+          if (d > pd) {
+            pd = d;
+            pick = s;
+          }
+        }
+        if (pick) {
+          beams.push({ kind: 1, real: false, a: pick, b: null, lamp: l, t0: nowP, dur: 2.0, seed: Math.random() });
+          beamCooldown.set(`${pick.el.norad}:${l.exch.mic}`, nowP + 30000);
+          pick.flashUntil = nowP + 500;
+          lampNextAt.set(l.exch.mic, nowP + 25000 + Math.random() * 20000);
+        } else {
+          lampNextAt.set(l.exch.mic, nowP + 5000); // 本轮无达标星：5s 后再试
+        }
+      }
+      // GEO 区域波束层（常驻链条款：波束为真端点为示意）：通信 GEO 对可视锥内（星下点-灯夹角<72°）
+      // 灯位轮发 45-90s，软形态脉动防读作专线；每灯同时至多一条 GEO 波束
+      for (const gn of GEO_COMM) {
+        const g = satByNorad(gn);
+        if (!g || !g.vis) continue;
+        const due = geoNextAt.get(gn) ?? nowP + 5000 + Math.random() * 20000;
+        if (nowP < due) continue;
+        geoNextAt.set(gn, nowP + 45000 + Math.random() * 45000);
+        if (beams.length >= 8) continue;
+        const covered = lamps.filter((l) => l.z > 0.15 && g.ux * l.vx + g.uy * l.vy + g.uz * l.vz > 0.31 && !beams.some((b) => b.kind === 2 && b.lamp === l));
+        if (!covered.length) continue;
+        const l = covered[(Math.random() * covered.length) | 0];
+        beams.push({ kind: 2, real: false, a: g, b: null, lamp: l, t0: nowP, dur: 2.6, seed: Math.random() });
+        g.flashUntil = nowP + 500;
       }
     }
     function drawBeams(nowP: number) {
@@ -1698,7 +1750,7 @@ export default function AtlasMap() {
           bx3 = rdb * bm.b.ux;
           by3 = rdb * bm.b.uy;
           bz3 = rdb * bm.b.uz;
-        } else if (bm.kind === 1 && bm.lamp) {
+        } else if (bm.kind !== 0 && bm.lamp) {
           bx3 = bm.lamp.vx; // 地表点（单位球面）
           by3 = bm.lamp.vy;
           bz3 = bm.lamp.vz;
@@ -1717,9 +1769,9 @@ export default function AtlasMap() {
           pts.push([cx + R * zoom * (wx * Rx + wy * Ry), cy - R * zoom * (wx * Nx + wy * Ny + wz * Nz), zc >= 0 || rho2 >= 1]);
         }
         const lowK = bm.kind === 1 ? 0.7 : 1; // 过顶示意整体更低调（判例条件 b）
-        // 底弦（波导）
-        ctx.strokeStyle = `rgba(206, 218, 236, ${(0.13 * env * lowK).toFixed(3)})`;
-        ctx.lineWidth = 1;
+        // 底弦（波导；GEO 波束更宽更淡——区域覆盖的「驻留」读感）
+        ctx.strokeStyle = `rgba(206, 218, 236, ${((bm.kind === 2 ? 0.09 : 0.13) * env * (bm.kind === 1 ? 0.7 : 1)).toFixed(3)})`;
+        ctx.lineWidth = bm.kind === 2 ? 1.5 : 1;
         ctx.beginPath();
         let started = false;
         for (const p of pts) {
@@ -1759,8 +1811,8 @@ export default function AtlasMap() {
         }
         // 信号流：一束链路承载一串信号（~0.3s 一发），每个信号走完各自抵达——
         // 抵达爆一次（过顶→灯爆 bloom 连环；星间→两端掠光连环），不是一束只爆一次
-        const trav = bm.kind === 1 ? 0.85 : 0.7;
-        const sigInt = bm.kind === 1 ? 0.28 : bm.real ? 0.35 : 0.42;
+        const trav = bm.kind === 1 ? 0.85 : bm.kind === 2 ? 1.2 : 0.7; // GEO 波束信号慢走（驻留节拍）
+        const sigInt = bm.kind === 1 ? 0.28 : bm.kind === 2 ? 0.5 : bm.real ? 0.35 : 0.42;
         const elapsed = (nowP - bm.t0) / 1000;
         let arrived = 0;
         for (let k = 0; k * sigInt < bm.dur; k++) {
@@ -1781,7 +1833,7 @@ export default function AtlasMap() {
         if (arrived > (bm.arrived ?? 0)) {
           bm.arrived = arrived;
           bm.lastBurstAt = nowP; // 一球一爆：每个信号抵达独立爆闪（快收再爆，离散可数）
-          if (bm.kind === 1 && bm.lamp) bm.lamp.bloomT = Math.max(bm.lamp.bloomT, 0.3); // 灯底衬微亮（爆闪为主）
+          if ((bm.kind === 1 || bm.kind === 2) && bm.lamp) bm.lamp.bloomT = Math.max(bm.lamp.bloomT, bm.kind === 1 ? 0.3 : 0.25); // 灯底衬微亮（爆闪为主；GEO 波束仅底辉呼吸）
           else if (bm.kind === 0) {
             bm.a.flashUntil = nowP + 300;
             if (bm.b) bm.b.flashUntil = nowP + 300;

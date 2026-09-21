@@ -348,6 +348,15 @@ const SATS = [
   { norad: 44718, name: "STARLINK-1012", zh: "星链 1012", tier: "leo" },
   { norad: 68791, name: "NAVSTAR 86 (USA 585)", zh: "GPS III", tier: "meo" },
   { norad: 63130, name: "COSMOS 2584 [GLONASS-K2]", zh: "格洛纳斯 K2", tier: "meo" },
+  { norad: 42803, name: "IRIDIUM 113", zh: "铱星 113", tier: "leo" },
+  { norad: 42811, name: "IRIDIUM 128", zh: "铱星 128", tier: "leo" },
+  { norad: 41917, name: "IRIDIUM 106", zh: "铱星 106", tier: "leo" },
+  { norad: 41924, name: "IRIDIUM 108", zh: "铱星 108", tier: "leo" },
+  { norad: 44057, name: "ONEWEB-0012", zh: "OneWeb 0012", tier: "leo" },
+  { norad: 44058, name: "ONEWEB-0010", zh: "OneWeb 0010", tier: "leo" },
+  { norad: 44059, name: "ONEWEB-0008", zh: "OneWeb 0008", tier: "leo" },
+  { norad: 40882, name: "INMARSAT 5-F3", zh: "国际海事 5-F3", tier: "geo" },
+  { norad: 41380, name: "SES-9", zh: "SES-9", tier: "geo" },
 ];
 
 /** 拉取精选卫星 TLE：缓存 → CelesTrak 直连（内容校验防节流 200 假响应）→ 全败不写文件（卫星层缺席） */
@@ -367,6 +376,7 @@ async function buildSatellites() {
   }
   const sats = [];
   for (const want of SATS) {
+    if (sats.length) await new Promise((r) => setTimeout(r, 300)); // 26 颗顺序拉取：300ms 间隔防 CelesTrak 节流
     try {
       const res = await fetch(`https://celestrak.org/NORAD/elements/gp.php?CATNR=${want.norad}&FORMAT=tle`, {
         signal: AbortSignal.timeout(15_000),
