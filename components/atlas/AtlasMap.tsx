@@ -1595,7 +1595,7 @@ export default function AtlasMap() {
       t0: number;
       dur: number; // s
       seed: number;
-      fired?: boolean; // 过顶链是否已触发收讫灯爆（一次）
+      arrived?: number; // 已抵达信号计数（每信号爆一次）
     }
     const beams: Beam[] = [];
     const beamCooldown = new Map<string, number>();
@@ -1756,11 +1756,16 @@ export default function AtlasMap() {
           }
           ctx.stroke();
         }
-        // 行进脉冲：光速感走完全程（真实中继 3 粒 / 示意互见 2 粒 / 过顶 1 粒）
-        const nPulse = bm.kind === 1 ? 1 : bm.real ? 3 : 2;
-        const trav = bm.kind === 0 ? 0.7 : 0.85;
-        for (let pk = 0; pk < nPulse; pk++) {
-          const ph = (((nowP - bm.t0) / 1000 / trav + pk / nPulse + bm.seed) % 1 + 1) % 1;
+        // 信号流：一束链路承载一串信号（~0.3s 一发），每个信号走完各自抵达——
+        // 抵达爆一次（过顶→灯爆 bloom 连环；星间→两端掠光连环），不是一束只爆一次
+        const trav = bm.kind === 1 ? 0.85 : 0.7;
+        const sigInt = bm.kind === 1 ? 0.28 : bm.real ? 0.35 : 0.42;
+        const elapsed = (nowP - bm.t0) / 1000;
+        let arrived = 0;
+        for (let k = 0; k * sigInt < bm.dur; k++) {
+          const ph = (elapsed - k * sigInt) / trav;
+          if (ph < 0 || ph > 1) continue;
+          if (k * sigInt + trav <= elapsed) arrived++;
           const p = pts[Math.round(ph * NP)];
           if (!p || !p[2]) continue;
           const fade = Math.sin(Math.PI * ph);
@@ -1771,11 +1776,13 @@ export default function AtlasMap() {
           ctx.beginPath();
           ctx.arc(p[0], p[1], 1.6, 0, Math.PI * 2);
           ctx.fill();
-          // 过顶示意：脉冲抵达灯端 → 灯以自身颜色炸开收讫 bloom（扩张环+灯辉增亮，
-          // 金/银/朱语义内点亮——比外挂银点更「这盏灯收到了」；开盘 0.6 / 收讫 0.5 / 扫掠 0.25 三级）
-          if (bm.kind === 1 && bm.lamp && ph > 0.9 && !bm.fired) {
-            bm.fired = true;
-            bm.lamp.bloomT = Math.max(bm.lamp.bloomT, 0.5);
+        }
+        if (arrived > (bm.arrived ?? 0)) {
+          bm.arrived = arrived;
+          if (bm.kind === 1 && bm.lamp) bm.lamp.bloomT = Math.max(bm.lamp.bloomT, 0.5); // 灯连环爆（bloom 0.6s 衰减 vs 0.28s 间隔＝脉动常亮+连环扩张环）
+          else if (bm.kind === 0) {
+            bm.a.flashUntil = nowP + 300;
+            if (bm.b) bm.b.flashUntil = nowP + 300;
           }
         }
         // 发端微辉（中继链）
