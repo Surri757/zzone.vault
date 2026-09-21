@@ -295,6 +295,11 @@ interface SatItem {
   zc: number;
   rho: number;
   vis: boolean;
+  ph: number; // 呼吸相位（去同步）
+  glintP: number; // 板面掠光周期（s）
+  glintOff: number; // 掠光相位偏移（s）
+  lit: number; // 当前日照符号（+1 阳 / -1 影，0 未初始化）
+  flashUntil: number; // 晨昏穿越闪亮截止时刻
 }
 const SAT_ITEMS: SatItem[] =
   typeof window === "undefined"
@@ -304,10 +309,16 @@ const SAT_ITEMS: SatItem[] =
           const arr = (satsJson as { sats?: Array<{ name?: string; zh?: string; norad?: number; tier?: string; tle1?: string; tle2?: string }> }).sats;
           if (!Array.isArray(arr)) return [];
           const out: SatItem[] = [];
+          let si = 0;
           for (const s of arr) {
             if (!s || !s.tle1 || !s.tle2) continue;
             const el = parseTLE(s.tle1, s.tle2, String(s.tier || "leo"), { norad: Number(s.norad) || 0, zh: String(s.zh || "") });
-            if (el) out.push({ el, name: String(s.name || ""), x: 0, y: 0, zc: 0, rho: 1, vis: false });
+            if (el)
+              out.push({
+                el, name: String(s.name || ""), x: 0, y: 0, zc: 0, rho: 1, vis: false,
+                ph: si * 2.399963, glintP: 8 + (si % 5), glintOff: si * 1.7, lit: 0, flashUntil: 0,
+              });
+            si++;
           }
           return out;
         } catch {
@@ -485,6 +496,10 @@ export default function AtlasMap() {
           mets: meteorCount(),
           satsVis: SAT_ITEMS.reduce((n, s) => n + (s.vis ? 1 : 0), 0),
           satsAll: SAT_ITEMS.length,
+          sat0: (() => {
+            const s = SAT_ITEMS.find((q) => q.vis);
+            return s ? { x: Math.round(s.x), y: Math.round(s.y), tier: s.el.tier } : null;
+          })(),
         };
       }
       const l0 = yaw * RAD;
@@ -545,6 +560,7 @@ export default function AtlasMap() {
     let bootT = reduced ? 1e9 : 0;
     let bootDone = reduced;
     let hoverLamp: (typeof lamps)[number] | null = null;
+    let hoverSat: SatItem | null = null; // 悬停卫星（全弧展开的钥匙——选中才画轨道线）
     let px = 0;
     let py = 0;
     let lastMoveAt = -1e9;
@@ -970,6 +986,7 @@ export default function AtlasMap() {
     const meteorPool: Array<Meteor | null> = [null, null, null, null, null, null, null, null];
     let meteorTimer = 0;
     let meteorBigAt = 0; // 大流星让位窗（期间只出微流星）
+    let lastMeteorAt = 0; // 上次成功生成时刻（空屏补发用）
     function meteorCount() {
       let n = 0;
       for (const m of meteorPool) if (m) n++;
@@ -984,19 +1001,19 @@ export default function AtlasMap() {
       const ssy = cy - R * zoom * (sunV.Sx * Nx + sunV.Sy * Ny + sunV.Sz * Nz);
       return (x - cx) * (cx - ssx) + (y - cy) * (cy - ssy) > 0;
     }
-    function spawnMeteor(sunV: { Sx: number; Sy: number; Sz: number }) {
+    function spawnMeteor(sunV: { Sx: number; Sy: number; Sz: number }): boolean {
       const narrowScreen = W < 640;
-      const cap = narrowScreen ? 2 : 3; // 1 大 + 2 微（窄屏 1+1）
-      if (meteorCount() >= cap) return;
+      const cap = narrowScreen ? 3 : 4; // 密度红线：不得读出「流星雨事件」
+      if (meteorCount() >= cap) return false;
       const nowP = performance.now();
-      const big = nowP >= meteorBigAt && Math.random() < 0.22;
+      const big = nowP >= meteorBigAt && Math.random() < 0.3;
       if (big) meteorBigAt = nowP + 6000; // 大流星后 6s 让位
       // 方向：对角扇区（右下 20-70° / 左下 110-160°），杜绝水平垂直（与滚动带/刻度盘同构打架）
       const fan = Math.random() < 0.5;
       const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
       const diag = Math.hypot(W, H);
       const speed = diag * (big ? 0.85 + Math.random() * 0.35 : 0.6 + Math.random() * 0.4);
-      const life0 = big ? 0.9 + Math.random() * 0.5 : 0.45 + Math.random() * 0.3;
+      const life0 = big ? 1.8 + Math.random() * 0.8 : 0.9 + Math.random() * 0.5;
       // 起点：上半屏随机；轨迹中点须过夜半门控（4 次机会，全败则本场不出）
       let sx0 = 0;
       let sy0 = 0;
@@ -1011,29 +1028,36 @@ export default function AtlasMap() {
           break;
         }
       }
-      if (!placed) return;
+      if (!placed) return false;
       for (let k = 0; k < meteorPool.length; k++) {
         if (meteorPool[k]) continue;
         meteorPool[k] = {
           x: sx0, y: sy0,
           vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
           life: life0, life0,
-          len: diag * (big ? 0.25 + Math.random() * 0.13 : 0.08 + Math.random() * 0.06),
+          len: diag * (big ? 0.5 + Math.random() * 0.15 : 0.18 + Math.random() * 0.08),
           big, tw: Math.random() * Math.PI * 2, twF: 2 + Math.random() * 3,
         };
-        return;
+        return true;
       }
+      return false;
     }
     function drawMeteors(dt: number, sunV: { Sx: number; Sy: number; Sz: number }) {
       if (reduced || !bootDone) return; // boot 演出独角戏；reduced 无流星（冻结的流星是划痕不是画）
       const nowP = performance.now();
       meteorTimer -= dt;
-      if (meteorTimer <= 0 && nowP >= meteorBigAt - (W < 640 ? 0 : 0)) {
-        spawnMeteor(sunV);
-        const mean = W < 640 ? 4 : 2;
+      if (meteorTimer <= 0) {
+        if (spawnMeteor(sunV)) lastMeteorAt = nowP;
+        const mean = W < 640 ? 2.2 : 1.3;
         meteorTimer = Math.max(0.35, -Math.log(Math.max(1e-6, Math.random())) * mean);
       }
+      // 常驻补发：空屏超 3.5s 强制一颗（带抖动防机械感）；夜半门控全败 1s 后再试
+      if (meteorCount() === 0 && nowP - lastMeteorAt > 3500) {
+        if (spawnMeteor(sunV)) lastMeteorAt = nowP + Math.random() * 800;
+        else lastMeteorAt = nowP - 2500;
+      }
       if (meteorCount() === 0) return;
+      const narrow = W < 640;
       ctx.save();
       // 球后裁切：evenodd 挖去球盘——流星从球后掠过、在球缘被利落切断
       ctx.beginPath();
@@ -1052,33 +1076,97 @@ export default function AtlasMap() {
         m.x += m.vx * dt;
         m.y += m.vy * dt;
         const p = m.life / m.life0;
-        // 生命周期包络：入 15% 淡入、出 30% 淡出、余辉期残尾 ×0.35；叠加独立频率脉冲
+        // 生命周期包络：入 15% 淡入、出 30% 淡出、余辉期残尾 ×0.35；大流星另有独立频率脉冲
         let env = p > 0.85 ? (1 - p) / 0.15 : p < 0 ? clamp(1 + p / 0.3, 0, 1) * 0.35 : 1;
-        env *= 0.72 + 0.28 * Math.sin(nowP * 0.001 * m.twF * Math.PI + m.tw);
-        const a = (m.big ? 0.4 : 0.28) * clamp(env, 0, 1);
+        if (m.big) env *= 0.72 + 0.28 * Math.sin(nowP * 0.001 * m.twF * Math.PI + m.tw);
+        const a = (m.big ? 0.65 : 0.45) * clamp(env, 0, 1); // 红线：亮度不压灯与卫星数据层
         if (a <= 0.01) continue;
         const mag = Math.hypot(m.vx, m.vy) || 1;
-        const tx = m.x - (m.vx / mag) * m.len;
-        const ty = m.y - (m.vy / mag) * m.len;
+        const dx = m.vx / mag, dy = m.vy / mag;
+        const tx = m.x - dx * m.len;
+        const ty = m.y - dy * m.len;
         const g = ctx.createLinearGradient(tx, ty, m.x, m.y);
         g.addColorStop(0, "rgba(226, 236, 255, 0)");
         g.addColorStop(1, `rgba(226, 236, 255, ${a.toFixed(3)})`);
         ctx.strokeStyle = g;
-        ctx.lineWidth = m.big ? 1.6 : 1;
+        ctx.lineWidth = (m.big ? 3 : 1.5) * (narrow ? 0.8 : 1);
         ctx.beginPath();
         ctx.moveTo(tx, ty);
         ctx.lineTo(m.x, m.y);
         ctx.stroke();
         if (m.big && p > 0) {
-          // 白热暖芯（灯的芯同族暖白 255,244,224——禁灯金，语义 monopoly 不容分享）
+          // 头端 18% 暖白段：冷暖对比出质感（灯芯同族暖白——禁灯金）
+          const wx = m.x - dx * m.len * 0.18;
+          const wy = m.y - dy * m.len * 0.18;
+          const g2 = ctx.createLinearGradient(wx, wy, m.x, m.y);
+          g2.addColorStop(0, "rgba(255, 244, 224, 0)");
+          g2.addColorStop(1, `rgba(255, 244, 224, ${(a * 0.55).toFixed(3)})`);
+          ctx.strokeStyle = g2;
+          ctx.lineWidth = narrow ? 2.4 : 3;
+          ctx.beginPath();
+          ctx.moveTo(wx, wy);
+          ctx.lineTo(m.x, m.y);
+          ctx.stroke();
+          if (!narrow) {
+            // 火花粒子：头后两粒渐隐碎星
+            for (let sp = 0; sp < 2; sp++) {
+              ctx.fillStyle = `rgba(235, 240, 250, ${(a * (sp === 0 ? 0.5 : 0.3)).toFixed(3)})`;
+              ctx.beginPath();
+              ctx.arc(m.x - dx * m.len * (sp === 0 ? 0.28 : 0.46), m.y - dy * m.len * (sp === 0 ? 0.28 : 0.46), 1.2, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
           ctx.globalAlpha = a;
-          ctx.drawImage(glowSprite(SILVER), m.x - 6, m.y - 6, 12, 12);
+          ctx.drawImage(glowSprite(SILVER), m.x - 9, m.y - 9, 18, 18);
           ctx.globalAlpha = 1;
           ctx.fillStyle = `rgba(255, 244, 224, ${Math.min(1, a * 1.6).toFixed(3)})`;
           ctx.beginPath();
-          ctx.arc(m.x, m.y, 1.8, 0, Math.PI * 2);
+          ctx.arc(m.x, m.y, 3, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+      ctx.restore();
+    }
+
+    /* ---- 星野（正交投影无穷远：相机惯性静止，星野屏幕静止是物理正确而非将就） ---- */
+    let starsX: Float32Array | null = null;
+    let starsY: Float32Array | null = null;
+    let starsS: Float32Array | null = null;
+    let starsA: Float32Array | null = null;
+    function bakeStars() {
+      const n = W < 640 ? 90 : 170; // 纯随机散点——不得拼出星座/银河/黄道等可解读方向
+      starsX = new Float32Array(n);
+      starsY = new Float32Array(n);
+      starsS = new Float32Array(n);
+      starsA = new Float32Array(n);
+      for (let k = 0; k < n; k++) {
+        starsX[k] = Math.random() * W;
+        starsY[k] = Math.random() * H;
+        const bucket = Math.random();
+        if (bucket < 0.7) {
+          starsS[k] = 0.7 + Math.random() * 0.4;
+          starsA[k] = 0.16 + Math.random() * 0.14;
+        } else if (bucket < 0.95) {
+          starsS[k] = 1.1 + Math.random() * 0.4;
+          starsA[k] = 0.26 + Math.random() * 0.16;
+        } else {
+          starsS[k] = 1.7;
+          starsA[k] = 0.42 + Math.random() * 0.13;
+        }
+      }
+    }
+    function drawStars(nowP: number) {
+      if (!starsX || !starsY || !starsS || !starsA || !bootDone) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, W, H);
+      ctx.arc(cx, cy, R * zoom, 0, Math.PI * 2);
+      ctx.clip("evenodd"); // 星在球外：球盘遮星，衬托「球在转」
+      for (let k = 0; k < starsX.length; k++) {
+        let a = starsA[k];
+        if (!reduced && k % 27 === 5) a *= 0.55 + 0.45 * Math.sin(nowP * 0.00045 * (1 + (k % 5) * 0.31) + k); // ≤5 颗慢闪
+        ctx.fillStyle = `rgba(215, 225, 245, ${a.toFixed(3)})`;
+        ctx.fillRect(starsX[k], starsY[k], starsS[k], starsS[k]);
       }
       ctx.restore();
     }
@@ -1086,14 +1174,86 @@ export default function AtlasMap() {
     /* ---- 真实卫星层：TLE 平均根数传播（真名/真轨道面/真速率）→ 地固投影 ----
      * 「轨道归真、呈现仪表化」：位置来自真实根数；高度按层压缩（真实 1.06/4.2/6.6R
      * → 显示 1.10/1.32/1.52R）。遮挡精确式（r≥1）：z<0 ∧ ρ<1 → 球后不画。 */
-    function drawSats() {
+    /** 轨道弧：同一根数在 [t+ms0, t+ms1] 的预测折线（悬停全弧/未来段虚线消歧共用） */
+    function drawSatArc(s: SatItem, t: number, ms0: number, ms1: number, style: string, width: number, dash?: number[]) {
+      const rd = s.el.rDisp;
+      const Rz2 = R * zoom;
+      ctx.save();
+      ctx.strokeStyle = style;
+      ctx.lineWidth = width;
+      if (dash) ctx.setLineDash(dash);
+      ctx.beginPath();
+      let started = false;
+      for (let k = 0; k <= 48; k++) {
+        const q = propagate(s.el, t + ms0 + ((ms1 - ms0) * k) / 48);
+        if (!q) {
+          started = false;
+          continue;
+        }
+        const qf = Math.cos(q.lat);
+        const X = qf * Math.cos(q.lon), Y = qf * Math.sin(q.lon), Z = Math.sin(q.lat);
+        const zc = (X * Ex + Y * Ey + Z * Ez) * rd;
+        const rho = Math.sqrt(Math.max(0, rd * rd - zc * zc));
+        if (zc < 0 && rho < 1) {
+          started = false;
+          continue;
+        }
+        const x = cx + Rz2 * rd * (X * Rx + Y * Ry);
+        const y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      if (dash) ctx.setLineDash([]);
+      ctx.restore();
+    }
+    function drawSats(sunV: { Sx: number; Sy: number; Sz: number }) {
       if (SAT_ITEMS.length === 0) return;
       const t = Date.now();
       const Rz2 = R * zoom;
+      // 静止轨道环带（图例层）：真实世界要素的标注虚环 + 文字标注——非卫星分布暗示
+      {
+        const rd = 1.52;
+        const pts: Array<{ x: number; y: number; ok: boolean }> = [];
+        for (let k = 0; k < 64; k++) {
+          const a = (k / 64) * Math.PI * 2;
+          const X = Math.cos(a), Y = Math.sin(a); // 赤道面（ECEF 静止）
+          const dot = X * Ex + Y * Ey;
+          const zc = rd * dot;
+          const rho = rd * Math.sqrt(Math.max(0, 1 - dot * dot));
+          pts.push({
+            x: cx + Rz2 * rd * (X * Rx + Y * Ry),
+            y: cy - Rz2 * rd * (X * Nx + Y * Ny),
+            ok: zc >= 0 || rho >= 1,
+          });
+        }
+        ctx.save();
+        ctx.strokeStyle = "rgba(201, 212, 228, 0.17)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let k = 0; k < 64; k += 2) {
+          const p1 = pts[k], p2 = pts[(k + 1) % 64];
+          if (p1.ok && p2.ok) {
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+          }
+        }
+        ctx.stroke();
+        let bx: { x: number; y: number } | null = null;
+        for (const p of pts) if (p.ok && (!bx || p.x > bx.x)) bx = p;
+        if (bx && bx.x < W - 58) {
+          ctx.fillStyle = "rgba(201, 212, 228, 0.52)";
+          ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+          ctx.fillText("静止轨道", bx.x + 5, clamp(bx.y, 12, H - 12));
+        }
+        ctx.restore();
+      }
       for (const s of SAT_ITEMS) {
         if (stale(s.el, t)) {
           s.vis = false;
-          continue; // 历元超龄：宁可缺席不可造假
+          continue; // 历元超龄：宁可缺席不可造假（弧随星同灭）
         }
         const p = propagate(s.el, t);
         if (!p) {
@@ -1104,6 +1264,12 @@ export default function AtlasMap() {
         const X = cf * Math.cos(p.lon);
         const Y = cf * Math.sin(p.lon);
         const Z = Math.sin(p.lat);
+        // 晨昏穿越闪亮：入阳/入影一瞬增辉（物理真实事件，非装饰）
+        const litNow = X * sunV.Sx + Y * sunV.Sy + Z * sunV.Sz;
+        const litSign = litNow >= 0 ? 1 : -1;
+        if (s.lit !== 0 && litSign !== s.lit && Math.abs(litNow) < 0.25) s.flashUntil = t + 500;
+        s.lit = litSign;
+        const flashK = t < s.flashUntil ? 1.9 : 1;
         const rd = s.el.rDisp;
         const zc = (X * Ex + Y * Ey + Z * Ez) * rd;
         const rho = Math.sqrt(Math.max(0, rd * rd - zc * zc)); // 屏面偏移（球半径单位）
@@ -1117,45 +1283,87 @@ export default function AtlasMap() {
         s.x = cx + Rz2 * rd * (X * Rx + Y * Ry);
         s.y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
         s.vis = true;
-        const depth = 0.65 + 0.35 * clamp(zc / rd, -1, 1);
+        const depth = 0.55 + 0.45 * clamp(zc / rd, -1, 1); // 深度下限 0.55：背面近临边不熄
         const a = clamp(depth * limbK, 0, 1);
+        const breath = 0.9 + 0.1 * Math.sin(t * 0.0006 + s.ph); // 去同步呼吸（~10.5s 周期）
         const isGeo = s.el.tier === "geo";
-        const blink = isGeo ? 0.35 + 0.25 * Math.sin((t / 3000) * Math.PI * 2) : 1;
-        const col = `rgba(201, 212, 228, ${(a * blink * 0.8).toFixed(3)})`; // 构造银蓝（金/朱/SILVER 语义色归灯）
-        if (glMode) {
-          ctx.fillStyle = "rgba(5, 8, 14, 0.4)"; // 墨晕垫底：亮色影像上的可读性
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
-          ctx.fill();
+        const blink = isGeo ? 0.4 + 0.35 * (0.5 + 0.5 * Math.sin((t / 3000) * Math.PI * 2)) : 1;
+        const coreA = clamp(a * (isGeo ? blink : 0.95) * flashK, 0, 1);
+        const halo = isGeo ? 18 : s.el.tier === "meo" ? 11 : 10;
+        const haloA = clamp(a * (isGeo ? blink * 0.75 : 0.55) * breath * flashK, 0, 1);
+        // 回看轨迹：真实传播的过去时间窗（时间窗放大＝保序变换；GEO 无尾是信息）
+        if (s.el.tier !== "geo" && a > 0.25) {
+          const lookMs = (s.el.tier === "leo" ? 75 : 120) * 1000;
+          let px0 = s.x, py0 = s.y;
+          let pok = true;
+          for (let k = 1; k <= 6; k++) {
+            const q = propagate(s.el, t - (lookMs * k) / 6);
+            let qx = 0, qy = 0;
+            let qok = false;
+            if (q) {
+              const qf = Math.cos(q.lat);
+              const qX = qf * Math.cos(q.lon), qY = qf * Math.sin(q.lon), qZ = Math.sin(q.lat);
+              const qzc = (qX * Ex + qY * Ey + qZ * Ez) * rd;
+              const qrho = Math.sqrt(Math.max(0, rd * rd - qzc * qzc));
+              qok = qzc >= 0 || qrho >= 1;
+              qx = cx + Rz2 * rd * (qX * Rx + qY * Ry);
+              qy = cy - Rz2 * rd * (qX * Nx + qY * Ny + qZ * Nz);
+            }
+            if (pok && qok) {
+              ctx.strokeStyle = `rgba(201, 212, 228, ${(a * 0.6 * (1 - k / 6)).toFixed(3)})`;
+              ctx.lineWidth = 1.25;
+              ctx.beginPath();
+              ctx.moveTo(px0, py0);
+              ctx.lineTo(qx, qy);
+              ctx.stroke();
+            }
+            px0 = qx;
+            py0 = qy;
+            pok = qok;
+          }
         }
+        // 悬停全弧（选中才画轨道线）：过去半弧实线、未来半弧虚线消歧「将行」
+        if (s === hoverSat) {
+          const perMs = ((Math.PI * 2) / s.el.n) * 60000;
+          drawSatArc(s, t, -perMs / 2, 0, "rgba(201, 212, 228, 0.24)", 1);
+          drawSatArc(s, t, 0, perMs / 2, "rgba(201, 212, 228, 0.1)", 1, [3, 4]);
+        }
+        // 墨晕垫底（satvis 1px 暗描边惯例——任何底色上保持可读，全模式）
+        ctx.fillStyle = "rgba(5, 8, 14, 0.4)";
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 7, 0, Math.PI * 2);
+        ctx.fill();
+        // 辉光精灵（径向立方衰减家族——StuffInSpace pow(r+0.1,³) 惯例）
+        ctx.globalAlpha = haloA;
+        ctx.drawImage(glowSprite(SILVER), s.x - halo, s.y - halo, halo * 2, halo * 2);
+        ctx.globalAlpha = 1;
+        const col = `rgba(206, 218, 236, ${coreA.toFixed(3)})`; // 构造银蓝（金/朱/SILVER 语义色归灯）
         if (s.el.tier === "meo") {
-          // 点 + 太阳能板两笔（「—·—」横担）
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 1;
+          // 点 + 太阳能板两笔（「—·—」横担）；板面掠光：周期性反照增亮（物理真实）
+          const gph = (((t / 1000 + s.glintOff) % s.glintP) / s.glintP + 1) % 1;
+          const glint = gph < 0.12 ? Math.sin((gph / 0.12) * Math.PI) * 0.15 : 0;
+          const pcol = `rgba(206, 218, 236, ${clamp(coreA + glint, 0, 1).toFixed(3)})`;
+          ctx.strokeStyle = pcol;
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.moveTo(s.x - 4, s.y);
-          ctx.lineTo(s.x - 1.5, s.y);
-          ctx.moveTo(s.x + 1.5, s.y);
-          ctx.lineTo(s.x + 4, s.y);
+          ctx.moveTo(s.x - 4.5, s.y);
+          ctx.lineTo(s.x - 2, s.y);
+          ctx.moveTo(s.x + 2, s.y);
+          ctx.lineTo(s.x + 4.5, s.y);
           ctx.stroke();
-          ctx.fillStyle = col;
-          ctx.fillRect(s.x - 1, s.y - 1, 2, 2);
+          ctx.fillStyle = pcol;
+          ctx.fillRect(s.x - 1.5, s.y - 1.5, 3, 3);
         } else {
           ctx.fillStyle = col;
           ctx.beginPath();
-          ctx.arc(s.x, s.y, isGeo ? 2 : 1.6, 0, Math.PI * 2);
+          ctx.arc(s.x, s.y, isGeo ? 3.5 : 3, 0, Math.PI * 2);
           ctx.fill();
-        }
-        if (isGeo && blink > 0.55) {
-          ctx.globalAlpha = (blink - 0.55) * a; // 慢闪信标峰值微晕
-          ctx.drawImage(glowSprite(SILVER), s.x - 5, s.y - 5, 10, 10);
-          ctx.globalAlpha = 1;
         }
       }
     }
     function satAt(x: number, y: number): SatItem | null {
       for (const s of SAT_ITEMS) {
-        if (s.vis && Math.hypot(s.x - x, s.y - y) < 11) return s;
+        if (s.vis && Math.hypot(s.x - x, s.y - y) < 16) return s; // 命中半径随视觉足印放大
       }
       return null;
     }
@@ -1981,6 +2189,7 @@ export default function AtlasMap() {
         }
       }
 
+      drawStars(nowP); // 星野：最底装饰层（球外裁切）
       drawMeteors(dtRaw, sunVec); // 流星：球后裁切的栈底层
       drawGraticule(bf.circleP); // 卫星模式网格走墨衬（见 casing），不再压 alpha
       if (!isGL) {
@@ -2013,7 +2222,7 @@ export default function AtlasMap() {
       if (!isGL) drawNoonMeridian(strong2); // 卫星图上 shader 已真实受光，日带=同件事画两遍
       drawSunAccent(isGL ? sunVec : realSun, strong2, isGL);
       if (!isGL) drawRim(realSun);
-      drawSats(); // 真实卫星层（球上、大气族下、交易所灯之下）
+      drawSats(sunVec); // 真实卫星层（球上、大气族下、交易所灯之下）
 
       let alive = !bootDone || rotDrag || rotating || dialDragging || springT >= 0 || repaint || spinTarget > 0 || !!flight || meteorCount() > 0;
       for (const l of lamps) {
@@ -2185,6 +2394,7 @@ export default function AtlasMap() {
       const l = chipAt(px, py) ?? lampAt(px, py);
       const sat = l ? null : satAt(px, py);
       hoverLamp = l;
+      hoverSat = sat;
       stage.style.cursor = l || sat ? "pointer" : "grab";
       const tip = tipRef.current;
       if (tip) {
@@ -2245,6 +2455,7 @@ export default function AtlasMap() {
     };
     const onStageLeave = () => {
       hoverLamp = null;
+      hoverSat = null;
       const tip = tipRef.current;
       if (tip) tip.style.opacity = "0";
     };
@@ -2511,6 +2722,7 @@ export default function AtlasMap() {
       glr?.resize(Math.max(1, Math.round(W * DPR)), Math.max(1, Math.round(H * DPR)));
       bakeSphere();
       bakeChips();
+      bakeStars();
       updateDial(0);
       repaint = true;
       ensureLoop();
