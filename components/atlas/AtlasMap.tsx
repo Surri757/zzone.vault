@@ -1,0 +1,2867 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import dotsJson from "@/data/atlas-dots.json";
+import citiesJson from "@/data/atlas-cities.json";
+import exchangesJson from "@/data/atlas-exchanges.json";
+import {
+  stateAt,
+  nextBoundaryAfter,
+  formatLocalTime,
+  zonedClock,
+  type AtlasExchange,
+  type LampState,
+} from "@/lib/atlas-session";
+import { MIC_CC, flagImgFor, dataUri as flagUri } from "./atlas-flags";
+import { createGlobeGL, type GlobeGL } from "./globe-gl";
+import satsJson from "@/data/atlas-satellites.json";
+import { parseTLE, propagate, stale, type SatElement } from "@/lib/atlas-sats";
+
+/**
+ * 舆图 —— 墨玉灯球（浑天仪骨架）。Canvas 2D 手写闭式正交投影：
+ * 每点单位向量解码期预计算，帧内投影 = 三个点积，零三角函数。
+ *
+ * 语义三分（球化后的宪法）：
+ *   · 空间归球 —— 拖动旋转视角（yaw 无界、pitch 钳 ±75°、北上恒定、无回正，
+ *     双击空白海面才回家）；滚轮/双指缩放钳 [1×, 2.2×]
+ *   · 时间归盘 —— 底部 24h 刻度盘拨动假想时刻，只翻转 27 灯开闭态，
+ *     松手 0.9s 弹回现在；球与晨昏线永不随拨动转动
+ *   · 光照归真 —— 城市灯光/晨昏弧/金 tick 只跟真实太阳（60s 随行星自转重画）
+ *
+ * 光的语法（与封面/大厅同一盏灯）：加法（lighter）、双色温（冷银=机器/预热，
+ * 暖金=已点亮）、光一次性（开盘 bloom 600ms）、无运动即无帧（RAF 收敛即停，
+ * 静止帧即烘焙——球时代的画布天然无需离屏缓存层）。
+ *
+ * 崩溃纪律：点阵解码失败→经纬网兜底成球；交易所缺字段→剔除；NaN 视角→
+ * 重置回默认方位；canvas 不可用→只渲染 DOM 骨架。任何坏路径不白屏、不抛异常。
+ */
+
+const GOLD: [number, number, number] = [245, 215, 110];
+const SILVER: [number, number, number] = [226, 236, 255];
+const CINNABAR: [number, number, number] = [232, 115, 92]; // 朱涨（--ink-cinnabar 提亮以适夜底）
+const PAPER = "229, 221, 202";
+const INKPAPER = "201, 212, 228"; // 点阵冷银蓝
+const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const rgba = (c: [number, number, number], a: number) => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${clamp(a, 0, 1).toFixed(3)})`;
+
+const SCRUB_RANGE_MS = 36 * 3600_000; // 刻度盘拨动钳制 ±36h
+const SPRING_SEC = 0.9; // 松手弹回现在
+const BOOT_SEC = 1.4; // 开机 = 快进一个昼夜（画圆 → 晨昏扫掠 → 灯火就位）
+const HOME_LON = 105; // 双击回家的方位（A股用户开屏见亚洲；北上 + 用户时区经线）
+const HOME_LAT = 25;
+const PITCH_CLAMP = 75; // 俯仰钳位（公式无奇异，纯交互手感）
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 2.2;
+const INERTIA_TAU = 0.45; // 惯性时间常数（调研收敛：iOS 0.23-0.35 / d3 0.435，地球仪取稍重）
+const RELEASE_STILL_MS = 80; // 松手静止窗：窗口内无移动则不起惯性（防「停顿后松手飞出」）
+const FLAG_W_MAJOR = 24;
+const FLAG_W_MINOR = 19;
+const FLAG_W_NARROW = 18;
+const CHIP_PAD = 5;
+const STATE_TARGET: Record<LampState, number> = { OPEN: 1, BREAK: 0.45, PRE: 0.7, CLOSED: 0.12 };
+const STATE_ZH: Record<LampState, string> = { OPEN: "交易中", BREAK: "午休", PRE: "盘前", CLOSED: "休市" };
+const DRILL_MARKET: Record<string, "CN" | "US"> = { XSHG: "CN", XSHE: "CN", XBSE: "CN", XNYS: "US", XNAS: "US" };
+
+/** 服务端 /api/atlas/signals 的单灯信号（客户端精简形状） */
+interface SignalLite {
+  indexName: string;
+  price: number | null;
+  changePct: number | null;
+  status: string;
+}
+
+const RAD = Math.PI / 180;
+/** 八大交易所：窄屏/旋转中的常显芯片基线（全球一圈的锚点城市） */
+const MAJOR_MICS = ["XSHG", "XHKG", "XJPX", "XKRX", "XNSE", "XETR", "XLON", "XNYS"];
+const MAJOR_SET = new Set(MAJOR_MICS);
+
+const CITY_COLOR: [number, number, number] = [255, 204, 132]; // 城市灯暖尘
+const CITY_SPRITE_N = 2000; // 头部城市暖光晕
+const CITY_DEGRADE_N = 8000; // 旋转中/窄屏降级截断（数组人口降序，切片即得）
+const LAT_BANDS = 24;
+const LON_BINS = 360;
+const CITY_LEVELS = 16; // alpha 分桶：同桶共享 fillStyle + 单 path 批量 rect
+const TERRAIN_LEVELS = 6;
+
+/* ---------------- 数据资产：解码 + 球面单位向量预计算（模块级一次） ---------------- */
+
+interface DotField {
+  n: number;
+  lon: Float32Array; // boot 扫掠需要经度
+  w: Float32Array;
+  px: Float32Array; // 单位向量（地理系：x=0°经线赤道，y=90°E，z=北极）
+  py: Float32Array;
+  pz: Float32Array;
+  band: Int32Array; // 太阳高度 LUT 索引（纬度带）
+  bin: Int32Array; // LUT 索引（经度档）
+  lv: Uint8Array; // 权重分档
+  latTop: number;
+  latBottom: number;
+}
+
+function decodeDots(): DotField {
+  const j = dotsJson as { count?: number; data?: string; latTop?: number; latBottom?: number };
+  const latTop = Number.isFinite(j.latTop) ? (j.latTop as number) : 90;
+  const latBottom = Number.isFinite(j.latBottom) ? (j.latBottom as number) : -90;
+  const empty: DotField = {
+    n: 0,
+    lon: new Float32Array(0),
+    w: new Float32Array(0),
+    px: new Float32Array(0),
+    py: new Float32Array(0),
+    pz: new Float32Array(0),
+    band: new Int32Array(0),
+    bin: new Int32Array(0),
+    lv: new Uint8Array(0),
+    latTop,
+    latBottom,
+  };
+  try {
+    const bin = atob(String(j.data || ""));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const count = Number(j.count) || 0;
+    if (count <= 0 || bytes.length !== count * 5) throw new Error("长度不符");
+    const dv = new DataView(bytes.buffer);
+    const lons: number[] = [];
+    const lats: number[] = [];
+    const ws: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const o = i * 5;
+      const lon = dv.getUint16(o, true) / 10 - 180;
+      const lat = dv.getUint16(o + 2, true) / 10 - 90;
+      const w = bytes[o + 4] / 255;
+      if (Number.isFinite(lon) && Number.isFinite(lat) && Number.isFinite(w)) {
+        lons.push(lon);
+        lats.push(lat);
+        ws.push(w);
+      }
+    }
+    const n = lons.length;
+    if (n < 100) throw new Error("点阵过少");
+    const f: DotField = {
+      n,
+      lon: new Float32Array(n),
+      w: new Float32Array(n),
+      px: new Float32Array(n),
+      py: new Float32Array(n),
+      pz: new Float32Array(n),
+      band: new Int32Array(n),
+      bin: new Int32Array(n),
+      lv: new Uint8Array(n),
+      latTop,
+      latBottom,
+    };
+    const latSpan = Math.max(1, latTop - latBottom);
+    for (let i = 0; i < n; i++) {
+      const lon = lons[i];
+      const lat = lats[i];
+      const w = ws[i];
+      f.lon[i] = lon;
+      f.w[i] = w;
+      f.lv[i] = Math.min(TERRAIN_LEVELS - 1, (w * TERRAIN_LEVELS) | 0);
+      const λ = lon * RAD;
+      const φ = lat * RAD;
+      const cφ = Math.cos(φ);
+      f.px[i] = cφ * Math.cos(λ);
+      f.py[i] = cφ * Math.sin(λ);
+      f.pz[i] = Math.sin(φ);
+      f.band[i] = clamp(Math.floor(((latTop - lat) / latSpan) * LAT_BANDS), 0, LAT_BANDS - 1);
+      f.bin[i] = clamp(Math.floor(((lon + 180) / 360) * LON_BINS), 0, LON_BINS - 1);
+    }
+    return f;
+  } catch {
+    return empty;
+  }
+}
+
+function loadExchanges(): AtlasExchange[] {
+  const arr = (exchangesJson as { exchanges?: unknown }).exchanges;
+  if (!Array.isArray(arr)) return [];
+  return (arr as AtlasExchange[]).filter(
+    (e) =>
+      e &&
+      typeof e.mic === "string" &&
+      typeof e.tz === "string" &&
+      Number.isFinite(e.lat) &&
+      Number.isFinite(e.lon) &&
+      e.sessions &&
+      typeof e.sessions === "object",
+  );
+}
+
+/** 太阳直射经度（忽略均时差 ±4°，美学精度足够） */
+function subsolarLon(ms: number): number {
+  const d = new Date(ms);
+  const h = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
+  return (((12 - h) * 15 + 540) % 360) - 180;
+}
+
+/** 太阳赤纬（度，含季节漂移；美学精度足够） */
+function solarDeclination(ms: number): number {
+  const d = new Date(ms);
+  const start = Date.UTC(d.getUTCFullYear(), 0, 0);
+  const day = Math.max(1, Math.floor((ms - start) / 86_400_000));
+  return 23.44 * Math.sin((2 * Math.PI * (day + 284)) / 365);
+}
+
+interface CityField {
+  n: number;
+  lon: Float32Array;
+  pl: Float32Array; // 人口权重 0..1（数组按人口降序）
+  band: Int32Array;
+  bin: Int32Array;
+  px: Float32Array;
+  py: Float32Array;
+  pz: Float32Array;
+}
+
+function decodeCities(): CityField {
+  const empty: CityField = {
+    n: 0,
+    lon: new Float32Array(0),
+    pl: new Float32Array(0),
+    band: new Int32Array(0),
+    bin: new Int32Array(0),
+    px: new Float32Array(0),
+    py: new Float32Array(0),
+    pz: new Float32Array(0),
+  };
+  try {
+    const j = citiesJson as { count?: number; data?: string };
+    const bin = atob(String(j.data || ""));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const count = Number(j.count) || 0;
+    if (count <= 0 || bytes.length !== count * 5) throw new Error("长度不符");
+    const dv = new DataView(bytes.buffer);
+    const rows: Array<[number, number, number]> = [];
+    for (let i = 0; i < count; i++) {
+      const o = i * 5;
+      const lon = dv.getUint16(o, true) / 10 - 180;
+      const lat = dv.getUint16(o + 2, true) / 10 - 58;
+      const pl = bytes[o + 4] / 255;
+      if (Number.isFinite(lon) && Number.isFinite(lat) && Number.isFinite(pl)) rows.push([lon, lat, pl]);
+    }
+    rows.sort((a, b) => b[2] - a[2]);
+    const n = rows.length;
+    if (n < 500) throw new Error("城市过少");
+    const f: CityField = {
+      n,
+      lon: new Float32Array(n),
+      pl: new Float32Array(n),
+      band: new Int32Array(n),
+      bin: new Int32Array(n),
+      px: new Float32Array(n),
+      py: new Float32Array(n),
+      pz: new Float32Array(n),
+    };
+    const latTop = 90;
+    const latSpan = 180;
+    for (let i = 0; i < n; i++) {
+      const [lon, lat, pl] = rows[i];
+      f.lon[i] = lon;
+      // 数据侧权重是 log10(pop) 档（中位数仅 0.098）——γ=0.4 幂曲线重新铺开：
+      // 小城 0.19 / 中城 0.40 / p1 0.80 / 巨城 0.95，亮度与光晕不再挤在地板上
+      f.pl[i] = Math.pow(pl, 0.4);
+      const λ = lon * RAD;
+      const φ = lat * RAD;
+      const cφ = Math.cos(φ);
+      f.px[i] = cφ * Math.cos(λ);
+      f.py[i] = cφ * Math.sin(λ);
+      f.pz[i] = Math.sin(φ);
+      f.band[i] = clamp(Math.floor(((latTop - lat) / latSpan) * LAT_BANDS), 0, LAT_BANDS - 1);
+      f.bin[i] = clamp(Math.floor(((lon + 180) / 360) * LON_BINS), 0, LON_BINS - 1);
+    }
+    return f;
+  } catch {
+    return empty;
+  }
+}
+
+/* 模块级常量：SSR 侧为空（引擎只在客户端运行），客户端解码/校验各做一次 */
+const DOTS = typeof window === "undefined" ? null : decodeDots();
+const CITIES = typeof window === "undefined" ? null : decodeCities();
+const EXCHANGES = typeof window === "undefined" ? [] : loadExchanges();
+
+/* 精选实名卫星（真实 TLE → 根数；数据缺席/解析失败 → 空数组，卫星层整体不画——宁可缺席不可造假） */
+interface SatItem {
+  el: SatElement;
+  name: string;
+  x: number;
+  y: number;
+  zc: number;
+  rho: number;
+  vis: boolean;
+}
+const SAT_ITEMS: SatItem[] =
+  typeof window === "undefined"
+    ? []
+    : (() => {
+        try {
+          const arr = (satsJson as { sats?: Array<{ name?: string; zh?: string; norad?: number; tier?: string; tle1?: string; tle2?: string }> }).sats;
+          if (!Array.isArray(arr)) return [];
+          const out: SatItem[] = [];
+          for (const s of arr) {
+            if (!s || !s.tle1 || !s.tle2) continue;
+            const el = parseTLE(s.tle1, s.tle2, String(s.tier || "leo"), { norad: Number(s.norad) || 0, zh: String(s.zh || "") });
+            if (el) out.push({ el, name: String(s.name || ""), x: 0, y: 0, zc: 0, rho: 1, vis: false });
+          }
+          return out;
+        } catch {
+          return [];
+        }
+      })();
+
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = clamp((x - a) / (b - a), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+export default function AtlasMap() {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const glCanvasRef = useRef<HTMLCanvasElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const dialRef = useRef<HTMLDivElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+  const readoutRef = useRef<HTMLSpanElement>(null);
+  const dialFlagRef = useRef<HTMLImageElement>(null);
+  const dialNameRef = useRef<HTMLSpanElement>(null);
+  const tickerTrackRef = useRef<HTMLDivElement>(null);
+  const selectedMicRef = useRef<string | null>(null);
+
+  const [mounted, setMounted] = useState(false);
+  const [selectedMic, setSelectedMicState] = useState<string | null>(null);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [clockText, setClockText] = useState("—");
+  const [signals, setSignals] = useState<Record<string, SignalLite>>({});
+  const [counts, setCounts] = useState<Array<{ label: string; verb: string; t: string; open: boolean }>>([]);
+  const signalsRef = useRef<Record<string, SignalLite>>({});
+  const openCountRef = useRef(0);
+
+  const setSelectedMic = (mic: string | null) => {
+    selectedMicRef.current = mic;
+    setSelectedMicState(mic);
+  };
+
+  const selected = mounted ? EXCHANGES.find((e) => e.mic === selectedMic) ?? null : null;
+
+  /* ---------------- 画布引擎（挂载后一次性构建，卸载全拆） ---------------- */
+  useEffect(() => {
+    setMounted(true);
+    const reduceMq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const reduced = reduceMq.matches;
+    const finePtr = window.matchMedia("(pointer: fine)").matches;
+
+    const stageEl = stageRef.current;
+    const canvasEl = canvasRef.current;
+    if (!stageEl || !canvasEl) return;
+    const ctxEl = canvasEl.getContext("2d");
+    if (!ctxEl) return;
+    // 窄化后的再绑定：嵌套函数拿到的类型即非空，无需散落 ctx! 断言
+    const stage = stageEl;
+    const canvas = canvasEl;
+    const ctx = ctxEl;
+
+    /* 卫星球：WebGL 光线投射纹理球（日面卫星图 + 夜灯图，真实太阳混合）；
+     * 任一环节失败 → glOn 恒 false → 回退点阵水墨球（下方 2D 路径永不删） */
+    const glr: GlobeGL | null = glCanvasRef.current
+      ? createGlobeGL(glCanvasRef.current, "/atlas/earth-day-4096.jpg", "/atlas/earth-night-4096.jpg")
+      : null;
+    const glOn = () => !!(glr && glr.ok && glr.ready());
+
+    const dotF = DOTS;
+    const cityF = CITIES;
+    const lamps = EXCHANGES.map((exch) => {
+      const cc = MIC_CC[exch.mic] ?? null;
+      const λ = exch.lon * RAD;
+      const φ = exch.lat * RAD;
+      const cφ = Math.cos(φ);
+      return {
+        exch,
+        cc,
+        flag: cc ? flagImgFor(cc) : null,
+        vx: cφ * Math.cos(λ),
+        vy: cφ * Math.sin(λ),
+        vz: Math.sin(φ),
+        x: 0,
+        y: 0,
+        z: 0,
+        cur: 0,
+        target: STATE_TARGET.CLOSED,
+        state: "CLOSED" as LampState,
+        bloomT: 0,
+        collapseT: 0,
+        breathT: 0,
+        breathK: 0,
+        faceT: 0,
+        faceDelay: 0,
+        prevZ: NaN,
+        chipA: 0,
+        bootLit: false,
+        activeAt: 0.5 + ((exch.lon + 180) / 360) * 0.45, // boot 沿扫掠带按经度错峰点火
+        chipBmp: null as HTMLCanvasElement | null,
+        chipW: 64,
+        chipH: 22,
+        chipX: 0,
+        chipY: 0,
+        chipSide: 1,
+        elbowX: 0,
+        chipOn: false,
+      };
+    });
+
+    let W = 0;
+    let H = 0;
+    let DPR = 1;
+    let disposed = false;
+    let raf = 0;
+    let running = false;
+    let repaint = true; // 一次性重画请求（60s 晨昏 tick / 信号到达 / resize 后）
+    let monoFamily = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+    /* 视角状态：yaw 无界（每帧 wrap）、pitch 钳位、zoom 钳位；北上恒定 */
+    let yaw = HOME_LON;
+    let pitch = HOME_LAT;
+    let zoom = 1;
+    let velYaw = 0; // deg/s
+    let inertiaT = 0;
+    let R = 0; // 基础半径（zoom=1）
+    let cx = 0;
+    let cy = 0;
+
+    /* 帧基向量（每帧 4 次三角）：E=视中心方向 N=屏幕上方 Rt=屏幕右方 */
+    let Ex = 1, Ey = 0, Ez = 0, Nx = 0, Ny = 0, Nz = 1, Rx = 0, Ry = 1, Rz = 0;
+    /* ---- 行星在转：地轴 23.44° 倾角 + 持续自转（用户修正案：不要静止的球） ----
+     * 自转折叠进投影基向量（B_eff = R_z(spin)ᵀ·R_x(tilt)ᵀ·B_cam）：晨昏图案地理锚定不动、
+     * 地表在下面转——与「加速的地球自转」在屏上不可区分，且城市灯/太阳几何全部真值不变。
+     * 转速取仪表慢速 1 圈/5min（真实 24h 不可感知）；交互即停、静置 2.5s 缓入恢复；
+     * 灯卡打开/拨盘中暂停；reduced-motion 用户保持静止（仍可手转）。 */
+    const TILT_DEG = 23.44;
+    const SPIN_PERIOD_S = 300;
+    const SPIN_RESUME_MS = 2500;
+    /* 视角复原：任何主动操作刷新阈值，只有静默时倒计时累积；到点 1.15s 飞回家
+     * （北上 + 用户时区中央经线 + 默认视距）。飞行可被任意输入即刻打断。 */
+    const VIEW_RESTORE_MS = 8000;
+    const FLIGHT_SEC = 1.15;
+    const HOME_TZ_LON = Math.round((-new Date().getTimezoneOffset() / 60) * 15); // 用户时区中央经线
+    let restoreAt = 0; // 复原触发时刻（0 = 未武装）
+    let flight: { t: number; yaw0: number; yaw1: number; pitch0: number; pitch1: number; zoom0: number; zoom1: number } | null = null;
+    function bumpIdle() {
+      restoreAt = performance.now() + VIEW_RESTORE_MS;
+    }
+    function cancelFlight() {
+      flight = null;
+    }
+    let spinAngle = 0; // deg，绕倾斜后地轴的自转角
+    let spinRate = 0; // deg/s（缓入缓出）
+    let spinResumeAt = 0;
+    function spinActive() {
+      return (
+        !reduced &&
+        bootDone &&
+        !rotDrag &&
+        !dialDragging &&
+        pointers.size < 2 &&
+        selectedMicRef.current === null &&
+        performance.now() >= spinResumeAt
+      );
+    }
+
+    function frameBasis() {
+      yaw = ((yaw + 540) % 360) - 180;
+      if (!Number.isFinite(yaw)) yaw = HOME_LON;
+      if (!Number.isFinite(pitch)) pitch = HOME_LAT;
+      // 调试/验收钩子（仅 dev）：暴露当前视角与自转速率（只读）
+      if (process.env.NODE_ENV !== "production") {
+        (window as unknown as Record<string, unknown>).__atlasView = {
+          yaw,
+          pitch,
+          zoom,
+          spinRate,
+          mets: meteorCount(),
+          satsVis: SAT_ITEMS.reduce((n, s) => n + (s.vis ? 1 : 0), 0),
+          satsAll: SAT_ITEMS.length,
+        };
+      }
+      const l0 = yaw * RAD;
+      const p0 = pitch * RAD;
+      const c0 = Math.cos(l0), s0 = Math.sin(l0), c1 = Math.cos(p0), s1 = Math.sin(p0);
+      // 相机基 → 先俯仰偏航，再折叠地轴倾斜与自转（M = R_x(tilt)·R_z(spin)，基向量取 Mᵀ·B）
+      const τ = TILT_DEG * RAD;
+      const σ = spinAngle * RAD;
+      const ct = Math.cos(τ), st = Math.sin(τ);
+      const cs = Math.cos(σ), ss = Math.sin(σ);
+      const fold = (x: number, y: number, z: number): [number, number, number] => {
+        const y1 = ct * y + st * z; // R_x(-tilt)
+        const z1 = -st * y + ct * z;
+        const x2 = cs * x + ss * y1; // R_z(-spin)
+        const y2 = -ss * x + cs * y1;
+        return [x2, y2, z1];
+      };
+      const fe = fold(c1 * c0, c1 * s0, s1);
+      Ex = fe[0]; Ey = fe[1]; Ez = fe[2];
+      const fn = fold(-s1 * c0, -s1 * s0, c1);
+      Nx = fn[0]; Ny = fn[1]; Nz = fn[2];
+      const fr = fold(-s0, c0, 0);
+      Rx = fr[0]; Ry = fr[1]; Rz = fr[2];
+    }
+
+    /* 城市灯光：太阳高度 LUT（纬度带×经度档，与投影正交）+ 16 档计数排序 */
+    let cityN = 0; // 实际绘制数（降级截断后）
+    let citySpriteN = 0;
+    let citySprite: HTMLCanvasElement | null = null;
+    const cityLUT = new Float32Array(LAT_BANDS * LON_BINS);
+    const terrLUT = new Float32Array(LAT_BANDS * LON_BINS); // 地形受光：更宽的日照渐变（-18°→+10°，白天看地夜里看灯）
+    const cityLevelArr = new Uint8Array(cityF ? cityF.n : 0);
+    const cityOrder = new Int32Array(cityF ? cityF.n : 0);
+    const cityLevelCount = new Int32Array(CITY_LEVELS);
+    const cityLevelStart = new Int32Array(CITY_LEVELS);
+    const cityCursor = new Int32Array(CITY_LEVELS);
+    const cityX = new Float32Array(cityF ? cityF.n : 0);
+    const cityY = new Float32Array(cityF ? cityF.n : 0);
+    const citySize = new Float32Array(cityF ? cityF.n : 0);
+
+    /* 地形点阵：6 档权重分桶 */
+    const terrOrder = new Int32Array(dotF ? dotF.n : 0);
+    const terrLevelArr = new Uint8Array(dotF ? dotF.n : 0);
+    const terrLevelCount = new Int32Array(TERRAIN_LEVELS);
+    const terrLevelStart = new Int32Array(TERRAIN_LEVELS);
+    const terrCursor = new Int32Array(TERRAIN_LEVELS);
+    const terrX = new Float32Array(dotF ? dotF.n : 0);
+    const terrY = new Float32Array(dotF ? dotF.n : 0);
+    const terrSize = new Float32Array(dotF ? dotF.n : 0);
+
+    let nowMs = Date.now();
+    let displayMs = nowMs; // 刻度盘假想时刻（只驱动灯态）
+    let live = true;
+    let glMode = false; // 当前帧是否卫星纹理模式（墨衬/清退分支用）
+    let dialDragging = false;
+    let springT = -1;
+    let springFrom = 0;
+    let bootT = reduced ? 1e9 : 0;
+    let bootDone = reduced;
+    let hoverLamp: (typeof lamps)[number] | null = null;
+    let px = 0;
+    let py = 0;
+    let lastMoveAt = -1e9;
+    let sweepLamp: (typeof lamps)[number] | null = null; // 刻度盘指针正在扫过的交易所
+    let dragAnchorX = 0;
+    let dragAnchorMs = 0;
+
+    /* 旋转拖拽与惯性 */
+    let rotDrag = false;
+    let rotLastX = 0;
+    let rotLastY = 0;
+    let rotSamples: Array<{ t: number; yaw: number }> = [];
+    /* 双指捏合 */
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinchDist0 = 0;
+    let zoom0 = 1;
+    /* 长按浮签（触屏） */
+    let longPressTimer = 0;
+    let longPressLamp: (typeof lamps)[number] | null = null;
+    let longPressX = 0;
+    let longPressY = 0;
+
+    /* 状态求值：分钟级缓存（拨动时 60fps × 27 灯不重算 Intl） */
+    const stateCache = new Map<string, LampState>();
+    function stateOf(l: (typeof lamps)[number], ms: number): LampState {
+      const key = `${l.exch.mic}|${Math.floor(ms / 60000)}`;
+      const hit = stateCache.get(key);
+      if (hit) return hit;
+      const st = stateAt(l.exch, new Date(ms));
+      if (stateCache.size > 3000) stateCache.clear(); // 36h 弹簧扫过 ~2160 分钟桶，600 会在中途整表清空
+      stateCache.set(key, st);
+      return st;
+    }
+
+    function reevaluate(ms: number, initial = false) {
+      let open = 0;
+      for (const l of lamps) {
+        const st = stateOf(l, ms);
+        if (st !== l.state) {
+          const wasOpen = l.state === "OPEN";
+          l.state = st;
+          if (!initial && st === "OPEN" && !reduced) {
+            l.bloomT = 0.6; // 开盘一次性灌光（扩散环 600ms）
+          } else if (!initial && wasOpen && st !== "OPEN" && !reduced) {
+            l.collapseT = 0.3; // 收灯（不对称：开 600ms / 收 300ms，MD3 惯例）
+          }
+        }
+        l.target = STATE_TARGET[st];
+        if (st === "OPEN") open++;
+      }
+      openCountRef.current = open;
+    }
+
+    /* ---- 精灵预烘 ---- */
+
+    /** 大气盘：外辉光（包浆）+ 球底色 + 界圆一笔 + 24 格刻度环（皆屏幕空间静止，可整张烘焙） */
+    let sphereSprite: HTMLCanvasElement | null = null;
+    function bakeSphere() {
+      const glow = 1.12;
+      const size = Math.max(2, Math.ceil(2 * R * glow * DPR));
+      sphereSprite = document.createElement("canvas");
+      sphereSprite.width = size;
+      sphereSprite.height = size;
+      const g = sphereSprite.getContext("2d");
+      if (!g) return;
+      g.setTransform(DPR, 0, 0, DPR, 0, 0);
+      const s = size / DPR / 2; // 精灵中心
+      // 外辉光：R → 1.12R 加法银晕（包浆）
+      const og = g.createRadialGradient(s, s, R * 0.98, s, s, R * glow);
+      og.addColorStop(0, `rgba(${INKPAPER}, 0.13)`);
+      og.addColorStop(0.35, `rgba(${INKPAPER}, 0.05)`);
+      og.addColorStop(1, `rgba(${INKPAPER}, 0)`);
+      g.fillStyle = og;
+      g.fillRect(0, 0, size / DPR, size / DPR);
+      // 球底：墨玉从暗中浮出
+      const bg = g.createRadialGradient(s, s, 0, s, s, R);
+      bg.addColorStop(0, "rgba(20, 27, 38, 0.55)");
+      bg.addColorStop(0.9, "rgba(13, 18, 27, 0.7)");
+      bg.addColorStop(1, "rgba(10, 14, 21, 0.75)");
+      g.fillStyle = bg;
+      g.beginPath();
+      g.arc(s, s, R, 0, Math.PI * 2);
+      g.fill();
+      // 内缘玉光 + 界圆（圆规蘸墨一笔）
+      g.strokeStyle = `rgba(${INKPAPER}, 0.10)`;
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(s, s, R - 1.5, 0, Math.PI * 2);
+      g.stroke();
+      g.strokeStyle = `rgba(${INKPAPER}, 0.16)`;
+      g.lineWidth = 1;
+      g.beginPath();
+      g.arc(s, s, R, 0, Math.PI * 2);
+      g.stroke();
+      drawTickRing((x0, y0, x1, y1, major) => {
+        g.strokeStyle = `rgba(${INKPAPER}, ${major ? 0.5 : 0.26})`;
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(x0 + s, y0 + s);
+        g.lineTo(x1 + s, y1 + s);
+        g.stroke();
+      });
+    }
+
+    /** 24 格刻度环（15° = 1 小时；环即钟面）；每 90° 一根大格衬线。
+     *  坐标以球心为原点产出，调用方自行平移到球心/精灵中心——GL 模式下用 2D 补画
+     *  （sphereSprite 只在回退分支绘制，不补则金 tick 悬空指向空环，钟面隐喻断链） */
+    function drawTickRing(stroke: (x0: number, y0: number, x1: number, y1: number, major: boolean) => void, scale = 1) {
+      for (let i = 0; i < 24; i++) {
+        const major = i % 6 === 0;
+        const a = i * 15 * RAD;
+        const c = Math.cos(a), sn = Math.sin(a);
+        const r0 = (major ? R + 3 : R + 4) * scale;
+        const r1 = (major ? R + 13 : R + 10) * scale;
+        stroke(r0 * c, r0 * sn, r1 * c, r1 * sn, major);
+      }
+    }
+
+    /** 灯辉三色精灵（金/银/朱，避免每帧 createRadialGradient） */
+    const glowSprites = new Map<string, HTMLCanvasElement>();
+    function glowSprite(color: [number, number, number]) {
+      const key = color.join(",");
+      const hit = glowSprites.get(key);
+      if (hit) return hit;
+      const c = document.createElement("canvas");
+      c.width = 64;
+      c.height = 64;
+      const g = c.getContext("2d");
+      if (g) {
+        const rg = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+        rg.addColorStop(0, rgba(color, 0.85));
+        rg.addColorStop(0.45, rgba(color, 0.22));
+        rg.addColorStop(1, rgba(color, 0));
+        g.fillStyle = rg;
+        g.fillRect(0, 0, 64, 64);
+      }
+      glowSprites.set(key, c);
+      return c;
+    }
+
+    function makeCitySprite() {
+      const c = document.createElement("canvas");
+      c.width = 32;
+      c.height = 32;
+      const g = c.getContext("2d");
+      if (!g) return c;
+      const rg = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+      rg.addColorStop(0, rgba(CITY_COLOR, 0.9));
+      rg.addColorStop(0.4, rgba(CITY_COLOR, 0.26));
+      rg.addColorStop(1, rgba(CITY_COLOR, 0));
+      g.fillStyle = rg;
+      g.fillRect(0, 0, 32, 32);
+      return c;
+    }
+
+    /** 芯片位图：旗 + 描边 + 带阴影城市名一次烘好，运行期 drawImage（fillText/shadowBlur 归零） */
+    function bakeChips() {
+      const narrow = W < 640;
+      for (const l of lamps) {
+        const isMajor = MAJOR_SET.has(l.exch.mic);
+        const fw = narrow ? FLAG_W_NARROW : isMajor ? FLAG_W_MAJOR : FLAG_W_MINOR;
+        const fh = (fw * 2) / 3;
+        ctx.font = narrow || !isMajor ? `10px ${monoFamily}` : `11px ${monoFamily}`;
+        const name = l.exch.zh || l.exch.city || l.exch.mic;
+        const nameW = ctx.measureText(name).width;
+        l.chipW = Math.ceil(CHIP_PAD + fw + 4 + nameW + CHIP_PAD);
+        l.chipH = Math.ceil(Math.max(fh, 14) + 6);
+        const c = document.createElement("canvas");
+        c.width = Math.ceil(l.chipW * DPR);
+        c.height = Math.ceil(l.chipH * DPR);
+        const g = c.getContext("2d");
+        if (!g) {
+          l.chipBmp = null;
+          continue;
+        }
+        g.setTransform(DPR, 0, 0, DPR, 0, 0);
+        const fx = CHIP_PAD;
+        const fy = (l.chipH - fh) / 2;
+        const img = l.flag;
+        if (img && img.complete && img.naturalWidth > 0) g.drawImage(img, fx, fy, fw, fh);
+        else {
+          g.fillStyle = "rgba(226, 236, 255, 0.1)";
+          g.fillRect(fx, fy, fw, fh);
+          g.fillStyle = "rgba(226, 236, 255, 0.6)";
+          g.font = `8px ${monoFamily}`;
+          g.textAlign = "center";
+          g.fillText((l.cc || "??").toUpperCase(), fx + fw / 2, fy + fh / 2 + 3);
+        }
+        g.strokeStyle = `rgba(${INKPAPER}, 0.32)`;
+        g.strokeRect(fx + 0.5, fy + 0.5, fw - 1, fh - 1);
+        g.font = narrow || !isMajor ? `10px ${monoFamily}` : `11px ${monoFamily}`;
+        g.shadowColor = "rgba(7, 9, 6, 0.9)";
+        g.shadowBlur = 3;
+        g.fillStyle = `rgba(198, 210, 228, ${isMajor ? 0.88 : 0.58})`;
+        g.fillText(name, fx + fw + 4, l.chipH / 2 + 4);
+        l.chipBmp = c;
+      }
+    }
+
+    /* ---- 太阳几何 ---- */
+
+    function computeCityLUT(ms: number) {
+      const subsolar = subsolarLon(ms);
+      const declR = solarDeclination(ms) * RAD;
+      const sinD = Math.sin(declR);
+      const cosD = Math.cos(declR);
+      for (let b = 0; b < LAT_BANDS; b++) {
+        const latC = 90 - ((b + 0.5) / LAT_BANDS) * 180;
+        const a = Math.sin(latC * RAD) * sinD;
+        const cc = Math.cos(latC * RAD) * cosD;
+        for (let ln = 0; ln < LON_BINS; ln++) {
+          const lon = -180 + (ln + 0.5) * (360 / LON_BINS);
+          const sinh = a + cc * Math.cos((subsolar - lon) * RAD);
+          const h = Math.asin(clamp(sinh, -1, 1)) / RAD;
+          let br = 1 - smoothstep(-18, -6, h); // 天文暮光→民用暮光渐亮
+          if (h < -30) br = Math.min(1, br + 0.15); // 深夜提亮
+          cityLUT[b * LON_BINS + ln] = br;
+          terrLUT[b * LON_BINS + ln] = smoothstep(-18, 10, h); // 地形日照因子（昼侧渐亮，晨昏带 28° 渐染）
+        }
+      }
+    }
+
+    /* ---- boot：快进一个昼夜（画圆 → 晨昏扫掠 → 灯火就位；终帧=稳态零跳变） ---- */
+    function bootFactors() {
+      if (reduced) return { circleP: 1, sweepP: 1, settleP: 1, startLon: subsolarLon(Date.now()) + 90 };
+      const circleP = easeInOut(clamp(bootT / 0.46, 0, 1));
+      const sweepP = easeInOut(clamp((bootT - 0.25) / 0.9, 0, 1));
+      const settleP = clamp((bootT - 0.9) / 0.5, 0, 1);
+      return { circleP, sweepP, settleP, startLon: subsolarLon(Date.now()) + 90 };
+    }
+    /** 某经度是否已被扫掠带点亮（boot 期 0..1，稳态恒 1） */
+    function revealOf(lon: number, sweepP: number, startLon: number) {
+      if (sweepP >= 1) return 1;
+      const frac = (((lon - startLon) % 360) + 360) % 360 / 360;
+      return clamp((sweepP * 1.06 - frac) / 0.06, 0, 1);
+    }
+
+    /* ---- 绘制 ---- */
+
+    /** 经纬网：采样折线，z 剔除断笔（正交下可见段为连续弧） */
+    function drawGraticule(alphaK: number) {
+      ctx.strokeStyle = `rgba(${INKPAPER}, ${(0.055 * alphaK).toFixed(3)})`;
+      ctx.lineWidth = 1;
+      // 经线每 30°
+      for (let lon = -180; lon < 180; lon += 30) {
+        const λ = lon * RAD;
+        const cλ = Math.cos(λ), sλ = Math.sin(λ);
+        ctx.beginPath();
+        let started = false;
+        for (let k = 0; k <= 48; k++) {
+          const φ = (k / 48 - 0.5) * Math.PI;
+          const cφ = Math.cos(φ);
+          const X = cφ * cλ, Y = cφ * sλ, Z = Math.sin(φ);
+          const z = X * Ex + Y * Ey + Z * Ez;
+          if (z <= 0.02) {
+            started = false;
+            continue;
+          }
+          const x = cx + R * zoom * (X * Rx + Y * Ry + Z * Rz);
+          const y = cy - R * zoom * (X * Nx + Y * Ny + Z * Nz);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      // 纬线每 30°（赤道略亮）
+      for (let lat = -60; lat <= 60; lat += 30) {
+        const φ = lat * RAD;
+        const sφ = Math.sin(φ), cφ = Math.cos(φ);
+        ctx.strokeStyle = `rgba(${INKPAPER}, ${((lat === 0 ? 0.085 : 0.055) * alphaK).toFixed(3)})`;
+        ctx.beginPath();
+        let started = false;
+        for (let k = 0; k <= 96; k++) {
+          const λ = (k / 96) * Math.PI * 2 - Math.PI;
+          const X = cφ * Math.cos(λ), Y = cφ * Math.sin(λ), Z = sφ;
+          const z = X * Ex + Y * Ey + Z * Ez;
+          if (z <= 0.02) {
+            started = false;
+            continue;
+          }
+          const x = cx + R * zoom * (X * Rx + Y * Ry + Z * Rz);
+          const y = cy - R * zoom * (X * Nx + Y * Ny + Z * Nz);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    /** 地形点阵：投影 → z/雾化 → 6 桶批量；昼侧微亮夜侧沉（LUT 调制） */
+    function paintTerrain(alphaK: number, sweepP: number, startLon: number) {
+      if (!dotF || dotF.n === 0) return;
+      const Rz2 = R * zoom;
+      terrLevelCount.fill(0);
+      let m = 0;
+      for (let i = 0; i < dotF.n; i++) {
+        const X = dotF.px[i], Y = dotF.py[i], Z = dotF.pz[i];
+        const z = X * Ex + Y * Ey + Z * Ez;
+        if (z <= 0.03) continue;
+        const fog = smoothstep(0.02, 0.18, z);
+        const dayMod = 0.7 + 0.55 * terrLUT[dotF.band[i] * LON_BINS + dotF.bin[i]]; // 昼 1.25× / 夜 0.70×——受光方向与城市灯相反（白天看地，夜里看灯）
+        const rv = bootDone ? 1 : revealOf(dotF.lon[i], sweepP, startLon);
+        const a = (0.13 + (dotF.lv[i] / (TERRAIN_LEVELS - 1)) * 0.17) * dayMod * fog * rv;
+        const lv = a <= 0 ? 0 : clamp((a * TERRAIN_LEVELS * 2.6) | 0, 1, TERRAIN_LEVELS - 1);
+        terrX[m] = cx + Rz2 * (X * Rx + Y * Ry + Z * Rz);
+        terrY[m] = cy - Rz2 * (X * Nx + Y * Ny + Z * Nz);
+        terrSize[m] = 1.3 * (0.55 + 0.45 * z);
+        terrLevelArr[m] = lv;
+        terrLevelCount[lv]++;
+        m++;
+      }
+      let acc = 0;
+      for (let L = 0; L < TERRAIN_LEVELS; L++) {
+        terrLevelStart[L] = acc;
+        acc += terrLevelCount[L];
+      }
+      terrCursor.set(terrLevelStart);
+      for (let i = 0; i < m; i++) terrOrder[terrCursor[terrLevelArr[i]]++] = i;
+      for (let L = 1; L < TERRAIN_LEVELS; L++) {
+        const alpha = ((L + 0.5) / TERRAIN_LEVELS) * 0.42 * alphaK;
+        if (alpha < 0.015) continue;
+        ctx.fillStyle = `rgba(${INKPAPER}, ${alpha.toFixed(3)})`;
+        const st = terrLevelStart[L];
+        const en = st + terrLevelCount[L];
+        ctx.beginPath();
+        for (let j = st; j < en; j++) {
+          const i = terrOrder[j];
+          const s = terrSize[i];
+          ctx.rect(terrX[i] - s / 2, terrY[i] - s / 2, s, s);
+        }
+        ctx.fill();
+      }
+    }
+
+    /** 城市暖尘：LUT 亮度 × 雾化 → 16 桶单 path 批量 + 头部光晕 sprite */
+    function paintCities(kBoot: number, rotFast: boolean, sweepP: number, startLon: number) {
+      if (!cityF || cityN === 0) return;
+      const Rz2 = R * zoom;
+      cityLevelCount.fill(0);
+      let m = 0;
+      for (let i = 0; i < cityN; i++) {
+        const X = cityF.px[i], Y = cityF.py[i], Z = cityF.pz[i];
+        const z = X * Ex + Y * Ey + Z * Ez;
+        if (z <= 0.045) continue;
+        const b = cityLUT[cityF.band[i] * LON_BINS + cityF.bin[i]];
+        if (b <= 0.02) continue;
+        const fog = smoothstep(0.05, 0.3, z);
+        const rv = bootDone ? 1 : revealOf(cityF.lon[i], sweepP, startLon);
+        const v = b * (0.35 + 0.65 * cityF.pl[i]) * fog * rv;
+        const lv = v <= 0 ? 0 : Math.min(CITY_LEVELS - 1, (v * CITY_LEVELS) | 0);
+        if (lv === 0) continue;
+        cityX[m] = cx + Rz2 * (X * Rx + Y * Ry + Z * Rz);
+        cityY[m] = cy - Rz2 * (X * Nx + Y * Ny + Z * Nz);
+        citySize[m] = (1.5 + lv * 0.13) * (0.55 + 0.45 * z); // 点径随亮度/深度：lv15≈3.4px、中档≈2.6px——小于此在亮地形上不可辨
+        cityLevelArr[m] = lv;
+        cityLevelCount[lv]++;
+        m++;
+      }
+      let acc = 0;
+      for (let L = 0; L < CITY_LEVELS; L++) {
+        cityLevelStart[L] = acc;
+        acc += cityLevelCount[L];
+      }
+      cityCursor.set(cityLevelStart);
+      for (let i = 0; i < m; i++) cityOrder[cityCursor[cityLevelArr[i]]++] = i;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (let L = 1; L < CITY_LEVELS; L++) {
+        const alpha = ((L + 0.5) / CITY_LEVELS) * 0.55 * kBoot; // 顶桶 0.53：夜幕压暗后需要更高峰値才成「文明弧」
+        if (alpha < 0.015) continue;
+        ctx.fillStyle = rgba(CITY_COLOR, alpha);
+        const st = cityLevelStart[L];
+        const en = st + cityLevelCount[L];
+        ctx.beginPath();
+        for (let j = st; j < en; j++) {
+          const i = cityOrder[j];
+          const s = citySize[i];
+          ctx.rect(cityX[i] - s / 2, cityY[i] - s / 2, s, s);
+        }
+        ctx.fill();
+      }
+      if (citySprite && citySpriteN > 0) {
+        for (let i = 0; i < citySpriteN; i++) {
+          const X = cityF.px[i], Y = cityF.py[i], Z = cityF.pz[i];
+          const z = X * Ex + Y * Ey + Z * Ez;
+          if (z <= 0.05) continue;
+          const b = cityLUT[cityF.band[i] * LON_BINS + cityF.bin[i]];
+          if (b <= 0.03) continue;
+          const rv = bootDone ? 1 : revealOf(cityF.lon[i], sweepP, startLon);
+          const sx = cx + R * zoom * (X * Rx + Y * Ry + Z * Rz);
+          const sy = cy - R * zoom * (X * Nx + Y * Ny + Z * Nz);
+          // top-60 巨城：一圈大晕（东京/上海/纽约夜侧一眼可辨）
+          if (i < 60) {
+            ctx.globalAlpha = (0.10 * b) * kBoot * rv * z;
+            const big = 34 * (0.55 + 0.45 * z);
+            ctx.drawImage(citySprite, sx - big / 2, sy - big / 2, big, big);
+          }
+          ctx.globalAlpha = (0.06 + 0.22 * cityF.pl[i] * b) * kBoot * rv * z;
+          const sz = (10 + 14 * cityF.pl[i]) * (0.55 + 0.45 * z);
+          ctx.drawImage(citySprite, sx - sz / 2, sy - sz / 2, sz, sz);
+        }
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+
+    function subsolarVecOf(ms: number) {
+      const λs = subsolarLon(ms) * RAD;
+      const δ = solarDeclination(ms) * RAD;
+      return { Sx: Math.cos(δ) * Math.cos(λs), Sy: Math.cos(δ) * Math.sin(λs), Sz: Math.sin(δ) };
+    }
+
+    /* ---- 流星（天上的一次性光）：双频泊松 + 夜半球门控 + 球后裁切 ---- */
+    interface Meteor {
+      x: number; y: number; vx: number; vy: number;
+      life: number; life0: number; len: number;
+      big: boolean; tw: number; twF: number;
+    }
+    const meteorPool: Array<Meteor | null> = [null, null, null, null, null, null, null, null];
+    let meteorTimer = 0;
+    let meteorBigAt = 0; // 大流星让位窗（期间只出微流星）
+    function meteorCount() {
+      let n = 0;
+      for (const m of meteorPool) if (m) n++;
+      return n;
+    }
+    function clearMeteors() {
+      for (let k = 0; k < meteorPool.length; k++) meteorPool[k] = null;
+    }
+    /** 夜半球门控：流星只认太阳（spawn 中点须在背日半屏——昼面物理上看不见流星） */
+    function inNightHalf(x: number, y: number, sunV: { Sx: number; Sy: number; Sz: number }) {
+      const ssx = cx + R * zoom * (sunV.Sx * Rx + sunV.Sy * Ry + sunV.Sz * Rz);
+      const ssy = cy - R * zoom * (sunV.Sx * Nx + sunV.Sy * Ny + sunV.Sz * Nz);
+      return (x - cx) * (cx - ssx) + (y - cy) * (cy - ssy) > 0;
+    }
+    function spawnMeteor(sunV: { Sx: number; Sy: number; Sz: number }) {
+      const narrowScreen = W < 640;
+      const cap = narrowScreen ? 2 : 3; // 1 大 + 2 微（窄屏 1+1）
+      if (meteorCount() >= cap) return;
+      const nowP = performance.now();
+      const big = nowP >= meteorBigAt && Math.random() < 0.22;
+      if (big) meteorBigAt = nowP + 6000; // 大流星后 6s 让位
+      // 方向：对角扇区（右下 20-70° / 左下 110-160°），杜绝水平垂直（与滚动带/刻度盘同构打架）
+      const fan = Math.random() < 0.5;
+      const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
+      const diag = Math.hypot(W, H);
+      const speed = diag * (big ? 0.85 + Math.random() * 0.35 : 0.6 + Math.random() * 0.4);
+      const life0 = big ? 0.9 + Math.random() * 0.5 : 0.45 + Math.random() * 0.3;
+      // 起点：上半屏随机；轨迹中点须过夜半门控（4 次机会，全败则本场不出）
+      let sx0 = 0;
+      let sy0 = 0;
+      let placed = false;
+      for (let k = 0; k < 4; k++) {
+        sx0 = Math.random() * W;
+        sy0 = Math.random() * H * 0.45;
+        const mx = sx0 + Math.cos(ang) * speed * life0 * 0.5;
+        const my = sy0 + Math.sin(ang) * speed * life0 * 0.5;
+        if (inNightHalf(mx, my, sunV)) {
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) return;
+      for (let k = 0; k < meteorPool.length; k++) {
+        if (meteorPool[k]) continue;
+        meteorPool[k] = {
+          x: sx0, y: sy0,
+          vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+          life: life0, life0,
+          len: diag * (big ? 0.25 + Math.random() * 0.13 : 0.08 + Math.random() * 0.06),
+          big, tw: Math.random() * Math.PI * 2, twF: 2 + Math.random() * 3,
+        };
+        return;
+      }
+    }
+    function drawMeteors(dt: number, sunV: { Sx: number; Sy: number; Sz: number }) {
+      if (reduced || !bootDone) return; // boot 演出独角戏；reduced 无流星（冻结的流星是划痕不是画）
+      const nowP = performance.now();
+      meteorTimer -= dt;
+      if (meteorTimer <= 0 && nowP >= meteorBigAt - (W < 640 ? 0 : 0)) {
+        spawnMeteor(sunV);
+        const mean = W < 640 ? 4 : 2;
+        meteorTimer = Math.max(0.35, -Math.log(Math.max(1e-6, Math.random())) * mean);
+      }
+      if (meteorCount() === 0) return;
+      ctx.save();
+      // 球后裁切：evenodd 挖去球盘——流星从球后掠过、在球缘被利落切断
+      ctx.beginPath();
+      ctx.rect(0, 0, W, H);
+      ctx.arc(cx, cy, R * zoom, 0, Math.PI * 2);
+      ctx.clip("evenodd");
+      ctx.globalCompositeOperation = "lighter";
+      for (let k = 0; k < meteorPool.length; k++) {
+        const m = meteorPool[k];
+        if (!m) continue;
+        m.life -= dt;
+        if (m.life <= -0.3) {
+          meteorPool[k] = null; // 尾迹余辉走完再归还（笔断意连）
+          continue;
+        }
+        m.x += m.vx * dt;
+        m.y += m.vy * dt;
+        const p = m.life / m.life0;
+        // 生命周期包络：入 15% 淡入、出 30% 淡出、余辉期残尾 ×0.35；叠加独立频率脉冲
+        let env = p > 0.85 ? (1 - p) / 0.15 : p < 0 ? clamp(1 + p / 0.3, 0, 1) * 0.35 : 1;
+        env *= 0.72 + 0.28 * Math.sin(nowP * 0.001 * m.twF * Math.PI + m.tw);
+        const a = (m.big ? 0.4 : 0.28) * clamp(env, 0, 1);
+        if (a <= 0.01) continue;
+        const mag = Math.hypot(m.vx, m.vy) || 1;
+        const tx = m.x - (m.vx / mag) * m.len;
+        const ty = m.y - (m.vy / mag) * m.len;
+        const g = ctx.createLinearGradient(tx, ty, m.x, m.y);
+        g.addColorStop(0, "rgba(226, 236, 255, 0)");
+        g.addColorStop(1, `rgba(226, 236, 255, ${a.toFixed(3)})`);
+        ctx.strokeStyle = g;
+        ctx.lineWidth = m.big ? 1.6 : 1;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(m.x, m.y);
+        ctx.stroke();
+        if (m.big && p > 0) {
+          // 白热暖芯（灯的芯同族暖白 255,244,224——禁灯金，语义 monopoly 不容分享）
+          ctx.globalAlpha = a;
+          ctx.drawImage(glowSprite(SILVER), m.x - 6, m.y - 6, 12, 12);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = `rgba(255, 244, 224, ${Math.min(1, a * 1.6).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(m.x, m.y, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    /* ---- 真实卫星层：TLE 平均根数传播（真名/真轨道面/真速率）→ 地固投影 ----
+     * 「轨道归真、呈现仪表化」：位置来自真实根数；高度按层压缩（真实 1.06/4.2/6.6R
+     * → 显示 1.10/1.32/1.52R）。遮挡精确式（r≥1）：z<0 ∧ ρ<1 → 球后不画。 */
+    function drawSats() {
+      if (SAT_ITEMS.length === 0) return;
+      const t = Date.now();
+      const Rz2 = R * zoom;
+      for (const s of SAT_ITEMS) {
+        if (stale(s.el, t)) {
+          s.vis = false;
+          continue; // 历元超龄：宁可缺席不可造假
+        }
+        const p = propagate(s.el, t);
+        if (!p) {
+          s.vis = false;
+          continue;
+        }
+        const cf = Math.cos(p.lat);
+        const X = cf * Math.cos(p.lon);
+        const Y = cf * Math.sin(p.lon);
+        const Z = Math.sin(p.lat);
+        const rd = s.el.rDisp;
+        const zc = (X * Ex + Y * Ey + Z * Ez) * rd;
+        const rho = Math.sqrt(Math.max(0, rd * rd - zc * zc)); // 屏面偏移（球半径单位）
+        const limbK = zc < 0 ? clamp((rho - 0.96) / 0.04, 0, 1) : 1;
+        if (zc < 0 && limbK <= 0.02) {
+          s.vis = false;
+          continue;
+        }
+        s.zc = zc;
+        s.rho = rho;
+        s.x = cx + Rz2 * rd * (X * Rx + Y * Ry);
+        s.y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
+        s.vis = true;
+        const depth = 0.65 + 0.35 * clamp(zc / rd, -1, 1);
+        const a = clamp(depth * limbK, 0, 1);
+        const isGeo = s.el.tier === "geo";
+        const blink = isGeo ? 0.35 + 0.25 * Math.sin((t / 3000) * Math.PI * 2) : 1;
+        const col = `rgba(201, 212, 228, ${(a * blink * 0.8).toFixed(3)})`; // 构造银蓝（金/朱/SILVER 语义色归灯）
+        if (glMode) {
+          ctx.fillStyle = "rgba(5, 8, 14, 0.4)"; // 墨晕垫底：亮色影像上的可读性
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (s.el.tier === "meo") {
+          // 点 + 太阳能板两笔（「—·—」横担）
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(s.x - 4, s.y);
+          ctx.lineTo(s.x - 1.5, s.y);
+          ctx.moveTo(s.x + 1.5, s.y);
+          ctx.lineTo(s.x + 4, s.y);
+          ctx.stroke();
+          ctx.fillStyle = col;
+          ctx.fillRect(s.x - 1, s.y - 1, 2, 2);
+        } else {
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, isGeo ? 2 : 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (isGeo && blink > 0.55) {
+          ctx.globalAlpha = (blink - 0.55) * a; // 慢闪信标峰值微晕
+          ctx.drawImage(glowSprite(SILVER), s.x - 5, s.y - 5, 10, 10);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+    function satAt(x: number, y: number): SatItem | null {
+      for (const s of SAT_ITEMS) {
+        if (s.vis && Math.hypot(s.x - x, s.y - y) < 11) return s;
+      }
+      return null;
+    }
+
+    /** 大圆（法向 S）可见段折线：z 剔除断笔（晨昏弧/幽灵弧共用几何） */
+    function strokeGreatCircle(Sx: number, Sy: number, Sz: number, style: string, width: number, dash?: number[]) {
+      const cl = Math.sqrt(Sx * Sx + Sy * Sy) || 1;
+      const Ux = Sy / cl, Uy = -Sx / cl, Uz = 0; // normalize(S×ẑ)
+      const Vx = Sy * Uz - Sz * Uy, Vy = Sz * Ux - Sx * Uz, Vz = Sx * Uy - Sy * Ux;
+      const Rz2 = R * zoom;
+      ctx.save();
+      ctx.strokeStyle = style;
+      ctx.lineWidth = width;
+      if (dash) ctx.setLineDash(dash);
+      ctx.beginPath();
+      let started = false;
+      for (let k = 0; k <= 128; k++) {
+        const t = (k / 128) * Math.PI * 2;
+        const c = Math.cos(t), s = Math.sin(t);
+        const X = Ux * c + Vx * s, Y = Uy * c + Vy * s, Z = Uz * c + Vz * s;
+        const z = X * Ex + Y * Ey + Z * Ez;
+        if (z <= 0.02) {
+          started = false;
+          continue;
+        }
+        const x = cx + Rz2 * (X * Rx + Y * Ry + Z * Rz);
+        const y = cy - Rz2 * (X * Nx + Y * Ny + Z * Nz);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      if (dash) ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    /** 晨昏弧（常驻主角）：带 + 线双层；拨盘/旋转时增强；boot 期用快进太阳；
+     *  卫星模式下先铺墨衬（casing）——亮面墨衬、暗面银线，一盏灯照两边 */
+    function drawTerminator(strong: number, sunOverride?: { Sx: number; Sy: number; Sz: number }) {
+      const v = sunOverride ?? subsolarVecOf(Date.now());
+      ctx.save();
+      ctx.globalCompositeOperation = "screen"; // 大气族用 screen——lighter 会把冷银推成脏白
+      if (glMode) {
+        strokeGreatCircle(v.Sx, v.Sy, v.Sz, "rgba(7, 9, 14, 0.4)", 5.5);
+        strokeGreatCircle(v.Sx, v.Sy, v.Sz, "rgba(7, 9, 14, 0.35)", 2.5);
+      }
+      strokeGreatCircle(v.Sx, v.Sy, v.Sz, rgba(SILVER, 0.06 + 0.06 * strong), 4);
+      strokeGreatCircle(v.Sx, v.Sy, v.Sz, rgba(SILVER, 0.22 + 0.28 * strong), strong > 0 ? 1.25 : 1);
+      ctx.restore();
+    }
+
+    /** 幽灵晨昏弧：假想时刻（displayMs）的虚线弧——表盘刻度的球面延伸，非光照，松手随弹簧合拢 */
+    function drawGhostTerminator(dialStrong: number) {
+      const awayMin = Math.abs(displayMs - nowMs) / 60000;
+      if (dialStrong <= 0 || awayMin < 20) return; // 近「现在」两线重合，不出现防闪
+      const fadeK = clamp((awayMin - 20) / 20, 0, 1);
+      const v = subsolarVecOf(displayMs);
+      if (glMode) strokeGreatCircle(v.Sx, v.Sy, v.Sz, "rgba(7, 9, 14, 0.4)", 2.75);
+      strokeGreatCircle(v.Sx, v.Sy, v.Sz, `rgba(${PAPER}, ${(0.2 * dialStrong * fadeK).toFixed(3)})`, 1.25, [5, 4]);
+      // 幽灵直射方位：一枚空心金圈（对照真金 tick）
+      const Rz2 = R * zoom;
+      const gx = cx + Rz2 * (v.Sx * Rx + v.Sy * Ry + v.Sz * Rz);
+      const gy = cy - Rz2 * (v.Sx * Nx + v.Sy * Ny + v.Sz * Nz);
+      const a = Math.atan2(gy - cy, gx - cx);
+      const c = Math.cos(a), s = Math.sin(a);
+      ctx.strokeStyle = rgba(GOLD, 0.45 * dialStrong * fadeK);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx + (R * zoom + 6.5) * c, cy + (R * zoom + 6.5) * s, 2.6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    /** 经线可见段折线（正午日带 / 扫经读针 / boot 扫掠带共用）；front=true 只画正面，back=true 以虚线穿球 */
+    function strokeMeridian(lonDeg: number, style: string, width: number, opts?: { dash?: number[]; back?: boolean; gate?: number }) {
+      const λ = lonDeg * RAD;
+      const cλ = Math.cos(λ), sλ = Math.sin(λ);
+      const gate = opts?.gate ?? 0.05;
+      const Rz2 = R * zoom;
+      ctx.save();
+      ctx.strokeStyle = style;
+      ctx.lineWidth = width;
+      if (opts?.dash) ctx.setLineDash(opts.dash);
+      // 正面段
+      if (!opts?.back) {
+        ctx.beginPath();
+        let started = false;
+        for (let k = 0; k <= 48; k++) {
+          const φ = (k / 48 - 0.5) * Math.PI;
+          const cφ = Math.cos(φ);
+          const X = cφ * cλ, Y = cφ * sλ, Z = Math.sin(φ);
+          const z = X * Ex + Y * Ey + Z * Ez;
+          if (z <= gate) {
+            started = false;
+            continue;
+          }
+          const x = cx + Rz2 * (X * Rx + Y * Ry + Z * Rz);
+          const y = cy - Rz2 * (X * Nx + Y * Ny + Z * Nz);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      } else {
+        // 背面段：虚线穿墨球（读针的「针穿」语言）
+        ctx.beginPath();
+        let started = false;
+        for (let k = 0; k <= 48; k++) {
+          const φ = (k / 48 - 0.5) * Math.PI;
+          const cφ = Math.cos(φ);
+          const X = cφ * cλ, Y = cφ * sλ, Z = Math.sin(φ);
+          const z = X * Ex + Y * Ey + Z * Ez;
+          if (z > -gate) {
+            started = false;
+            continue;
+          }
+          const x = cx + Rz2 * (X * Rx + Y * Ry + Z * Rz);
+          const y = cy - Rz2 * (X * Nx + Y * Ny + Z * Nz);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      if (opts?.dash) ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    /** 正午经线日带（直射经线，screen 两笔；z 门控防地平线加法爆白） */
+    function drawNoonMeridian(strong: number) {
+      const lon = subsolarLon(Date.now());
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      strokeMeridian(lon, rgba(SILVER, 0.05 + 0.03 * strong), Math.max(6, R * zoom * 0.12), { gate: 0.12 });
+      strokeMeridian(lon, rgba(SILVER, 0.11 + 0.07 * strong), 1.25, { gate: 0.05 });
+      ctx.restore();
+    }
+
+    /** 扫经读针：刻度盘指针所在经度贯穿球体——前实后虚，针穿墨球 */
+    function drawSweepNeedle(dialStrong: number) {
+      if (dialStrong <= 0 || !sweepLamp) return;
+      const d = new Date(displayMs);
+      const utcMin = d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60;
+      const lonPtr = (utcMin / 1440) * 360 - 180;
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      if (glMode) {
+        strokeMeridian(lonPtr, "rgba(7, 9, 14, 0.4)", Math.max(6.5, R * zoom * 0.1 + 1.5), { gate: 0.12 });
+        strokeMeridian(lonPtr, "rgba(7, 9, 14, 0.35)", 2.5, { gate: 0.05 });
+      }
+      strokeMeridian(lonPtr, rgba(SILVER, 0.045 * dialStrong), Math.max(5, R * zoom * 0.1), { gate: 0.12 });
+      strokeMeridian(lonPtr, rgba(SILVER, 0.14 * dialStrong), 1, { gate: 0.04 });
+      strokeMeridian(lonPtr, rgba(SILVER, 0.05 * dialStrong), 1, { dash: [3, 4], back: true, gate: 0.04 });
+      ctx.restore();
+    }
+
+    /** 夜半球压暗：直射点→对日点线性渐变（半球域，画在地形后、城市灯前——暖尘坐上暗地） */
+    function drawNightShade(v: { Sx: number; Sy: number; Sz: number }, settleK: number) {
+      const Rz2 = R * zoom;
+      const sx = cx + Rz2 * (v.Sx * Rx + v.Sy * Ry + v.Sz * Rz);
+      const sy = cy - Rz2 * (v.Sx * Nx + v.Sy * Ny + v.Sz * Nz);
+      const ax = 2 * cx - sx;
+      const ay = 2 * cy - sy;
+      const g = ctx.createLinearGradient(sx, sy, ax, ay);
+      g.addColorStop(0, "rgba(3, 5, 9, 0)");
+      g.addColorStop(0.55, "rgba(3, 5, 9, 0.08)");
+      g.addColorStop(1, `rgba(3, 5, 9, ${(0.3 * settleK).toFixed(3)})`);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, Rz2, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+
+    /** 日照侧 rim 光 + 冲日环（screen；(P·S)⁷ 只亮受光边，夜半球朝人时无 rim——夜让给灯） */
+    function drawRim(v: { Sx: number; Sy: number; Sz: number }) {
+      const Rz2 = R * zoom;
+      const opp = Math.max(0, v.Sx * Ex + v.Sy * Ey + v.Sz * Ez); // 直射点与视中心夹角余弦
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      // rim：轮廓 128 段，每段 alpha = 0.28·max(0,P·S)⁷
+      ctx.lineWidth = 2;
+      let ppx = 0, ppy = 0, pvalid = false;
+      for (let k = 0; k <= 128; k++) {
+        const t = (k / 128) * Math.PI * 2;
+        const c = Math.cos(t), s = Math.sin(t);
+        const X = c * Rx + s * Nx, Y = c * Ry + s * Ny, Z = c * Rz + s * Nz; // 轮廓点 = Rt/N 平面上的单位圆（Rz 为基向量）
+        const x = cx + Rz2 * c;
+        const y = cy - Rz2 * s;
+        const a = 0.28 * Math.pow(Math.max(0, X * v.Sx + Y * v.Sy + Z * v.Sz), 7);
+        if (pvalid && a > 0.004) {
+          ctx.strokeStyle = rgba(SILVER, a);
+          ctx.beginPath();
+          ctx.moveTo(ppx, ppy);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+        }
+        ppx = x;
+        ppy = y;
+        pvalid = true;
+      }
+      // 冲日环：直射点对准视中心时整圈细亮边
+      if (opp > 0.55) {
+        const a2 = 0.1 * Math.pow(opp, 3);
+        ctx.strokeStyle = rgba(SILVER, a2);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, Rz2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    /** 赤道海光环（世界空间中低纬微亮带，screen；「大陆浮起」的海面衬层） */
+    function drawEquatorBand() {
+      const Rz2 = R * zoom;
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      for (const [w, a] of [
+        [Rz2 * 0.95, 0.02],
+        [Rz2 * 0.55, 0.03],
+      ] as Array<[number, number]>) {
+        ctx.strokeStyle = `rgba(${INKPAPER}, ${a})`;
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        let started = false;
+        for (let k = 0; k <= 96; k++) {
+          const λ = (k / 96) * Math.PI * 2 - Math.PI;
+          const X = Math.cos(λ), Y = Math.sin(λ), Z = 0;
+          const z = X * Ex + Y * Ey + Z * Ez;
+          if (z <= 0.05) {
+            started = false;
+            continue;
+          }
+          const x = cx + Rz2 * (X * Rx + Y * Ry);
+          const y = cy - Rz2 * (X * Nx + Y * Ny);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    /** 昼半球宣纸高光（点阵模式）+ 界圆金 tick（环即钟面：直射方位角，两种模式都画） */
+    function drawSunAccent(subsolarVec: { Sx: number; Sy: number; Sz: number }, strong: number, glOnFlag?: boolean) {
+      const { Sx, Sy, Sz } = subsolarVec;
+      const Rz2 = R * zoom;
+      const z = Sx * Ex + Sy * Ey + Sz * Ez;
+      const x = cx + Rz2 * (Sx * Rx + Sy * Ry + Sz * Rz);
+      const y = cy - Rz2 * (Sx * Nx + Sy * Ny + Sz * Nz);
+      // 卫星模式下 shader 已真实受光——宣纸高光会给照片浇乳白雾，跳过（只留金 tick）
+      if (z > 0.02 && !glOnFlag) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, Rz2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.globalCompositeOperation = "screen";
+        const rad = Rz2 * 0.9;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+        g.addColorStop(0, `rgba(${PAPER}, ${(0.14 + 0.06 * strong).toFixed(3)})`); // 宣纸受光的暖白（昼半球的内容本身）
+        g.addColorStop(0.55, `rgba(${PAPER}, ${(0.05 + 0.025 * strong).toFixed(3)})`);
+        g.addColorStop(1, `rgba(${PAPER}, 0)`);
+        ctx.fillStyle = g;
+        ctx.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+        ctx.restore();
+      }
+      // 金 tick：指向直射方位（即使直射点在背面，方位仍成立）；随 zoom 外扩贴住球缘
+      const a = Math.atan2(y - cy, x - cx);
+      const c = Math.cos(a), s = Math.sin(a);
+      const gR = R * zoom;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = rgba(GOLD, 0.8);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx + (gR + 3) * c, cy + (gR + 3) * s);
+      ctx.lineTo(cx + (gR + 10) * c, cy + (gR + 10) * s);
+      ctx.stroke();
+      ctx.fillStyle = rgba(GOLD, 0.25);
+      ctx.beginPath();
+      ctx.arc(cx + (gR + 6.5) * c, cy + (gR + 6.5) * s, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    /** 灯：投影 + 三色辉光精灵（透视衰减）+ 芯点 + 焦点环 */
+    function drawLamp(l: (typeof lamps)[number], bootK: number) {
+      const X = l.vx, Y = l.vy, Z = l.vz;
+      const z = X * Ex + Y * Ey + Z * Ez;
+      l.z = z;
+      if (z <= 0.02) return; // 背面：灯辉/芯片/命中全部退场
+      const Rz2 = R * zoom;
+      l.x = cx + Rz2 * (X * Rx + Y * Ry + Z * Rz);
+      l.y = cy - Rz2 * (X * Nx + Y * Ny + Z * Nz);
+      const i = l.cur;
+      if (i <= 0.02 && l.state === "CLOSED") return;
+      const sig = signalsRef.current[l.exch.mic];
+      const pct = sig && Number.isFinite(sig.changePct) ? (sig.changePct as number) : null;
+      let color: [number, number, number];
+      if (l.state === "PRE") color = SILVER;
+      else if (pct !== null && pct > 0.005) color = CINNABAR;
+      else if (pct !== null && pct < -0.005) color = SILVER;
+      else color = GOLD;
+      const isSilver = color === SILVER;
+      const amp = l.state === "OPEN" && pct !== null ? 1 + clamp(Math.abs(pct) / 2.5, 0, 1) * 0.6 : 1;
+      const bloom = l.bloomT > 0 ? 1 - l.bloomT / 0.6 : 0;
+      const breath = l.breathT > 0 ? Math.sin(((0.8 - l.breathT) / 0.8) * Math.PI) * 0.25 : 0;
+      l.breathK = breath;
+      const face = l.faceT > 0 ? Math.sin((l.faceT / 0.45) * Math.PI) : 0; // 迎面点亮：转到正面的一次性灌光
+      const collapse = l.collapseT > 0 ? 1 - l.collapseT / 0.3 : 0;
+      const persp = 0.65 + 0.35 * z; // 透视：边缘灯辉收缩
+      const baseR = clamp(R * 0.1, 11, 26) * (color === CINNABAR ? 1.12 : 1); // 朱红视知觉偏暗，半径补偿
+      if (i > 0.05) {
+        const rr = baseR * (1 + bloom * 0.9 + breath * 1.4 + face * 0.55) * persp;
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = clamp(((isSilver ? 0.3 : 0.38) * i + bloom * 0.3 + breath * 0.6 + face * 0.35) * amp * z, 0, 1) * bootK;
+        ctx.drawImage(glowSprite(color), l.x - rr, l.y - rr, rr * 2, rr * 2);
+        ctx.restore();
+      }
+      if (bloom > 0) {
+        ctx.strokeStyle = rgba(color, 0.7 * (1 - bloom));
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(l.x, l.y, baseR * 0.5 + bloom * baseR * 2.0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (collapse > 0) {
+        // 收灯：收缩环（开是点亮，闭是收灯——一对方向相反的墨动作）
+        ctx.strokeStyle = rgba(SILVER, 0.35 * (1 - collapse));
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(l.x, l.y, baseR * (1.5 - collapse * 1.0), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      const core = (2.2 + 1.3 * i) * (0.7 + 0.3 * z);
+      if (glMode) {
+        // 墨晕垫底：亮色卫星影像上 CLOSED 白芯与辉光靠色——先坐一枚墨晕再点芯
+        ctx.fillStyle = "rgba(5, 8, 14, 0.4)";
+        ctx.beginPath();
+        ctx.arc(l.x, l.y, core * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (l.state === "CLOSED") {
+        ctx.fillStyle =
+          pct !== null && pct > 0
+            ? rgba(CINNABAR, 0.2 + 0.2 * i)
+            : pct !== null && pct < 0
+              ? rgba(SILVER, 0.22 + 0.18 * i)
+              : "rgba(255, 255, 255, 0.2)";
+      } else {
+        ctx.fillStyle = rgba(color, (isSilver ? 0.35 : 0.55) + 0.45 * i);
+      }
+      ctx.beginPath();
+      ctx.arc(l.x, l.y, core, 0, Math.PI * 2);
+      ctx.fill();
+      if (l.state === "OPEN" && i > 0.7) {
+        ctx.fillStyle = `rgba(255, 244, 224, ${(((i - 0.7) / 0.3) * 0.8 * z).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(l.x, l.y, core * 0.45, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const isFocus = l === hoverLamp || l.exch.mic === selectedMicRef.current || l === sweepLamp || face > 0.05;
+      if (isFocus) {
+        ctx.strokeStyle = rgba(SILVER, 0.6);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(l.x, l.y, clamp(R * 0.058, 6, 13) * (1 + face * 0.35), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    /** 芯片就近布局：标签贴着灯点（八向候选 + 优先级抢占 + 下推避让）——地图注记的经典做法。
+     * 偏移是屏幕像素级：放大后标签天然贴点不出屏（取代外挂轨道——长引线不雅且 zoom 大时出屏）。
+     * 防打架：焦点 > 大所 > 开市 > 其余的优先级排序，先到先得好位，后到者八向试探，
+     * 全撞则向下找空档；间距阈值 4px 视觉不贴脸。 */
+    function layoutChips(rotFast: boolean) {
+      const desktopFull = W >= 900; // 桌面前半球全员（27 所正面约 14-15 枚）
+      const narrow = W < 640;
+      const placed: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+      const items = lamps
+        .filter((l) => {
+          if (l.z <= 0.15) {
+            l.chipOn = false;
+            return false;
+          }
+          const focus = l === hoverLamp || l.exch.mic === selectedMicRef.current || l === sweepLamp;
+          const open = l.state === "OPEN" || l.state === "BREAK";
+          const on = rotFast
+            ? MAJOR_SET.has(l.exch.mic) || focus
+            : desktopFull
+              ? true
+              : narrow
+                ? MAJOR_SET.has(l.exch.mic) || open || focus
+                : zoom >= 1.4 || MAJOR_SET.has(l.exch.mic) || open || focus;
+          l.chipOn = on;
+          return on;
+        })
+        .sort((a, b) => {
+          const pri = (l: typeof a) =>
+            (l === hoverLamp || l.exch.mic === selectedMicRef.current || l === sweepLamp ? 4 : 0) +
+            (MAJOR_SET.has(l.exch.mic) ? 2 : 0) +
+            (l.state === "OPEN" || l.state === "BREAK" ? 1 : 0);
+          return pri(b) - pri(a) || a.x - b.x;
+        });
+      const hit = (x: number, y: number, w: number, h: number) =>
+        placed.some((p) => x < p.x1 + 4 && x + w > p.x0 - 4 && y < p.y1 + 3 && y + h > p.y0 - 3);
+      const gap = 7 + clamp(R * zoom * 0.02, 0, 8); // 点芯到芯片留白（微随比例）
+      for (const l of items) {
+        const candidates: Array<[number, number]> = [
+          [gap, -gap - l.chipH], // 右上
+          [-gap - l.chipW, -gap - l.chipH], // 左上
+          [gap, gap], // 右下
+          [-gap - l.chipW, gap], // 左下
+          [gap, -l.chipH / 2], // 右
+          [-gap - l.chipW, -l.chipH / 2], // 左
+          [-l.chipW / 2, -gap - l.chipH], // 上
+          [-l.chipW / 2, gap], // 下
+        ];
+        let bx = 0;
+        let by = 0;
+        let ok = false;
+        for (const [ox, oy] of candidates) {
+          const x = clamp(l.x + ox, 2, Math.max(2, W - l.chipW - 2));
+          const y = clamp(l.y + oy, 2, Math.max(2, H - l.chipH - 2));
+          if (!hit(x, y, l.chipW, l.chipH)) {
+            bx = x;
+            by = y;
+            ok = true;
+            break;
+          }
+        }
+        if (!ok) {
+          // 八向全撞：沿右下方向找空档（最多 12 步）
+          const x = clamp(l.x + gap, 2, Math.max(2, W - l.chipW - 2));
+          let y = clamp(l.y + gap, 2, Math.max(2, H - l.chipH - 2));
+          for (let k = 0; k < 12 && !ok; k++) {
+            if (!hit(x, y, l.chipW, l.chipH)) {
+              bx = x;
+              by = y;
+              ok = true;
+            }
+            y = clamp(y + l.chipH + 4, 2, Math.max(2, H - l.chipH - 2));
+          }
+        }
+        if (!ok) {
+          // 兜底：允许与既有芯片重叠（27 枚内极少走到）
+          bx = clamp(l.x + gap, 2, Math.max(2, W - l.chipW - 2));
+          by = clamp(l.y + gap, 2, Math.max(2, H - l.chipH - 2));
+        }
+        l.chipX = bx;
+        l.chipY = by;
+        l.chipSide = 1;
+        placed.push({ x0: bx, y0: by, x1: bx + l.chipW, y1: by + l.chipH });
+      }
+    }
+
+    function drawChips(bootK: number) {
+      for (const l of lamps) {
+        if (!l.chipOn || !l.chipBmp) continue;
+        const fk = l.faceT > 0 ? Math.sin((l.faceT / 0.45) * Math.PI) : 0;
+        const focus = l === hoverLamp || l.exch.mic === selectedMicRef.current || l === sweepLamp || fk > 0.05;
+        const bodyA =
+          (0.45 + 0.55 * clamp(l.cur, 0, 1)) * smoothstep(0.15, 0.35, l.z) * bootK * l.chipA * (1 + l.breathK * 0.48 + fk * 0.4);
+        if (bodyA <= 0.03) continue;
+        // 就近短引线：灯点 → 芯片近边的小连笔（点到边的自然连线，不再有长直线）
+        const ex = clamp(l.x, l.chipX + 4, l.chipX + l.chipW - 4);
+        const ey = l.y <= l.chipY ? l.chipY : l.chipY + l.chipH;
+        if (glMode) {
+          ctx.strokeStyle = "rgba(7, 9, 14, 0.32)";
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(l.x, l.y);
+          ctx.lineTo(ex, ey);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = focus ? "rgba(190, 205, 225, 0.5)" : "rgba(190, 205, 225, 0.16)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(l.x, l.y);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+        // 卫星模式常垫墨底：亮色影像上的可读性（不只是焦点态）
+        if (glMode || focus) {
+          ctx.fillStyle = focus ? "rgba(8, 12, 20, 0.78)" : "rgba(8, 12, 20, 0.5)";
+          ctx.fillRect(l.chipX - 2, l.chipY - 2, l.chipW + 4, l.chipH + 4);
+          ctx.strokeStyle = "rgba(190, 205, 225, 0.55)";
+          ctx.strokeRect(l.chipX - 2.5, l.chipY - 2.5, l.chipW + 5, l.chipH + 5);
+        }
+        ctx.save();
+        ctx.globalAlpha = bodyA;
+        ctx.drawImage(l.chipBmp, l.chipX, l.chipY, l.chipW, l.chipH);
+        ctx.restore();
+      }
+    }
+
+    /** 悬停金晕（手电照玉，clip 圆内） */
+    function drawSpecular() {
+      const Rz2 = R * zoom;
+      const rad = clamp(R * 0.35, 80, 170);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, Rz2, 0, Math.PI * 2);
+      ctx.clip();
+      const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
+      g.addColorStop(0, rgba(GOLD, 0.1));
+      g.addColorStop(0.55, rgba(GOLD, 0.035));
+      g.addColorStop(1, rgba(GOLD, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+      ctx.restore();
+    }
+
+    /* ---- 命中：角度拾取（背面不命中）+ 芯片矩形 ---- */
+    function lampAt(x: number, y: number) {
+      const hitR = Math.max(13, R * zoom * 0.05);
+      let best: (typeof lamps)[number] | null = null;
+      let bestD = hitR;
+      for (const l of lamps) {
+        if (l.z <= 0.02) continue;
+        const d = Math.hypot(l.x - x, l.y - y);
+        if (d <= bestD) {
+          bestD = d;
+          best = l;
+        }
+      }
+      return best;
+    }
+    function chipAt(x: number, y: number) {
+      for (const l of lamps) {
+        if (!l.chipOn) continue;
+        if (x >= l.chipX - 3 && x <= l.chipX + l.chipW + 3 && y >= l.chipY - 3 && y <= l.chipY + l.chipH + 3) return l;
+      }
+      return null;
+    }
+
+    /* ---- 刻度盘拨时（唯一时间入口；球不随拨动转） ---- */
+    function beginDialScrub(x: number) {
+      dialDragging = true;
+      live = false;
+      springT = -1;
+      dragAnchorX = x;
+      dragAnchorMs = displayMs;
+      setScrubbing(true);
+      const tip = tipRef.current;
+      if (tip) tip.style.opacity = "0";
+      ensureLoop();
+    }
+    function applyDialDelta(xNow: number, speed: number) {
+      if (!dialDragging) return;
+      const dHours = ((xNow - dragAnchorX) / Math.max(W, 1)) * 24 * speed;
+      displayMs = dragAnchorMs + dHours * 3600_000;
+      if (!Number.isFinite(displayMs)) displayMs = nowMs;
+      reevaluate(clamp(displayMs, nowMs - SCRUB_RANGE_MS, nowMs + SCRUB_RANGE_MS));
+      ensureLoop();
+    }
+    function endDialScrub() {
+      if (!dialDragging) return;
+      dialDragging = false;
+      springFrom = displayMs;
+      springT = 0; // is-scrubbing 由弹簧终帧摘除
+      ensureLoop();
+    }
+    /** 盘上扫描读出：指针时刻对应经度 → 最近交易所（时间手势的伴读） */
+    function computeSweep() {
+      if (!(dialDragging || springT >= 0 || !live)) return null;
+      const d = new Date(displayMs);
+      const utcMin = d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60;
+      const lonPtr = (utcMin / 1440) * 360 - 180;
+      let best: (typeof lamps)[number] | null = null;
+      let bestD = 1e9;
+      for (const l of lamps) {
+        const dd = Math.abs((((l.exch.lon - lonPtr + 540) % 360) + 360) % 360 - 180);
+        if (dd < bestD) {
+          bestD = dd;
+          best = l;
+        }
+      }
+      return best;
+    }
+
+    /* ---- 此面滚动信息带：正面半球交易所按屏左→右（视角/信号变化才重建） ----
+     * 四修：①定速不定时（scrollWidth/2 ÷ 38px/s，钳 18-70s）②空态占位不停跑马
+     * ③旋转中冻结（转动看球不看带，停稳一次性呈现）④DOM 构建杀注入面；
+     * 附：核心正面（z>迎面阈）条目名字下加金线——带=宽正面（此面），金线=正对 */
+    const faceThresh = () => 0.78 + 0.1 * (zoom - 1); // zoom 放大后核心区顶出视口的补偿
+    let tickerSig = "";
+    function updateTicker() {
+      const el = tickerTrackRef.current;
+      if (!el) return;
+      if (rotDrag || Math.abs(velYaw) > 2) return; // 旋转中冻结，停稳后下一帧重建
+      const facing = lamps.filter((l) => l.z > 0.35).sort((a, b) => a.x - b.x);
+      const sig = facing
+        .map((l) => {
+          const s = signalsRef.current[l.exch.mic];
+          const pct = s && Number.isFinite(s.changePct) ? (s.changePct as number) : null;
+          return `${l.exch.mic}:${l.state}:${pct === null ? "-" : pct.toFixed(2)}:${l.z > faceThresh() ? "F" : ""}`;
+        })
+        .join(",");
+      if (sig === tickerSig) return;
+      tickerSig = sig;
+      el.textContent = "";
+      const wrap = tickerTrackRef.current?.parentElement;
+      if (facing.length === 0) {
+        // 空态：正对皆洋——静态占位，不跑马（is-empty 停动画）
+        const span = document.createElement("span");
+        span.className = "atlas-ticker-item is-empty";
+        span.textContent = "此面皆洋 · 转动地球寻灯";
+        el.appendChild(span);
+        el.classList.add("is-empty");
+        if (wrap) wrap.classList.add("is-empty");
+        return;
+      }
+      el.classList.remove("is-empty");
+      if (wrap) wrap.classList.remove("is-empty");
+      const frag = document.createDocumentFragment();
+      const mkItem = (l: (typeof lamps)[number]) => {
+        const s = signalsRef.current[l.exch.mic];
+        const pct = s && Number.isFinite(s.changePct) ? (s.changePct as number) : null;
+        const span = document.createElement("span");
+        span.className =
+          "atlas-ticker-item" +
+          (pct === null ? "" : pct > 0.005 ? " tk-up" : pct < -0.005 ? " tk-down" : "") +
+          (l.z > faceThresh() ? " tk-face" : "");
+        if (l.cc) {
+          const uri = flagUri(l.cc);
+          if (uri) {
+            const img = document.createElement("img");
+            img.className = "atlas-ticker-flag";
+            img.src = uri;
+            img.alt = "";
+            span.appendChild(img);
+          }
+        }
+        const b = document.createElement("b");
+        b.textContent = l.exch.zh;
+        span.appendChild(b);
+        span.appendChild(document.createTextNode(` ${STATE_ZH[l.state]}${pct === null ? "" : ` ${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`}`));
+        return span;
+      };
+      const oneSet = facing.map(mkItem);
+      // 复制到 ≥2× 视口宽，循环里不留空窗；双份起步保证无缝
+      let copies = 2;
+      for (const it of oneSet) frag.appendChild(it);
+      while (copies < 6 && el.scrollWidth < window.innerWidth * 2) {
+        for (const it of oneSet) frag.appendChild(it.cloneNode(true));
+        copies++;
+      }
+      el.appendChild(frag);
+      // 定速：38px/s 线速度，时长 = 单份宽/速度，钳 18-70s
+      const oneW = Math.max(1, el.scrollWidth / copies);
+      const dur = clamp(oneW / 38, 18, 70);
+      el.style.animationDuration = `${dur.toFixed(1)}s`;
+    }
+
+    let last = performance.now();
+    function loop(nowP: number) {
+      if (disposed) return;
+      const dt = Math.min(0.05, (nowP - last) / 1000);
+      const dtRaw = Math.min(1, (nowP - last) / 1000); // 自转/飞行按真实时间积分：节流环境下不减速
+      last = nowP;
+      if (W < 50 || H < 50 || R < 8) {
+        running = false; // 零尺寸（隐藏/未布局）：停帧，resize 会重启
+        return;
+      }
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+
+      if (!bootDone) {
+        bootT += dt;
+        if (bootT >= BOOT_SEC) bootDone = true;
+      }
+
+      /* 时间轴：dial 弹回 */
+      let dialStrong = 0;
+      if (dialDragging) {
+        displayMs = clamp(displayMs, nowMs - SCRUB_RANGE_MS, nowMs + SCRUB_RANGE_MS);
+        dialStrong = 1;
+      } else if (springT >= 0) {
+        springT += dt;
+        const p = clamp(springT / SPRING_SEC, 0, 1);
+        displayMs = springFrom + (nowMs - springFrom) * (reduced ? 1 : easeInOut(p));
+        dialStrong = 1 - p;
+        reevaluate(displayMs); // 弹回逐帧翻转：27 灯按假想时刻渐次回真，末尾不再集体爆闪
+        if (p >= 1) {
+          springT = -1;
+          live = true;
+          nowMs = Date.now();
+          displayMs = nowMs;
+          reevaluate(nowMs);
+          scheduleBoundary();
+          setScrubbing(false); // is-scrubbing 在弹簧终帧摘除（松手瞬间摘会让 0.9s 回真期假装置身事外）
+        }
+      } else if (live) {
+        nowMs = Date.now();
+        displayMs = nowMs;
+      } else {
+        dialStrong = 0.6; // 键盘拨时等假想驻留态：读针/幽灵弧以中强度登场
+      }
+      if (!Number.isFinite(displayMs)) displayMs = nowMs;
+
+      /* 行星自转：常帧推进（交互即停缓入恢复；宪法由用户修正案授权） */
+      const spinTarget = spinActive() ? 360 / SPIN_PERIOD_S : 0;
+      spinRate += (spinTarget - spinRate) * (1 - Math.exp(-dtRaw * 2.2)); // ~0.45s 缓入缓出
+      if (Math.abs(spinRate) > 0.005) {
+        spinAngle = (spinAngle + spinRate * dtRaw) % 360;
+      }
+
+      /* 视角复原飞行：静默达到阈值 → 优雅飞回家；任意输入即刻打断 */
+      if (flight) {
+        flight.t += dtRaw;
+        const p = easeInOut(clamp(flight.t / FLIGHT_SEC, 0, 1));
+        yaw = flight.yaw0 + flight.yaw1 * p;
+        pitch = flight.pitch0 + (flight.pitch1 - flight.pitch0) * p;
+        zoom = flight.zoom0 + (flight.zoom1 - flight.zoom0) * p;
+        if (flight.t >= FLIGHT_SEC) {
+          flight = null;
+          bumpIdle(); // 重新武装（已在家则下次为零位移，幂等）
+        }
+      } else if (
+        restoreAt > 0 &&
+        performance.now() >= restoreAt &&
+        !rotDrag &&
+        !dialDragging &&
+        pointers.size === 0 &&
+        springT < 0
+      ) {
+        // 最短弧回家（yaw 展开到 ±180 邻域）
+        let dy = ((HOME_TZ_LON - yaw + 540) % 360) - 180;
+        if (Math.abs(dy) > 0.5 || Math.abs(pitch - HOME_LAT) > 0.5 || Math.abs(zoom - 1) > 0.01) {
+          flight = { t: 0, yaw0: yaw, yaw1: dy, pitch0: pitch, pitch1: HOME_LAT, zoom0: zoom, zoom1: 1 };
+          spinResumeAt = performance.now() + FLIGHT_SEC * 1000 + SPIN_RESUME_MS; // 飞行期间自转缓行
+        }
+        restoreAt = 0;
+      }
+
+      /* 惯性（yaw only；静止窗/低速/6τ 三重收尾） */
+      let rotating = false;
+      if (!rotDrag && velYaw !== 0) {
+        yaw += velYaw * dt;
+        velYaw *= Math.exp(-dt / INERTIA_TAU);
+        inertiaT += dt;
+        if (Math.abs(velYaw) < 2 || inertiaT > INERTIA_TAU * 6) {
+          velYaw = 0;
+          // 停稳点亮：快甩被门控的迎面灌光在此补齐——按离视心的水平距离错峰 0-150ms
+          const Rzq = R * zoom;
+          for (const l of lamps) {
+            if (l.z > faceThresh() && l.faceT <= 0) {
+              l.faceT = 0.45;
+              l.faceDelay = Math.round((Math.abs(l.x - cx) / Math.max(1, Rzq)) * 150);
+            }
+          }
+        }
+        rotating = Math.abs(velYaw) > 1;
+      }
+      const rotFast = rotDrag || rotating;
+      // 降档判据：惯性速度 + 拖拽中的实时角速度（rotSamples 现成，拖拽期 velYaw 恒 0 的老漏洞）
+      let dragAngSpeed = 0;
+      if (rotDrag && rotSamples.length >= 2) {
+        const a = rotSamples[0];
+        const b = rotSamples[rotSamples.length - 1];
+        const span = (b.t - a.t) / 1000;
+        if (span > 0.01) dragAngSpeed = Math.abs((b.yaw - a.yaw) / span);
+      }
+      const angSpeed = Math.max(Math.abs(velYaw), dragAngSpeed);
+      const fastThreshold = 40; // deg/s 以上进入降档
+      const degrade = rotFast && angSpeed > fastThreshold;
+
+      frameBasis();
+      const bf = bootFactors();
+      const bootK = reduced ? 1 : clamp(bootT / BOOT_SEC + 0.15, 0, 1);
+
+      /* 球体本体：卫星纹理球（WebGL）优先；失败回退点阵水墨球（2D 全套保留） */
+      const isGL = glOn();
+      glMode = isGL;
+      const realSun = subsolarVecOf(Date.now());
+      const strong2 = Math.max(dialStrong, rotFast ? 0.55 : 0); // 旋转时晨昏弧也增强
+      const cityK = bootDone ? 1 : 0.25 + 0.75 * bf.settleP + 0.09 * Math.sin(bf.settleP * Math.PI);
+      // boot 期把太阳经度从晨昏起点快进到真实位置——「快进一个昼夜」被字面演出
+      let sunVec = realSun;
+      if (!bootDone && bf.sweepP < 1) {
+        const φ = (1 - bf.sweepP) * Math.PI * 2;
+        const cφ = Math.cos(φ);
+        const sφ = Math.sin(φ);
+        sunVec = { Sx: cφ * realSun.Sx - sφ * realSun.Sy, Sy: sφ * realSun.Sx + cφ * realSun.Sy, Sz: realSun.Sz };
+      }
+      if (isGL && glr) {
+        // GL 球亮度独立快升（circle 相位 0.46s 内 0→1），昼夜快进交给太阳经度，两轴分离
+        const glK = reduced || bootDone ? 1 : 1 - Math.pow(1 - clamp(bootT / 0.46, 0, 1), 3);
+        glr.render({ W, H, DPR, cx, cy, R: R * zoom, Ex, Ey, Ez, Nx, Ny, Nz, Rx, Ry, Rz, Sx: sunVec.Sx, Sy: sunVec.Sy, Sz: sunVec.Sz, k: glK, nightK: cityK });
+        // 2D 补画刻度环（sphereSprite 只在回退分支绘制，GL 下不补则金 tick 悬空）
+        drawTickRing((x0, y0, x1, y1, major) => {
+          ctx.strokeStyle = `rgba(${INKPAPER}, ${major ? 0.5 : 0.26})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(cx + x0, cy + y0);
+          ctx.lineTo(cx + x1, cy + y1);
+          ctx.stroke();
+        }, zoom);
+      } else if (sphereSprite) {
+        const spW = (sphereSprite.width / DPR) * zoom; // 回退底盘随 zoom 同步（否则地形溢出墨玉盘）
+        const spH = (sphereSprite.height / DPR) * zoom;
+        if (reduced || bf.circleP >= 1) {
+          ctx.drawImage(sphereSprite, cx - spW / 2, cy - spH / 2, spW, spH);
+        } else {
+          ctx.save();
+          ctx.globalAlpha = bf.circleP;
+          ctx.drawImage(sphereSprite, cx - spW / 2, cy - spH / 2, spW, spH);
+          ctx.restore();
+          // 落笔画圆：界圆从正上方起笔扫过 360°
+          ctx.strokeStyle = `rgba(${INKPAPER}, ${(0.16 * bf.circleP).toFixed(3)})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(cx, cy, R * zoom, -Math.PI / 2, -Math.PI / 2 + bf.circleP * Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      drawMeteors(dtRaw, sunVec); // 流星：球后裁切的栈底层
+      drawGraticule(bf.circleP); // 卫星模式网格走墨衬（见 casing），不再压 alpha
+      if (!isGL) {
+        drawEquatorBand();
+        paintTerrain(bf.circleP, bf.sweepP, bf.startLon);
+        drawNightShade(sunVec, bootDone ? 1 : bf.settleP);
+        const cityDegrade = degrade || W < 640;
+        if (cityF && cityF.n > 0) {
+          cityN = cityDegrade ? Math.min(cityF.n, CITY_DEGRADE_N) : cityF.n;
+          // 光晕减数不熄灭：静止桌面 2000、旋转中 600、窄屏 350——转起来灯球不变素
+          citySpriteN = W < 640 ? Math.min(350, cityN) : degrade ? Math.min(600, cityN) : Math.min(CITY_SPRITE_N, cityN);
+        }
+        if (citySprite === null) citySprite = makeCitySprite();
+        computeCityLUT(Date.now()); // 光照只跟真实太阳（0.3ms/帧；静止帧也不重算——停帧即冻结）
+        paintCities(cityK, degrade, bf.sweepP, bf.startLon);
+      }
+
+      // boot 扫掠带可见化：前沿亮线 + 8° 尾迹（快进一个昼夜被演出来）
+      if (!bootDone && bf.sweepP > 0 && bf.sweepP < 1) {
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        const frontLon = bf.startLon + bf.sweepP * 360;
+        strokeMeridian(frontLon, rgba(SILVER, 0.45), 1.5, { gate: 0.02 });
+        strokeMeridian(frontLon - 8, rgba(SILVER, 0.12), 1, { gate: 0.02 });
+        ctx.restore();
+      }
+
+      drawTerminator(strong2, sunVec);
+      drawGhostTerminator(dialStrong);
+      if (!isGL) drawNoonMeridian(strong2); // 卫星图上 shader 已真实受光，日带=同件事画两遍
+      drawSunAccent(isGL ? sunVec : realSun, strong2, isGL);
+      if (!isGL) drawRim(realSun);
+      drawSats(); // 真实卫星层（球上、大气族下、交易所灯之下）
+
+      let alive = !bootDone || rotDrag || rotating || dialDragging || springT >= 0 || repaint || spinTarget > 0 || !!flight || meteorCount() > 0;
+      for (const l of lamps) {
+        if (!bootDone && bootT < l.activeAt * BOOT_SEC) continue;
+        if (!bootDone && !l.bootLit) {
+          l.bootLit = true;
+          l.bloomT = Math.max(l.bloomT, 0.25); // 扫掠带扫到时的点火小花（别用开盘的 0.6，抢戏）
+        }
+        l.cur += (l.target - l.cur) * (1 - Math.exp(-dt * 7));
+        if (Math.abs(l.target - l.cur) > 0.004) alive = true;
+        else l.cur = l.target;
+        if (l.bloomT > 0) {
+          l.bloomT -= dt;
+          alive = true;
+        }
+        if (l.collapseT > 0) {
+          l.collapseT -= dt;
+          alive = true;
+        }
+        if (l.breathT > 0) {
+          l.breathT -= dt;
+          alive = true;
+        }
+        if (l.faceDelay > 0) {
+          l.faceDelay -= dt * 1000; // 停稳点亮的错峰等待
+          if (l.faceDelay <= 0) {
+            l.faceDelay = 0;
+            l.faceT = 0.45;
+          }
+          alive = true;
+        }
+        if (l.faceT > 0) {
+          l.faceT -= dt;
+          alive = true;
+        }
+        const chipTarget = l.chipOn ? 1 : 0;
+        if (Math.abs(chipTarget - l.chipA) > 0.01) {
+          l.chipA += (chipTarget - l.chipA) * (1 - Math.exp(-dt * 14)); // ~160ms 淡入防轨道跳列
+          alive = true;
+        } else l.chipA = chipTarget;
+        drawLamp(l, bootK);
+        // 迎面点亮：跨入正视区一次性灌光（NaN 哨兵防首帧集体爆闪；reduced 不灌光；
+        // 角速度 >120°/s 不触发——快甩是导航不是审视，停稳由惯性终止处错峰补点）
+        if (
+          bootDone &&
+          !reduced &&
+          Math.abs(velYaw) < 120 &&
+          Number.isFinite(l.prevZ) &&
+          l.z > faceThresh() &&
+          l.prevZ <= faceThresh() &&
+          l.faceT <= 0
+        ) {
+          l.faceT = 0.45;
+        }
+        l.prevZ = l.z;
+      }
+      sweepLamp = computeSweep();
+      layoutChips(degrade);
+      drawChips(bootK);
+      drawSweepNeedle(dialStrong);
+
+      if (hoverLamp && finePtr && !rotDrag && !glMode && nowP - lastMoveAt < 400) {
+        drawSpecular();
+        alive = true;
+      }
+
+      sweepLamp = computeSweep();
+      updateDial(dialStrong);
+      updateTicker();
+
+      if (alive) raf = requestAnimationFrame(loop);
+      else {
+        running = false; // 收敛帧已绘净，停帧保留静态图（静止帧即烘焙）
+        repaint = false;
+      }
+    }
+
+    function ensureLoop() {
+      if (running || disposed) return;
+      running = true;
+      last = performance.now();
+      raf = requestAnimationFrame(loop);
+    }
+
+    /* ---- 指针：旋转 / 捏合 / 长按 / 双击回家 ---- */
+    function killLongPress() {
+      clearTimeout(longPressTimer);
+      longPressLamp = null;
+    }
+
+    const onStagePointerDown = (e: PointerEvent) => {
+      skipBoot();
+      spinResumeAt = performance.now() + SPIN_RESUME_MS; // 交互即停自转
+      cancelFlight();
+      bumpIdle();
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        // 双指捏合：取消旋转与长按，快照起始距离
+        rotDrag = false;
+        killLongPress();
+        const pts = Array.from(pointers.values());
+        pinchDist0 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+        zoom0 = zoom;
+        return;
+      }
+      velYaw = 0;
+      const rect = stage.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const l = chipAt(x, y) ?? lampAt(x, y);
+      if (l) {
+        setSelectedMic(l.exch.mic);
+        hoverLamp = null;
+        if (!finePtr) {
+          // 触屏长按 350ms → 浮签（移动端第一次获得读出）
+          longPressLamp = l;
+          longPressX = x;
+          longPressY = y;
+          longPressTimer = window.setTimeout(() => {
+            if (disposed || !longPressLamp) return;
+            const tip = tipRef.current;
+            if (tip) {
+              tip.textContent = `${longPressLamp.exch.zh} ${STATE_ZH[stateOf(longPressLamp, displayMs)]} · ${formatLocalTime(longPressLamp.exch.tz, new Date(displayMs))}`;
+              tip.style.transform = `translate(${clamp(longPressX + 14, 4, Math.max(4, W - 150))}px, ${clamp(longPressY - 30, 4, Math.max(4, H - 24))}px)`;
+              tip.style.opacity = "1";
+            }
+          }, 350);
+        }
+      } else {
+        setSelectedMic(null);
+      }
+      rotDrag = true;
+      rotLastX = x;
+      rotLastY = y;
+      rotSamples = [];
+      stage.setPointerCapture?.(e.pointerId);
+      ensureLoop();
+    };
+    const onStagePointerMove = (e: PointerEvent) => {
+      const rect = stage.getBoundingClientRect();
+      px = e.clientX - rect.left;
+      py = e.clientY - rect.top;
+      lastMoveAt = performance.now();
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        const pts = Array.from(pointers.values());
+        const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+        zoom = clamp(zoom0 * (d / pinchDist0), ZOOM_MIN, ZOOM_MAX);
+        bumpIdle();
+        ensureLoop();
+        return;
+      }
+      if (rotDrag) {
+        const dx = px - rotLastX;
+        const dy = py - rotLastY;
+        rotLastX = px;
+        rotLastY = py;
+        const Rz2 = Math.max(30, R * zoom);
+        yaw -= (dx * 90) / Rz2; // 拖满半径 = 转 90°
+        pitch = clamp(pitch + (dy * 90) / Rz2, -PITCH_CLAMP, PITCH_CLAMP);
+        rotSamples.push({ t: performance.now(), yaw });
+        if (rotSamples.length > 8) rotSamples.shift();
+        bumpIdle(); // 主动旋转刷新复原阈值
+        if (longPressLamp && Math.hypot(px - longPressX, py - longPressY) > 10) killLongPress();
+        ensureLoop();
+        return;
+      }
+      if (!finePtr) return;
+      const l = chipAt(px, py) ?? lampAt(px, py);
+      const sat = l ? null : satAt(px, py);
+      hoverLamp = l;
+      stage.style.cursor = l || sat ? "pointer" : "grab";
+      const tip = tipRef.current;
+      if (tip) {
+        if (sat && !l) {
+          const tierZh = sat.el.tier === "leo" ? "近地" : sat.el.tier === "meo" ? "中距" : "静止轨道";
+          const p = propagate(sat.el, Date.now());
+          tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前`;
+          const tx = clamp(px + 14, 4, Math.max(4, W - 150));
+          const ty = clamp(py - 30, 4, Math.max(4, H - 24));
+          tip.style.transform = `translate(${tx}px, ${ty}px)`;
+          tip.style.opacity = "1";
+        } else if (l) {
+          tip.textContent = `${l.exch.zh} ${STATE_ZH[stateOf(l, displayMs)]} · ${formatLocalTime(l.exch.tz, new Date(displayMs))}`;
+          const tx = clamp(px + 14, 4, Math.max(4, W - 150));
+          const ty = clamp(py - 30, 4, Math.max(4, H - 24));
+          tip.style.transform = `translate(${tx}px, ${ty}px)`;
+          tip.style.opacity = "1";
+        } else {
+          tip.style.opacity = "0";
+        }
+      }
+      ensureLoop();
+    };
+    const onStagePointerUp = (e: PointerEvent) => {
+      pointers.delete(e.pointerId);
+      stage.releasePointerCapture?.(e.pointerId);
+      killLongPress();
+      const tip = tipRef.current;
+      if (tip && !finePtr) tip.style.opacity = "0";
+      if (pointers.size > 0) {
+        // 从捏合回到单指：剩余手指接管旋转（锚点取留在屏上的那根，不是抬起的这根——
+        // 两指相距 40-120px，用错锚下一帧 yaw 跳 30° 级）
+        rotDrag = true;
+        velYaw = 0;
+        const remain = pointers.values().next().value;
+        const rect2 = stage.getBoundingClientRect();
+        rotLastX = remain ? remain.x - rect2.left : e.clientX - rect2.left;
+        rotLastY = remain ? remain.y - rect2.top : e.clientY - rect2.top;
+        rotSamples = [];
+        return;
+      }
+      if (rotDrag) {
+        rotDrag = false;
+        // 松手静止窗：80ms 内无移动样本则不起惯性
+        const now = performance.now();
+        const recent = rotSamples.filter((s) => now - s.t <= RELEASE_STILL_MS);
+        if (!reduced && recent.length >= 2) {
+          const first = recent[0];
+          const span = (now - first.t) / 1000;
+          if (span > 0.01) {
+            const v = (yaw - first.yaw) / span;
+            velYaw = clamp(v, -360, 360);
+            inertiaT = 0;
+          }
+        }
+        ensureLoop();
+      }
+    };
+    const onStageLeave = () => {
+      hoverLamp = null;
+      const tip = tipRef.current;
+      if (tip) tip.style.opacity = "0";
+    };
+    const onDblClick = (e: MouseEvent) => {
+      skipBoot();
+      const rect = stage.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (chipAt(x, y) || lampAt(x, y)) return;
+      // 回家：北上 + 用户时区中央经线 + 默认视距（空间归你，回家是显式动作）
+      const tzOffsetMin = -new Date().getTimezoneOffset();
+      yaw = Math.round((tzOffsetMin / 60) * 15);
+      bumpIdle();
+      pitch = HOME_LAT;
+      zoom = 1;
+      velYaw = 0;
+      ensureLoop();
+    };
+    const onWheel = (e: WheelEvent) => {
+      skipBoot();
+      cancelFlight();
+      bumpIdle();
+      zoom = clamp(zoom * Math.exp(-e.deltaY * 0.0012), ZOOM_MIN, ZOOM_MAX);
+      ensureLoop();
+    };
+    const onContextMenu = (e: Event) => e.preventDefault();
+    const onKey = (e: KeyboardEvent) => {
+      skipBoot();
+      if (e.key === "Escape") setSelectedMic(null);
+    };
+
+    /* 刻度盘指针事件（时间入口） */
+    const onDialPointerDown = (e: PointerEvent) => {
+      skipBoot();
+      spinResumeAt = performance.now() + SPIN_RESUME_MS; // 拨时停转
+      cancelFlight();
+      bumpIdle();
+      const dial = dialRef.current;
+      if (!dial) return;
+      dial.setPointerCapture?.(e.pointerId);
+      const rect = dial.getBoundingClientRect();
+      const xNorm = ((e.clientX - rect.left) / Math.max(rect.width, 1)) * W;
+      beginDialScrub(xNorm);
+    };
+    const onDialPointerMove = (e: PointerEvent) => {
+      if (!dialDragging) return;
+      const dial = dialRef.current;
+      if (!dial) return;
+      const rect = dial.getBoundingClientRect();
+      const xNorm = ((e.clientX - rect.left) / Math.max(rect.width, 1)) * W;
+      applyDialDelta(xNorm, 2); // 刻度盘行程 ×2：细调更从容
+      bumpIdle();
+    };
+    const onDialPointerUp = (e: PointerEvent) => {
+      dialRef.current?.releasePointerCapture?.(e.pointerId);
+      endDialScrub();
+    };
+    /** 盘键盘：←/→ ±30min（Shift ±4h），Esc 弹回；步进后 1.5s 空闲自动弹回——
+     * 否则 live=false 永不回，幽灵弧/读针缺席、边界定时器把灯态拉回真值而指针停在假想时刻 */
+    let keyIdleTimer = 0;
+    const onDialKey = (e: KeyboardEvent) => {
+      skipBoot();
+      spinResumeAt = performance.now() + SPIN_RESUME_MS; // 键盘拨时停转
+      cancelFlight();
+      bumpIdle();
+      if (e.key === "Escape") {
+        setSelectedMic(null);
+        clearTimeout(keyIdleTimer);
+        if (dialDragging || springT >= 0 || !live) {
+          springFrom = displayMs;
+          springT = 0;
+          live = false;
+          ensureLoop();
+        }
+        return;
+      }
+      const step = e.shiftKey ? 4 * 3600_000 : 30 * 60_000;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        live = false;
+        springT = -1;
+        displayMs = clamp(displayMs + (e.key === "ArrowRight" ? step : -step), nowMs - SCRUB_RANGE_MS, nowMs + SCRUB_RANGE_MS);
+        reevaluate(displayMs);
+        setScrubbing(true);
+        clearTimeout(keyIdleTimer);
+        keyIdleTimer = window.setTimeout(() => {
+          if (disposed) return;
+          springFrom = displayMs;
+          springT = 0;
+          ensureLoop();
+        }, 1500);
+        ensureLoop();
+      }
+    };
+
+    function skipBoot() {
+      if (bootDone) return;
+      bootDone = true;
+      bootT = 1e9;
+      for (const l of lamps) l.cur = l.target;
+    }
+
+    /* ---- 实时调度：下一全局边界 + 60s 晨昏步进 + 可见性门控 ---- */
+    let boundaryTimer = 0;
+    let safetyTimer = 0;
+    function scheduleBoundary() {
+      clearTimeout(boundaryTimer);
+      let t = nowMs + 60_000;
+      for (const l of lamps) {
+        const b = nextBoundaryAfter(l.exch, nowMs);
+        if (b < t) t = b;
+      }
+      boundaryTimer = window.setTimeout(
+        () => {
+          if (disposed) return;
+          nowMs = Date.now();
+          // 假想驻留（拨动/键盘步进）期间不把灯态拉回真值——灯/针/读数必须同说一种时间
+          if (live) {
+            displayMs = nowMs;
+            reevaluate(nowMs);
+          }
+          ensureLoop();
+          scheduleBoundary();
+        },
+        Math.max(1500, t - Date.now()),
+      );
+    }
+    const onSafety = () => {
+      nowMs = Date.now();
+      if (live && !dialDragging && springT < 0) {
+        displayMs = nowMs;
+        reevaluate(nowMs);
+      }
+      repaint = true; // 晨昏线随真实时间挪动：60s 重画一帧
+      ensureLoop();
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        clearMeteors(); // 回来无僵尸光条
+        clearTimeout(boundaryTimer);
+        clearInterval(safetyTimer);
+      } else {
+        onSafety();
+        scheduleBoundary();
+        safetyTimer = window.setInterval(onSafety, 60_000);
+      }
+    };
+    /* 信号到达：灯色即换（一次性重画，无事件动画——光一次性）；
+     * 卫星球纹理就绪：切模式重画一帧 */
+    const onSignalsArrived = () => {
+      repaint = true;
+      ensureLoop();
+    };
+    const onGLReady = () => {
+      repaint = true;
+      ensureLoop();
+    };
+
+    /* ---- 待机呼吸：每 6~11s 挑一盏正面可见的亮灯做一次 0.8s 微光 ---- */
+    let breathTimer = 0;
+    function scheduleBreath() {
+      clearTimeout(breathTimer);
+      if (reduced) return;
+      breathTimer = window.setTimeout(
+        () => {
+          if (disposed) return;
+          frameBasis();
+          // 呼吸池：正面可见的开市灯为主（70%），盘前灯偶尔一闪（30%）——睡着的半球也有脉搏
+          const front = lamps.filter((l) => l.vx * Ex + l.vy * Ey + l.vz * Ez > 0.2);
+          const opens = front.filter((l) => l.state === "OPEN");
+          const pres = front.filter((l) => l.state === "PRE");
+          const pickOpens = opens.length > 0 && (pres.length === 0 || Math.random() < 0.7);
+          const pool = pickOpens ? opens : pres;
+          if (pool.length > 0) {
+            pool[Math.floor(Math.random() * pool.length)].breathT = 0.8;
+            ensureLoop();
+          }
+          scheduleBreath();
+        },
+        6000 + Math.random() * 5000,
+      );
+    }
+
+    /* ---- 刻度盘 DOM 直写（RAF 频率，不走 React） ---- */
+    let boundaryCacheKey = "";
+    let boundaryCacheText = "";
+    // resolvedOptions 每帧构造是纯浪费（updateDial 在 RAF 频率）——effect 顶部求一次
+    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    function updateDial(strong: number) {
+      const handle = handleRef.current;
+      const readout = readoutRef.current;
+      const flagEl = dialFlagRef.current;
+      const nameEl = dialNameRef.current;
+      const c = zonedClock(new Date(displayMs), browserTz);
+      if (handle && c) handle.style.left = `${((c.minutes / 1440) * 100).toFixed(2)}%`;
+      const d = new Date(displayMs);
+      const utc = formatLocalTime("UTC", d);
+      const bj = formatLocalTime("Asia/Shanghai", d);
+      const sw = strong > 0 ? sweepLamp : null;
+      if (!bootDone) {
+        if (readout) readout.textContent = "拖动地球旋转 · 刻度盘拨动时间";
+        if (flagEl) flagEl.style.display = "none";
+        if (nameEl) nameEl.style.display = "none";
+        return;
+      }
+      if (readout) {
+        if (sw) {
+          readout.textContent = `拨动中 · UTC ${utc} · 北京 ${bj} · 松手回到现在`;
+        } else {
+          // 静止态：下一全球边界倒计时（27 所最近一次开/闭市；分钟级缓存）
+          const key = `${Math.floor(nowMs / 60000)}`;
+          if (key !== boundaryCacheKey) {
+            boundaryCacheKey = key;
+            let bt = Infinity;
+            let bl: (typeof lamps)[number] | null = null;
+            for (const l of lamps) {
+              const b = nextBoundaryAfter(l.exch, nowMs);
+              if (b < bt) {
+                bt = b;
+                bl = l;
+              }
+            }
+            if (bl) {
+              const deltaMs = Math.max(0, bt - nowMs);
+              const h = Math.floor(deltaMs / 3_600_000);
+              const m = Math.floor((deltaMs % 3_600_000) / 60_000);
+              const verb = bl.state === "OPEN" || bl.state === "BREAK" ? "收盘" : "开盘";
+              boundaryCacheText = `下一边界 · ${bl.exch.zh} ${h > 0 ? `${h} 时 ` : ""}${m} 分后${verb}`;
+            } else boundaryCacheText = "";
+          }
+          readout.textContent = boundaryCacheText || `现在 · 北京 ${bj} · UTC ${utc}`;
+        }
+      }
+      if (flagEl && nameEl) {
+        if (sw) {
+          const uri = sw.cc ? flagUri(sw.cc) : null;
+          if (uri) {
+            if (flagEl.getAttribute("src") !== uri) flagEl.src = uri;
+            flagEl.style.display = "inline-block";
+          } else {
+            flagEl.style.display = "none";
+          }
+          nameEl.textContent = `${sw.exch.zh} ${formatLocalTime(sw.exch.tz, d)} ${STATE_ZH[stateOf(sw, displayMs)]}`;
+          nameEl.style.display = "inline-block";
+        } else {
+          flagEl.style.display = "none";
+          nameEl.style.display = "none";
+        }
+      }
+    }
+
+    /* ---- 尺寸 ---- */
+    function resize() {
+      const rect = stage.getBoundingClientRect();
+      W = Math.max(0, rect.width);
+      H = Math.max(0, rect.height);
+      DPR = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(W * DPR));
+      canvas.height = Math.max(1, Math.round(H * DPR));
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      R = Math.max(8, 0.4 * Math.min(W, H)); // 球径占短边 80%
+      cx = W / 2;
+      cy = H * 0.43; // 光学中心略偏高（下方留给芯片与刻度盘）
+      glr?.resize(Math.max(1, Math.round(W * DPR)), Math.max(1, Math.round(H * DPR)));
+      bakeSphere();
+      bakeChips();
+      updateDial(0);
+      repaint = true;
+      ensureLoop();
+    }
+
+    /* ---- 装配 ---- */
+    try {
+      const fm = getComputedStyle(document.documentElement).getPropertyValue("--ink-font-mono");
+      if (fm && fm.trim()) monoFamily = fm.trim();
+    } catch {
+      /* 保持默认字体 */
+    }
+    // 旗帜异步解码竞态：onload 后重烘芯片（否则首帧烘进双字母占位永不更新）
+    for (const l of lamps) {
+      const img = l.flag;
+      if (img && !img.complete) {
+        img.addEventListener(
+          "load",
+          () => {
+            if (disposed) return;
+            bakeChips();
+            repaint = true;
+            ensureLoop();
+          },
+          { once: true },
+        );
+      }
+    }
+    resize();
+    reevaluate(nowMs, true);
+    if (reduced) {
+      bootDone = true;
+      for (const l of lamps) l.cur = l.target;
+    }
+    scheduleBoundary();
+    scheduleBreath();
+    safetyTimer = window.setInterval(onSafety, 60_000);
+    // 调试/验收钩子（仅 dev）：外部可设视角（写闭包三数字 + 杀惯性 + 唤醒一帧）
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as Record<string, unknown>).__atlasSetView = (y: number, p: number, z: number) => {
+        if (!Number.isFinite(y) || !Number.isFinite(p)) return;
+        yaw = y;
+        pitch = clamp(p, -PITCH_CLAMP, PITCH_CLAMP);
+        if (Number.isFinite(z)) zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
+        velYaw = 0;
+        ensureLoop();
+      };
+    }
+    ensureLoop();
+
+    stage.addEventListener("pointerdown", onStagePointerDown);
+    stage.addEventListener("pointermove", onStagePointerMove, { passive: true });
+    stage.addEventListener("pointerup", onStagePointerUp);
+    stage.addEventListener("pointercancel", onStagePointerUp);
+    stage.addEventListener("pointerleave", onStageLeave);
+    stage.addEventListener("dblclick", onDblClick);
+    stage.addEventListener("contextmenu", onContextMenu);
+    window.addEventListener("wheel", onWheel, { passive: true });
+    window.addEventListener("atlas:signals", onSignalsArrived);
+    window.addEventListener("atlas:gl-ready", onGLReady);
+    const dial = dialRef.current;
+    if (dial) {
+      dial.addEventListener("pointerdown", onDialPointerDown);
+      dial.addEventListener("pointermove", onDialPointerMove, { passive: true });
+      dial.addEventListener("pointerup", onDialPointerUp);
+      dial.addEventListener("keydown", onDialKey);
+    }
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("visibilitychange", onVisibility);
+    let ro: ResizeObserver | null = null;
+    let resizeTimer = 0;
+    const onResizeDebounced = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(resize, 180);
+    };
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(onResizeDebounced);
+      ro.observe(stage);
+    } else {
+      window.addEventListener("resize", onResizeDebounced);
+    }
+    document.fonts?.ready.then(() => {
+      if (!disposed) resize();
+    });
+
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      glr?.dispose();
+      delete (window as unknown as Record<string, unknown>).__atlasSetView;
+      delete (window as unknown as Record<string, unknown>).__atlasView;
+      clearTimeout(boundaryTimer);
+      clearInterval(safetyTimer);
+      clearTimeout(breathTimer);
+      clearTimeout(longPressTimer);
+      clearTimeout(resizeTimer);
+      stage.removeEventListener("pointerdown", onStagePointerDown);
+      stage.removeEventListener("pointermove", onStagePointerMove);
+      stage.removeEventListener("pointerup", onStagePointerUp);
+      stage.removeEventListener("pointercancel", onStagePointerUp);
+      stage.removeEventListener("pointerleave", onStageLeave);
+      stage.removeEventListener("dblclick", onDblClick);
+      stage.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("atlas:signals", onSignalsArrived);
+      window.removeEventListener("atlas:gl-ready", onGLReady);
+      if (dial) {
+        dial.removeEventListener("pointerdown", onDialPointerDown);
+        dial.removeEventListener("pointermove", onDialPointerMove);
+        dial.removeEventListener("pointerup", onDialPointerUp);
+        dial.removeEventListener("keydown", onDialKey);
+      }
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("resize", onResizeDebounced);
+      ro?.disconnect();
+    };
+  }, []);
+
+  /* 顶部时钟 + 双市场倒计时（1Hz，独立于画布引擎） */
+  useEffect(() => {
+    const cn = EXCHANGES.find((e) => e.mic === "XSHG");
+    const us = EXCHANGES.find((e) => e.mic === "XNYS");
+    const chip = (exch: (typeof EXCHANGES)[number] | undefined, label: string) => {
+      if (!exch) return null;
+      const d = new Date();
+      const st = stateAt(exch, d);
+      const ms = Math.max(0, nextBoundaryAfter(exch, d.getTime()) - d.getTime());
+      const h = String(Math.floor(ms / 3_600_000)).padStart(2, "0");
+      const m = String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, "0");
+      const s = String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0");
+      const open = st === "OPEN" || st === "BREAK";
+      return { label, verb: open ? "收盘" : "开盘", t: `${h}:${m}:${s}`, open };
+    };
+    const tick = () => {
+      const d = new Date();
+      setClockText(`UTC ${formatLocalTime("UTC", d)} · 北京 ${formatLocalTime("Asia/Shanghai", d)}`);
+      setCounts([chip(cn, "A股"), chip(us, "美股")].filter(Boolean) as NonNullable<ReturnType<typeof chip>>[]);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  /* 信号轮询：页面可见才拉，开市 30s / 闭市 10min；失败保留上一份 */
+  useEffect(() => {
+    let stopped = false;
+    let timer = 0;
+    const schedule = (ms: number) => {
+      clearTimeout(timer);
+      if (!stopped) timer = window.setTimeout(poll, ms);
+    };
+    const poll = async () => {
+      if (stopped) return;
+      if (document.hidden) {
+        schedule(15_000);
+        return;
+      }
+      try {
+        const r = await fetch("/api/atlas/signals", { cache: "no-store" });
+        if (r.ok) {
+          const j = (await r.json()) as { signals?: Record<string, SignalLite> };
+          if (!stopped && j && typeof j.signals === "object") {
+            const changed = JSON.stringify(signalsRef.current) !== JSON.stringify(j.signals);
+            signalsRef.current = j.signals;
+            setSignals(j.signals);
+            if (changed) window.dispatchEvent(new CustomEvent("atlas:signals"));
+          }
+        }
+      } catch {
+        /* 保留上一份真实数据 */
+      }
+      schedule(openCountRef.current > 0 ? 30_000 : 600_000);
+    };
+    poll();
+    const onVis = () => {
+      if (!document.hidden) schedule(500);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  return (
+    <div className={`atlas-root${scrubbing ? " is-scrubbing" : ""}`}>
+      <header className="atlas-head">
+        <div>
+          <div className="hall-topline">
+            <p className="atlas-kicker">Ninglo · Vault of Ink</p>
+            <Link href="/modules" className="hall-return" aria-label="返回主页面 · 模块大厅" title="返回大厅">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M19 12H5m0 0 6 6m-6-6 6-6" />
+              </svg>
+              返回大厅
+            </Link>
+          </div>
+          <h1 className="atlas-title">图</h1>
+          <p className="atlas-sub">舆图 · 灯色即当地基准指数涨跌 —— 朱涨银跌，全球风险偏好一眼可辨</p>
+        </div>
+        <div className="atlas-side">
+          <div className="atlas-counts" aria-live="off">
+            {counts.map((c) => (
+              <span key={c.label} className={`atlas-chip${c.open ? " is-open" : ""}`}>
+                {c.label} {c.verb} <b>{c.t}</b>
+              </span>
+            ))}
+          </div>
+          <p className="atlas-clock">{clockText}</p>
+          <p className="atlas-legend">
+            <i className="lg-up" /> 涨
+            <i className="lg-down" /> 跌
+            <i className="lg-gold" /> 平/无据
+            <i className="lg-off" /> 休市
+          </p>
+        </div>
+      </header>
+
+      <main className="atlas-stage" ref={stageRef}>
+        <canvas ref={glCanvasRef} className="atlas-gl" aria-hidden="true" />
+        <canvas
+          ref={canvasRef}
+          className="atlas-canvas"
+          role="img"
+          aria-label="世界交易所开闭市卫星地球：拖动旋转地球，底部刻度盘拨动时间"
+        />
+        <div className="atlas-tip" ref={tipRef} aria-hidden="true" />
+        {selected && <LampCard rec={selected} sig={signals[selected.mic]} onClose={() => setSelectedMic(null)} />}
+      </main>
+
+      <div className="atlas-ticker" aria-hidden="true" title="当前正对半球的交易所">
+        <div className="atlas-ticker-track" ref={tickerTrackRef} />
+      </div>
+
+      {/* 读屏可达：画布芯片只存在于指针路径，SR 用户的等价物是全量清单（点击开灯卡） */}
+      <ul className="atlas-sr-list" aria-label="全部交易所">
+        {mounted &&
+          EXCHANGES.map((e) => (
+            <li key={e.mic}>
+              <button type="button" onClick={() => setSelectedMic(e.mic)}>
+                {`${e.zh} ${STATE_ZH[stateAt(e, new Date())]} 当地 ${formatLocalTime(e.tz, new Date())}`}
+              </button>
+            </li>
+          ))}
+      </ul>
+
+      <footer
+        className="atlas-dial"
+        ref={dialRef}
+        role="slider"
+        aria-label="二十四小时刻度盘：拖动拨动时间，松手回到现在；方向键微调"
+        aria-orientation="horizontal"
+        tabIndex={0}
+      >
+        <div className="atlas-dial-track">
+          <span className="atlas-dial-tick t0">00</span>
+          <span className="atlas-dial-tick t6">06</span>
+          <span className="atlas-dial-tick t12">12</span>
+          <span className="atlas-dial-tick t18">18</span>
+          <span className="atlas-dial-tick t24">24</span>
+          <div className="atlas-dial-handle" ref={handleRef}>
+            <i />
+          </div>
+        </div>
+        <span className="atlas-dial-readwrap">
+          <img ref={dialFlagRef} className="atlas-dial-flag" alt="" />
+          <span ref={dialNameRef} className="atlas-dial-name" />
+          <span className="atlas-dial-read" ref={readoutRef}>
+            —
+          </span>
+        </span>
+      </footer>
+    </div>
+  );
+}
+
+/* ---------------- 灯卡：点选交易所后的详情（1Hz 刷新，含指数与下钻观墨） ---------------- */
+
+const pctDir = (p: number | null | undefined) =>
+  p === null || p === undefined || !Number.isFinite(p) ? "" : p > 0.005 ? "is-up" : p < -0.005 ? "is-down" : "";
+
+function LampCard({ rec, sig, onClose }: { rec: AtlasExchange; sig?: SignalLite; onClose: () => void }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const cc = MIC_CC[rec.mic];
+  const flagSrc = cc ? flagUri(cc) : null;
+  const now = new Date();
+  const st = stateAt(rec, now);
+  const nextB = nextBoundaryAfter(rec, now.getTime());
+  const deltaMs = Math.max(0, nextB - now.getTime());
+  const hrs = Math.floor(deltaMs / 3600_000);
+  const mins = Math.floor((deltaMs % 3600_000) / 60_000);
+  const later = `${hrs > 0 ? `${hrs} 时 ` : ""}${mins} 分后${st === "OPEN" || st === "BREAK" ? "收盘" : "开盘"}`;
+  const mics = rec.mics ?? [rec.mic];
+  const drills = mics.filter((m) => DRILL_MARKET[m]);
+
+  return (
+    <aside className="atlas-card" aria-label={`${rec.zh}交易所详情`}>
+      <button className="atlas-card-close" onClick={onClose} aria-label="关闭">
+        ✕
+      </button>
+      <p className="atlas-card-city">
+        {flagSrc && <img className="atlas-card-flag" src={flagSrc} alt="" />}
+        {rec.zh} <span>{rec.city}</span>
+      </p>
+      <p className="atlas-card-mic">{mics.join(" · ")}</p>
+      {sig && sig.price !== null && (
+        <p className={`atlas-card-idx ${pctDir(sig.changePct)}`}>
+          <span className="atlas-card-idxname">{sig.indexName}</span>
+          <span className="atlas-card-num">
+            {sig.price.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}
+            <em>
+              {sig.changePct !== null && sig.changePct > 0 ? "+" : ""}
+              {Number.isFinite(sig.changePct) ? (sig.changePct as number).toFixed(2) : "--"}%
+            </em>
+          </span>
+        </p>
+      )}
+      <p className={`atlas-card-state is-${st.toLowerCase()}`}>
+        <i /> {STATE_ZH[st]}
+      </p>
+      <dl className="atlas-card-facts">
+        <div>
+          <dt>当地时刻</dt>
+          <dd>{formatLocalTime(rec.tz, now)}</dd>
+        </div>
+        <div>
+          <dt>下一边界</dt>
+          <dd>{later}</dd>
+        </div>
+        <div>
+          <dt>时区</dt>
+          <dd>{rec.tz}</dd>
+        </div>
+      </dl>
+      {drills.length > 0 && (
+        <div className="atlas-card-drill">
+          {drills.map((m) => (
+            <Link key={m} href={`/quant?market=${DRILL_MARKET[m]}&exchange=${m}`} className="atlas-card-link">
+              进观墨 · {m}
+            </Link>
+          ))}
+        </div>
+      )}
+      {rec.calendar === "lean" && <p className="atlas-card-cal">假日日历来自 LEAN（Apache-2.0）</p>}
+    </aside>
+  );
+}
