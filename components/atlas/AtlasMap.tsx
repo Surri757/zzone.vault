@@ -1078,7 +1078,7 @@ export default function AtlasMap() {
       x: number; y: number; vx: number; vy: number;
       life: number; life0: number; len: number;
       big: boolean;
-      f: number; ph: number; prevEnv: number; // 脉冲频率/相位/上一拍包络（过峰检测落余烬结）
+      f: number; ph: number; prevCyc: number; // 脉冲频率/相位/上一拍周期号（相位卷绕检测，低帧率不漏峰）
       flares: number[]; // 碎裂时刻表（age 秒，升序；大流星 1-3 次是文献常态）
       flareT: number; // 当前碎裂耀斑剩余（头辉增强计时）
     }
@@ -1176,8 +1176,8 @@ export default function AtlasMap() {
           vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
           life: life0, life0,
           len: diag * (big ? 0.46 + Math.random() * 0.14 : 0.16 + Math.random() * 0.08),
-          big, f: big ? 1.9 + Math.random() * 0.9 : 3.0 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2,
-          prevEnv: 0, flares, flareT: 0,
+          big, f: big ? 2.6 + Math.random() * 0.8 : 3.0 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2,
+          prevCyc: -99, flares, flareT: 0,
         };
         return true;
       }
@@ -1343,9 +1343,11 @@ export default function AtlasMap() {
           meteorPool[k] = null;
           continue;
         }
-        // 脉冲推进：连续速度包络（快攻慢衰，峰均比≈3）——「一段一段向前冲」
+        // 脉冲推进：速度包络 0.18+0.82·sin⁵（谷段蓄力近停滞、峰窄爆发——峰谷速比 5.5:1）
         const age = m.life0 - m.life;
-        const env = 0.3 + 0.7 * Math.pow(Math.max(0, Math.sin(m.f * Math.PI * 2 * age + m.ph)), 3);
+        const φ = m.f * Math.PI * 2 * age + m.ph;
+        const sp3 = Math.max(0, Math.sin(φ));
+        const env = 0.18 + 0.82 * Math.pow(sp3, 5);
         m.x += m.vx * env * dt;
         m.y += m.vy * env * dt;
         // 碎裂时刻表：age 越过即爆（时机不规则——防恒定节拍）
@@ -1357,23 +1359,38 @@ export default function AtlasMap() {
         const p = m.life / m.life0;
         // 热史：沿余寿渐热（烧蚀谱）
         const heat = smoothstep(0.45, 1, 1 - clamp(p, 0, 1));
-        // 过峰检测：包络上行沿穿越 0.85 → 落一节余烬结（30% 跳拍防恒定节拍＝防「推进器」读感）
-        if (m.prevEnv < 0.85 && env >= 0.85 && Math.random() < 0.7) {
+        // 过峰检测（相位卷绕，低帧率鲁棒）：一拍 = knot 余烬结 + 节拍能量环 + 头闪三同步
+        const cyc = Math.floor((φ - Math.PI / 2) / (Math.PI * 2));
+        if (cyc > m.prevCyc) {
+          m.prevCyc = cyc;
           const mag0 = Math.hypot(m.vx, m.vy) || 1;
-          const hc = heatColor(heat);
-          pushFx({
-            kind: 0, x: m.x, y: m.y, born: nowP, dur: 0.5 + Math.random() * 0.3,
-            len: (m.big ? 16 + Math.random() * 10 : 8 + Math.random() * 6) * (narrow ? 0.7 : 1),
-            dx: m.vx / mag0, dy: m.vy / mag0, rmax: 0,
-            a0: narrow ? (m.big ? 0.4 : 0.3) : m.big ? 0.55 : 0.4,
-            cr: hc[0], cg: hc[1], cb: hc[2], lineWidth: m.big ? 2.6 : 1.8,
-          });
+          if (Math.random() < 0.88) {
+            // 余烬结（12% 跳拍——个体不成节拍器，整体频率随颗随机）
+            const hc = heatColor(heat);
+            pushFx({
+              kind: 0, x: m.x, y: m.y, born: nowP, dur: 0.5 + Math.random() * 0.3,
+              len: (m.big ? 16 + Math.random() * 10 : 8 + Math.random() * 6) * (narrow ? 0.7 : 1),
+              dx: m.vx / mag0, dy: m.vy / mag0, rmax: 0,
+              a0: narrow ? (m.big ? 0.5 : 0.35) : m.big ? 0.7 : 0.45,
+              cr: hc[0], cg: hc[1], cb: hc[2], lineWidth: m.big ? 2.6 : 1.8,
+            });
+          }
+          // 节拍能量环（指定观感律·v4.13 解禁）：头后 4px 尾喷位、火橙发丝环、≪碎裂环≪终爆环。
+          // 四道闸：池余量 / 同屏节拍环≤6 / 碎裂耀斑后 0.3s 不落环 / 微款 50% 隔拍跳环（窄屏仅大款）
+          if (m.flareT <= 0 && fxCount() < 96 && (m.big || Math.random() < 0.5) && (!narrow || m.big)) {
+            let beatRings = 0;
+            for (const fx of fxPool) if (fx && fx.kind === 1 && fx.rmax <= 28) beatRings++;
+            if (beatRings < 6) {
+              const rr0 = m.big ? (narrow ? 18 : 20 + Math.random() * 6) : 15;
+              pushFx({ kind: 1, x: m.x - (m.vx / mag0) * 4, y: m.y - (m.vy / mag0) * 4, born: nowP, dur: 0.25, len: 0, dx: 0, dy: 0, rmax: rr0, a0: m.big ? 0.6 : 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 1.2 });
+            }
+          }
         }
-        m.prevEnv = env;
         // 生命周期包络：入 10% 淡入（头端先亮的点火感）
         const envL = p > 0.9 ? (1 - p) / 0.1 : 1;
-        const flareK = m.flareT > 0 ? 1 + 0.7 * Math.sin((1 - m.flareT / 0.3) * Math.PI) : 1; // 碎裂耀斑：瞬时可为全屏最亮（亮度驻留分律）
-        const a = Math.min(1, (m.big ? 0.75 : 0.5) * clamp(envL, 0, 1) * flareK); // 稳态不压灯、瞬态可越
+        const flareK = m.flareT > 0 ? 1 + 0.7 * Math.sin((1 - m.flareT / 0.3) * Math.PI) : 1; // 碎裂耀斑
+        const beatK = 0.55 + 0.45 * Math.pow(sp3, 3); // 头部节拍闪（亮度频闪是「突突突」主载波）
+        const a = Math.min(1, (m.big ? 0.75 : 0.5) * clamp(envL, 0, 1) * flareK * beatK); // 稳态不压灯、瞬态可越
         if (a <= 0.01) continue;
         const mag = Math.hypot(m.vx, m.vy) || 1;
         const dx = m.vx / mag, dy = m.vy / mag;
@@ -1391,14 +1408,15 @@ export default function AtlasMap() {
         ctx.moveTo(tx2, ty2);
         ctx.lineTo(m.x, m.y);
         ctx.stroke();
-        // 头部三层：火晕（碎裂时 ×1.5 耀斑）+ 白热芯（沿运动向微拉长＝运动 smear）
-        const hg = 13 * flareK * (m.big ? 1 : 0.7);
+        // 头部三层：火晕（节拍闪 ×碎裂耀斑）+ 白热芯（沿运动向微拉长＝运动 smear）
+        const hg = 13 * flareK * (0.7 + 0.5 * Math.pow(sp3, 3)) * (m.big ? 1 : 0.7);
         ctx.globalAlpha = clamp(a, 0, 1);
         ctx.drawImage(glowSprite(FIRE1), m.x - hg, m.y - hg, hg * 2, hg * 2);
         ctx.globalAlpha = 1;
         ctx.fillStyle = `rgba(255, 248, 235, ${Math.min(1, a * 1.6).toFixed(3)})`;
         ctx.beginPath();
-        ctx.ellipse(m.x, m.y, (3.2 + Math.abs(dx) * 1.6) * flareK, (3.2 + Math.abs(dy) * 1.6) * flareK, 0, 0, Math.PI * 2);
+        const ck = (0.85 + 0.15 * Math.pow(sp3, 3)) * flareK;
+        ctx.ellipse(m.x, m.y, (3.2 + Math.abs(dx) * 1.6) * ck, (3.2 + Math.abs(dy) * 1.6) * ck, 0, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
