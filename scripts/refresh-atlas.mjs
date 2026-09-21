@@ -342,6 +342,12 @@ const SATS = [
   { norad: 36111, name: "COSMOS 2456 [GLONASS-M]", zh: "格洛纳斯 M", tier: "meo" },
   { norad: 41882, name: "FENGYUN 4A", zh: "风云四号 A", tier: "geo" },
   { norad: 41866, name: "GOES 16", zh: "GOES 16", tier: "geo" },
+  { norad: 42915, name: "TDRS 13", zh: "TDRS 13 中继星", tier: "geo" },
+  { norad: 49011, name: "TIANLIAN 2-01", zh: "天链二号 01 星", tier: "geo" },
+  { norad: 44714, name: "STARLINK-1008", zh: "星链 1008", tier: "leo" },
+  { norad: 44718, name: "STARLINK-1012", zh: "星链 1012", tier: "leo" },
+  { norad: 68791, name: "NAVSTAR 86 (USA 585)", zh: "GPS III", tier: "meo" },
+  { norad: 63130, name: "COSMOS 2584 [GLONASS-K2]", zh: "格洛纳斯 K2", tier: "meo" },
 ];
 
 /** 拉取精选卫星 TLE：缓存 → CelesTrak 直连（内容校验防节流 200 假响应）→ 全败不写文件（卫星层缺席） */

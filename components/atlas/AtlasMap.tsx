@@ -295,6 +295,9 @@ interface SatItem {
   zc: number;
   rho: number;
   vis: boolean;
+  ux: number; // ECEF 单位向量（链路层互见/过顶判定用）
+  uy: number;
+  uz: number;
   ph: number; // 呼吸相位（去同步）
   glintP: number; // 板面掠光周期（s）
   glintOff: number; // 掠光相位偏移（s）
@@ -316,6 +319,7 @@ const SAT_ITEMS: SatItem[] =
             if (el)
               out.push({
                 el, name: String(s.name || ""), x: 0, y: 0, zc: 0, rho: 1, vis: false,
+                ux: 0, uy: 0, uz: 0,
                 ph: si * 2.399963, glintP: 8 + (si % 5), glintOff: si * 1.7, lit: 0, flashUntil: 0,
               });
             si++;
@@ -385,18 +389,35 @@ const SAT_MODELS: Record<string, { size: number; extent: number; parts: ModelPar
     { x: 0, y: 4.7, z: 0, sx: 1.1, sy: 7.2, sz: 2.4, kind: 1 },
     { x: 0, y: 0, z: 2.1, sx: 3.1, sy: 3.1, sz: 0.5, kind: 2, scan: true },
   ];
+  // 中继星（TDRS/天链）：箱体 + 双大翼 + 顶置双天线碟（一碟对地慢转）——「大翼+天线阵」独占符号
+  const relayParts: ModelPartDef[] = [
+    { x: 0, y: 0, z: 0, sx: 3.2, sy: 2.6, sz: 2.6, kind: 0 },
+    { x: 0, y: 5.4, z: 0, sx: 1.2, sy: 9.6, sz: 2.6, kind: 1 },
+    { x: 0, y: -5.4, z: 0, sx: 1.2, sy: 9.6, sz: 2.6, kind: 1 },
+    { x: 1.4, y: 0, z: 2.4, sx: 2.4, sy: 2.4, sz: 0.4, kind: 2, scan: true },
+    { x: -1.4, y: 0, z: 2.4, sx: 1.8, sy: 1.8, sz: 0.4, kind: 2 },
+  ];
+  // 星链：扁平平板体 + 偏置单翼（类别真特征）
+  const slParts: ModelPartDef[] = [
+    { x: 0, y: 0, z: 0, sx: 4.4, sy: 1.2, sz: 2.6, kind: 0 },
+    { x: 2.6, y: 0, z: 0.9, sx: 2.2, sy: 0.9, sz: 1.8, kind: 1 },
+  ];
   return {
     iss: mk(52, issParts),
     css: mk(38, cssParts),
     hst: mk(31, hstParts),
     nav: mk(20, navParts),
     wx: mk(24, wxParts),
+    relay: mk(26, relayParts),
+    sl: mk(14, slParts),
   };
 })();
 function modelOf(el: SatElement): { size: number; extent: number; parts: ModelPartDef[]; faces: ModelFace[] } | null {
   if (el.norad === 25544) return SAT_MODELS.iss;
   if (el.norad === 48274) return SAT_MODELS.css;
   if (el.norad === 20580) return SAT_MODELS.hst;
+  if (el.norad === 42915 || el.norad === 49011) return SAT_MODELS.relay;
+  if (el.norad === 44714 || el.norad === 44718) return SAT_MODELS.sl;
   if (el.tier === "meo") return SAT_MODELS.nav;
   if (el.tier === "geo") return SAT_MODELS.wx;
   return SAT_MODELS.wx; // LEO 气象/遥感族（NOAA-19）
@@ -566,6 +587,7 @@ export default function AtlasMap() {
           zoom,
           spinRate,
           mets: meteorCount(),
+          beams: beams.length,
           satsVis: SAT_ITEMS.reduce((n, s) => n + (s.vis ? 1 : 0), 0),
           satsAll: SAT_ITEMS.length,
           sat0: (() => {
@@ -1451,6 +1473,9 @@ export default function AtlasMap() {
         s.rho = rho;
         s.x = cx + Rz2 * rd * (X * Rx + Y * Ry);
         s.y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
+        s.ux = X;
+        s.uy = Y;
+        s.uz = Z;
         s.vis = true;
         const depth = 0.55 + 0.45 * clamp(zc / rd, -1, 1); // 深度下限 0.55：背面近临边不熄
         const a = clamp(depth * limbK, 0, 1);
@@ -1460,35 +1485,37 @@ export default function AtlasMap() {
         const coreA = clamp(a * (isGeo ? blink : 0.95) * flashK, 0, 1);
         const halo = isGeo ? 18 : s.el.tier === "meo" ? 11 : 10;
         const haloA = clamp(a * (isGeo ? blink * 0.75 : 0.55) * breath * flashK, 0, 1);
-        // 回看轨迹：真实传播的过去时间窗（sim 钟下按轨道弧取份——LEO 8%/MEO 7%；GEO 无尾是信息）
+        // 回看轨迹：真实传播的过去时间窗（sim 钟下按轨道弧取份——LEO 8%/MEO 7%；GEO 无尾是信息）。
+        // 单 gradient 连续 α（幂律衰减）+ 宽度渐细 + 12 采样圆滑弧——连续感是真实感，阶跃是「粘上」
         if (s.el.tier !== "geo" && a > 0.25) {
           const lookMs = ((Math.PI * 2) / s.el.n) * 60000 * (s.el.tier === "leo" ? 0.08 : 0.07);
-          let px0 = s.x, py0 = s.y;
-          let pok = true;
-          for (let k = 1; k <= 6; k++) {
-            const q = propagate(s.el, tPos - (lookMs * k) / 6);
-            let qx = 0, qy = 0;
-            let qok = false;
-            if (q) {
-              const qf = Math.cos(q.lat);
-              const qX = qf * Math.cos(q.lon), qY = qf * Math.sin(q.lon), qZ = Math.sin(q.lat);
-              const qzc = (qX * Ex + qY * Ey + qZ * Ez) * rd;
-              const qrho = Math.sqrt(Math.max(0, rd * rd - qzc * qzc));
-              qok = qzc >= 0 || qrho >= 1;
-              qx = cx + Rz2 * rd * (qX * Rx + qY * Ry);
-              qy = cy - Rz2 * rd * (qX * Nx + qY * Ny + qZ * Nz);
-            }
-            if (pok && qok) {
-              ctx.strokeStyle = `rgba(201, 212, 228, ${(a * 0.6 * (1 - k / 6)).toFixed(3)})`;
-              ctx.lineWidth = 1.25;
+          const pts: Array<[number, number, boolean]> = [[s.x, s.y, true]];
+          for (let k = 1; k <= 12; k++) {
+            const q = propagate(s.el, tPos - (lookMs * k) / 12);
+            if (!q) break;
+            const qf = Math.cos(q.lat);
+            const qX = qf * Math.cos(q.lon), qY = qf * Math.sin(q.lon), qZ = Math.sin(q.lat);
+            const qzc = (qX * Ex + qY * Ey + qZ * Ez) * rd;
+            const qrho = Math.sqrt(Math.max(0, rd * rd - qzc * qzc));
+            pts.push([cx + Rz2 * rd * (qX * Rx + qY * Ry), cy - Rz2 * rd * (qX * Nx + qY * Ny + qZ * Nz), qzc >= 0 || qrho >= 1]);
+          }
+          if (pts.length > 2) {
+            const tail = pts[pts.length - 1];
+            const grad = ctx.createLinearGradient(s.x, s.y, tail[0], tail[1]);
+            const ta = a * 0.5;
+            grad.addColorStop(0, `rgba(201, 212, 228, ${ta.toFixed(3)})`);
+            grad.addColorStop(0.3, `rgba(201, 212, 228, ${(ta * 0.35).toFixed(3)})`);
+            grad.addColorStop(0.6, `rgba(201, 212, 228, ${(ta * 0.12).toFixed(3)})`);
+            grad.addColorStop(1, "rgba(201, 212, 228, 0)");
+            ctx.strokeStyle = grad;
+            for (let k = 1; k < pts.length; k++) {
+              if (!pts[k - 1][2] || !pts[k][2]) continue; // 遮挡断笔
+              ctx.lineWidth = 1.8 - (1.4 * k) / pts.length; // 头粗尾细
               ctx.beginPath();
-              ctx.moveTo(px0, py0);
-              ctx.lineTo(qx, qy);
+              ctx.moveTo(pts[k - 1][0], pts[k - 1][1]);
+              ctx.lineTo(pts[k][0], pts[k][1]);
               ctx.stroke();
             }
-            px0 = qx;
-            py0 = qy;
-            pok = qok;
           }
         }
         // 悬停全弧（选中才画轨道线）：过去半弧实线、未来半弧虚线消歧「将行」
@@ -1553,6 +1580,194 @@ export default function AtlasMap() {
         if (s.vis && Math.hypot(s.x - x, s.y - y) < 16) return s; // 命中半径随视觉足印放大
       }
       return null;
+    }
+
+    /* ---- 链路层（几何真值连线律）----
+     * 两类触发：真实中继链（公开架构事实：ISS/哈勃经 TDRS、天和经天链、北斗星间链——双真无需降格）
+     * 与过顶示意链（真实几何量触发：最近过顶 + 互见；无真实数据关系，形制更低调）。
+     * 渲染统一 Beam：底弦 + 正弦行波（仅中继链）+ 行进脉冲 + 若隐若现包络 + 逐点 z 遮挡。 */
+    interface Beam {
+      kind: 0 | 1; // 0=中继链 1=过顶示意
+      a: SatItem;
+      b: SatItem | null;
+      lamp: (typeof lamps)[number] | null;
+      t0: number;
+      dur: number; // s
+      seed: number;
+    }
+    const beams: Beam[] = [];
+    const beamCooldown = new Map<string, number>();
+    const passState = new Map<number, { mic: string; dot: number; armed: boolean }>();
+    const RELAY_PAIRS: Array<[number, number]> = [
+      [25544, 42915], // ISS → TDRS 13
+      [20580, 42915], // 哈勃 → TDRS 13
+      [48274, 49011], // 天和 → 天链二号 01
+      [43581, 44204], // 北斗 M5 ↔ 北斗 IGSO（星间链）
+    ];
+    let relayNextAt = 0;
+    function satByNorad(n: number): SatItem | null {
+      for (const s of SAT_ITEMS) if (s.el.norad === n) return s;
+      return null;
+    }
+    /** 互见判定（STK 惯例：直线 + 地心遮挡）——线段到球心最近距 > 单位球半径即通视 */
+    function losClear(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
+      const dx = bx - ax, dy = by - ay, dz = bz - az;
+      const t = clamp(-(ax * dx + ay * dy + az * dz) / (dx * dx + dy * dy + dz * dz || 1), 0, 1);
+      const px = ax + dx * t, py = ay + dy * t, pz = az + dz * t;
+      return px * px + py * py + pz * pz > 1.0;
+    }
+    function updateBeams(nowP: number) {
+      for (let k = beams.length - 1; k >= 0; k--) if (nowP > beams[k].t0 + beams[k].dur * 1000) beams.splice(k, 1);
+      if (reduced || !bootDone) return;
+      // 真实中继链：互见时泊松触发（同屏 ≤2 条中继，全局 ≤3 束）
+      if (nowP > relayNextAt) {
+        relayNextAt = nowP + 10000 + Math.random() * 8000;
+        if (beams.filter((b) => b.kind === 0).length < 2 && beams.length < 3) {
+          const tries = RELAY_PAIRS.slice().sort(() => Math.random() - 0.5);
+          for (const [na, nb] of tries) {
+            const A = satByNorad(na), B = satByNorad(nb);
+            if (!A || !B || !A.vis || !B.vis) continue;
+            if (beams.some((b) => (b.a === A && b.b === B) || (b.a === B && b.b === A))) continue;
+            if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
+            beams.push({ kind: 0, a: A, b: B, lamp: null, t0: nowP, dur: 1.2 + Math.random() * 0.8, seed: Math.random() });
+            A.flashUntil = nowP + 500;
+            B.flashUntil = nowP + 500;
+            break;
+          }
+        }
+      }
+      // 过顶示意链：最近点（星-灯点积局部极大）触发 + 冷却 45s/对 + 滞回重武装（<0.88 才再武装）
+      for (const s of SAT_ITEMS) {
+        if (!s.vis || s.el.tier === "geo") continue;
+        let best: (typeof lamps)[number] | null = null;
+        let bd = -1;
+        for (const l of lamps) {
+          if (l.z < 0.15) continue; // 灯须在前侧
+          const d = s.ux * l.vx + s.uy * l.vy + s.uz * l.vz;
+          if (d > bd) {
+            bd = d;
+            best = l;
+          }
+        }
+        if (!best) continue;
+        const st = passState.get(s.el.norad);
+        if (!st || st.mic !== best.exch.mic) {
+          passState.set(s.el.norad, { mic: best.exch.mic, dot: bd, armed: true });
+          continue;
+        }
+        if (bd < 0.88) st.armed = true;
+        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < 3 && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
+          beams.push({ kind: 1, a: s, b: null, lamp: best, t0: nowP, dur: 1.3, seed: Math.random() });
+          beamCooldown.set(`${s.el.norad}:${best.exch.mic}`, nowP + 45000);
+          s.flashUntil = nowP + 500;
+          st.armed = false;
+        }
+        st.dot = bd;
+      }
+    }
+    function drawBeams(nowP: number) {
+      if (!beams.length) return;
+      ctx.save();
+      for (const bm of beams) {
+        const sat = bm.a;
+        if (!sat.vis) continue;
+        const rda = sat.el.rDisp;
+        const ax3 = rda * sat.ux, ay3 = rda * sat.uy, az3 = rda * sat.uz;
+        let bx3 = 0, by3 = 0, bz3 = 0;
+        if (bm.kind === 0 && bm.b && bm.b.vis) {
+          const rdb = bm.b.el.rDisp;
+          bx3 = rdb * bm.b.ux;
+          by3 = rdb * bm.b.uy;
+          bz3 = rdb * bm.b.uz;
+        } else if (bm.kind === 1 && bm.lamp) {
+          bx3 = bm.lamp.vx; // 地表点（单位球面）
+          by3 = bm.lamp.vy;
+          bz3 = bm.lamp.vz;
+        } else continue;
+        const el = (nowP - bm.t0) / 1000;
+        const env = el < 0.3 ? el / 0.3 : el > bm.dur - 0.5 ? Math.max(0, (bm.dur - el) / 0.5) : 1; // 若隐若现包络
+        if (env <= 0) continue;
+        // 3D 弦采样 + 逐点遮挡（弦两端球外、中段可能穿球后）
+        const NP = 32;
+        const pts: Array<[number, number, boolean]> = [];
+        for (let k = 0; k <= NP; k++) {
+          const u = k / NP;
+          const wx = ax3 + (bx3 - ax3) * u, wy = ay3 + (by3 - ay3) * u, wz = az3 + (bz3 - az3) * u;
+          const zc = wx * Ex + wy * Ey + wz * Ez;
+          const rho2 = wx * wx + wy * wy + wz * wz - zc * zc;
+          pts.push([cx + R * zoom * (wx * Rx + wy * Ry), cy - R * zoom * (wx * Nx + wy * Ny + wz * Nz), zc >= 0 || rho2 >= 1]);
+        }
+        const lowK = bm.kind === 1 ? 0.7 : 1; // 过顶示意整体更低调（判例条件 b）
+        // 底弦（波导）
+        ctx.strokeStyle = `rgba(206, 218, 236, ${(0.13 * env * lowK).toFixed(3)})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        let started = false;
+        for (const p of pts) {
+          if (!p[2]) {
+            started = false;
+            continue;
+          }
+          if (!started) {
+            ctx.moveTo(p[0], p[1]);
+            started = true;
+          } else ctx.lineTo(p[0], p[1]);
+        }
+        ctx.stroke();
+        // 正弦行波（仅中继链——3 波包端点归零，相位流动）
+        if (bm.kind === 0) {
+          const dxp = pts[pts.length - 1][0] - pts[0][0], dyp = pts[pts.length - 1][1] - pts[0][1];
+          const dl = Math.hypot(dxp, dyp) || 1;
+          const nx = -dyp / dl, ny = dxp / dl;
+          ctx.strokeStyle = `rgba(206, 218, 236, ${(0.22 * env).toFixed(3)})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          started = false;
+          for (let k = 0; k <= NP; k++) {
+            const p = pts[k];
+            if (!p[2]) {
+              started = false;
+              continue;
+            }
+            const su = k / NP;
+            const off = Math.sin(su * Math.PI * 6 - nowP * 0.012 + bm.seed) * 1.8 * Math.sin(Math.PI * su);
+            if (!started) {
+              ctx.moveTo(p[0] + nx * off, p[1] + ny * off);
+              started = true;
+            } else ctx.lineTo(p[0] + nx * off, p[1] + ny * off);
+          }
+          ctx.stroke();
+        }
+        // 行进脉冲：光速感走完全程（中继 3 粒 / 过顶 1 粒）
+        const nPulse = bm.kind === 0 ? 3 : 1;
+        const trav = bm.kind === 0 ? 0.7 : 0.85;
+        for (let pk = 0; pk < nPulse; pk++) {
+          const ph = (((nowP - bm.t0) / 1000 / trav + pk / nPulse + bm.seed) % 1 + 1) % 1;
+          const p = pts[Math.round(ph * NP)];
+          if (!p || !p[2]) continue;
+          const fade = Math.sin(Math.PI * ph);
+          ctx.globalAlpha = clamp(0.75 * env * fade, 0, 1);
+          ctx.drawImage(glowSprite(SILVER), p[0] - 5, p[1] - 5, 10, 10);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = `rgba(235, 242, 252, ${clamp(0.9 * env * fade, 0, 1).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 1.6, 0, Math.PI * 2);
+          ctx.fill();
+          // 过顶示意：脉冲抵达灯端一次微辉（收讫感，不改灯色语义）
+          if (bm.kind === 1 && bm.lamp && ph > 0.93) {
+            ctx.globalAlpha = clamp(0.5 * env * (1 - (ph - 0.93) / 0.07), 0, 1);
+            ctx.drawImage(glowSprite(SILVER), bm.lamp.x - 7, bm.lamp.y - 7, 14, 14);
+            ctx.globalAlpha = 1;
+          }
+        }
+        // 发端微辉（中继链）
+        if (bm.kind === 0) {
+          ctx.globalAlpha = 0.3 * env;
+          ctx.drawImage(glowSprite(SILVER), sat.x - 7, sat.y - 7, 14, 14);
+          ctx.globalAlpha = 1;
+        }
+      }
+      ctx.restore();
     }
 
     /** 大圆（法向 S）可见段折线：z 剔除断笔（晨昏弧/幽灵弧共用几何） */
@@ -2412,8 +2627,10 @@ export default function AtlasMap() {
       drawSunAccent(isGL ? sunVec : realSun, strong2, isGL);
       if (!isGL) drawRim(realSun);
       drawSats(sunVec, simMs); // 真实卫星层（球上、大气族下、交易所灯之下）
+      updateBeams(nowP);
+      drawBeams(nowP); // 链路层（星间中继 + 过顶示意）：卫星与灯之上
 
-      let alive = !bootDone || rotDrag || rotating || dialDragging || springT >= 0 || repaint || spinTarget > 0 || !!flight || meteorCount() > 0;
+      let alive = !bootDone || rotDrag || rotating || dialDragging || springT >= 0 || repaint || spinTarget > 0 || !!flight || meteorCount() > 0 || beams.length > 0;
       for (const l of lamps) {
         if (!bootDone && bootT < l.activeAt * BOOT_SEC) continue;
         if (!bootDone && !l.bootLit) {
@@ -2784,6 +3001,7 @@ export default function AtlasMap() {
     const onVisibility = () => {
       if (document.hidden) {
         clearMeteors(); // 回来无僵尸光条
+        beams.length = 0; // 链路同清（回来再自然触发）
         clearTimeout(boundaryTimer);
         clearInterval(safetyTimer);
       } else {
