@@ -1079,8 +1079,8 @@ export default function AtlasMap() {
       life: number; life0: number; len: number;
       big: boolean;
       f: number; ph: number; prevEnv: number; // 脉冲频率/相位/上一拍包络（过峰检测落余烬结）
-      rimA: number; // 焚毁目标：球缘角（-1=横穿掠过型 Earth-grazer，真实存在）
-      tx: number; ty: number; dist0: number; // 目标点与初始距离（接近度暖色用；rim 型随缩放重锚）
+      flares: number[]; // 碎裂时刻表（age 秒，升序；大流星 1-3 次是文献常态）
+      flareT: number; // 当前碎裂耀斑剩余（头辉增强计时）
     }
     interface Fx {
       kind: 0 | 1 | 2 | 3; // 0=余烬结 1=焚毁冲击环 2=点爆闪光 3=火花
@@ -1136,78 +1136,102 @@ export default function AtlasMap() {
       const cap = narrowScreen ? 4 : 6; // 密度为展示节律不指示天文事件（纯美三律）；上限由视觉层级定
       if (meteorCount() >= cap) return false;
       const nowP = performance.now();
-      const big = nowP >= meteorBigAt && Math.random() < 0.28;
-      if (big) meteorBigAt = nowP + 4000; // 大流星后 4s 让位
+      const big = nowP >= meteorBigAt && Math.random() < 0.32;
+      if (big) meteorBigAt = nowP + 5000; // 大流星后 5s 让位（盖满整场演出：点火→碎→碎→终爆）
       const diag = Math.hypot(W, H);
       const speed = diag * (big ? 0.8 + Math.random() * 0.35 : 0.55 + Math.random() * 0.4);
-      const rimHit = Math.random() < 0.6; // 六成冲向球缘焚毁、四成横穿掠过（防「围攻地球」机械读感）
-      let sx0 = 0, sy0 = 0, vx0 = 0, vy0 = 0, rimA = -1, tx = 0, ty = 0, life0 = 0;
+      const life0 = big ? 1.8 + Math.random() * 0.8 : 0.9 + Math.random() * 0.5;
+      // 全员屏幕空间自由路径（高空焚毁律：烧蚀事件空中发生，禁锚球缘/地表）：
+      // 对角扇区两族随机（禁辐射点汇聚）；轨迹中点须过夜半门控（4 次机会）
+      const fan = Math.random() < 0.5;
+      const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
+      let sx0 = 0;
+      let sy0 = 0;
       let placed = false;
-      for (let k = 0; k < 4 && !placed; k++) {
-        if (rimHit) {
-          // 焚毁点：夜侧 rim 弧上纯随机（严禁瞄准灯——「流星砸灯」即伪事件）
-          const a = Math.random() * Math.PI * 2;
-          const rpx = cx + R * zoom * Math.cos(a), rpy = cy + R * zoom * Math.sin(a);
-          if (!inNightHalf(rpx, rpy, sunV)) continue;
-          rimA = a;
-          tx = rpx;
-          ty = rpy;
-          const off = (Math.random() - 0.5) * 0.5; // 来向抖动 ±14°（防辐射点汇聚）
-          const back = diag * (0.3 + Math.random() * 0.3);
-          sx0 = tx - Math.cos(a + Math.PI + off) * back;
-          sy0 = ty - Math.sin(a + Math.PI + off) * back;
-          const dd = Math.hypot(tx - sx0, ty - sy0) || 1;
-          vx0 = ((tx - sx0) / dd) * speed;
-          vy0 = ((ty - sy0) / dd) * speed;
-          life0 = dd / (speed * 0.55) + 0.3; // 保证抵达（包络均值 ≈0.55）
+      for (let k = 0; k < 4; k++) {
+        sx0 = Math.random() * W;
+        sy0 = Math.random() * H * 0.45;
+        const mx = sx0 + Math.cos(ang) * speed * life0 * 0.5;
+        const my = sy0 + Math.sin(ang) * speed * life0 * 0.5;
+        if (inNightHalf(mx, my, sunV)) {
           placed = true;
-        } else {
-          // 横穿型：对角扇区两族随机
-          const fan = Math.random() < 0.5;
-          const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
-          sx0 = Math.random() * W;
-          sy0 = Math.random() * H * 0.45;
-          const mx = sx0 + Math.cos(ang) * speed * life0 * 0.5;
-          const my = sy0 + Math.sin(ang) * speed * life0 * 0.5;
-          if (!inNightHalf(mx, my, sunV)) continue;
-          life0 = big ? 1.6 + Math.random() * 0.8 : 0.8 + Math.random() * 0.5;
-          vx0 = Math.cos(ang) * speed;
-          vy0 = Math.sin(ang) * speed;
-          tx = sx0 + vx0 * life0;
-          ty = sy0 + vy0 * life0;
-          placed = true;
+          break;
         }
       }
       if (!placed) return false;
+      // 入场点火（渲染层淡入闪，不做「进入大气」隐喻）：大款必出、微款五成
+      if (big || Math.random() < 0.5)
+        pushFx({ kind: 2, x: sx0, y: sy0, born: nowP, dur: 0.15, len: big ? 16 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
+      // 碎裂时刻表：大款 1-2 次（窄屏 ≤1）、微款 35% 一次——时机不规则（防恒定节拍）
+      const flares: number[] = [];
+      if (big) {
+        const n = narrowScreen ? 1 : Math.random() < 0.55 ? 2 : 1;
+        for (let k = 0; k < n; k++) flares.push(life0 * (0.25 + Math.random() * 0.5));
+      } else if (Math.random() < 0.35) flares.push(life0 * (0.3 + Math.random() * 0.4));
+      flares.sort((a, b) => a - b);
       for (let k = 0; k < meteorPool.length; k++) {
         if (meteorPool[k]) continue;
         meteorPool[k] = {
-          x: sx0, y: sy0, vx: vx0, vy: vy0, life: life0, life0,
-          len: diag * (big ? 0.42 + Math.random() * 0.14 : 0.16 + Math.random() * 0.08),
+          x: sx0, y: sy0,
+          vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+          life: life0, life0,
+          len: diag * (big ? 0.46 + Math.random() * 0.14 : 0.16 + Math.random() * 0.08),
           big, f: big ? 1.9 + Math.random() * 0.9 : 3.0 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2,
-          prevEnv: 0, rimA, tx, ty, dist0: Math.hypot(tx - sx0, ty - sy0) || 1,
+          prevEnv: 0, flares, flareT: 0,
         };
         return true;
       }
       return false;
     }
-    /** 焚毁 boom（rim 型终点）：火橙点爆 + 三环错峰 easeOut + 大款火花雨 + 贴边橙晕（烧蚀痕）。
+    /** 空中焚毁 boom（寿命尽处原位）：火橙点爆 + 多环错峰 easeOut + 大款火花雨。
+     * 环的落点护栏：爆点落球缘环带（0.92-1.3R）则只闪不环——boom 永不贴 rim 爆（高空焚毁律）。
      * 扩张环专形按色温分域：流星=火橙烧蚀环，链路收讫=构造银蓝环。 */
     function burnUp(m: Meteor, nowP: number) {
-      pushFx({ kind: 2, x: m.tx, y: m.ty, born: nowP, dur: 0.18, len: m.big ? 30 : 18, dx: 0, dy: 0, rmax: 0, a0: 0.95, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
-      const rings = W < 640 ? 2 : 3;
-      const rmax = m.big ? 120 : 68;
-      for (let k = 0; k < rings; k++)
-        pushFx({ kind: 1, x: m.tx, y: m.ty, born: nowP + k * 45, dur: 0.5, len: 0, dx: 0, dy: 0, rmax, a0: k === 0 ? 0.75 : k === 1 ? 0.55 : 0.35, cr: 255, cg: 170, cb: 80, lineWidth: 2.5 });
-      if (m.big) {
-        const sparks = W < 640 ? 4 : 8;
-        for (let k = 0; k < sparks; k++) {
-          const a = Math.random() * Math.PI * 2;
-          const sp = 40 + Math.random() * 90;
-          pushFx({ kind: 3, x: m.tx, y: m.ty, born: nowP, dur: 0.4 + Math.random() * 0.25, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.7, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
+      const Rz2 = R * zoom;
+      const rr = Math.hypot(m.x - cx, m.y - cy) / (Rz2 || 1);
+      const ringsOk = rr < 0.92 || rr > 1.3;
+      pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.2, len: m.big ? 36 : 16, dx: 0, dy: 0, rmax: 0, a0: 0.95, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
+      if (ringsOk) {
+        if (m.big) {
+          const rings = W < 640 ? 2 : 4;
+          for (let k = 0; k < rings; k++)
+            pushFx({ kind: 1, x: m.x, y: m.y, born: nowP + k * 40, dur: 0.5, len: 0, dx: 0, dy: 0, rmax: 160, a0: [0.78, 0.6, 0.45, 0.3][k] ?? 0.3, cr: 255, cg: 170, cb: 80, lineWidth: 2.5 });
+          const sparks = W < 640 ? 5 : 11;
+          for (let k = 0; k < sparks; k++) {
+            const a = Math.random() * Math.PI * 2;
+            const sp = 40 + Math.random() * 100;
+            pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.4 + Math.random() * 0.25, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.7, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
+          }
+        } else {
+          pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.4, len: 0, dx: 0, dy: 0, rmax: 42, a0: 0.5, cr: 255, cg: 170, cb: 80, lineWidth: 1.8 });
         }
       }
-      pushFx({ kind: 2, x: m.tx, y: m.ty, born: nowP + 30, dur: 0.3, len: m.big ? 26 : 16, dx: 0, dy: 0, rmax: 0, a0: 0.5, cr: 255, cg: 140, cb: 60, lineWidth: 0 });
+    }
+    /** 碎裂闪爆（bolide fragmentation，空中、时机不规则）：头耀斑 + 小环 + 火花 + 子碎片流星（带微尾前抛） */
+    function flareUp(m: Meteor, nowP: number) {
+      m.flareT = 0.3;
+      const mag = Math.hypot(m.vx, m.vy) || 1;
+      pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.15, len: m.big ? 20 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.8, cr: 255, cg: 190, cb: 100, lineWidth: 0 });
+      pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.42, len: 0, dx: 0, dy: 0, rmax: m.big ? 55 : 30, a0: 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 1.8 });
+      if (m.big) {
+        const sparks = W < 640 ? 2 : 5;
+        for (let k = 0; k < sparks; k++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 30 + Math.random() * 70;
+          pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.35 + Math.random() * 0.2, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.65, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
+        }
+        // 子碎片流星：微尾短命，沿原向 ±20° 偏折前抛（碎裂后多亮块继续飞——物理正确）
+        if (W >= 640) {
+          const n = 2 + (Math.random() < 0.5 ? 1 : 0);
+          for (let k = 0; k < n; k++) {
+            const dv = (Math.random() - 0.5) * 0.7; // ±20°
+            const ca = Math.cos(dv), sa = Math.sin(dv);
+            const nvx = ((m.vx / mag) * ca - (m.vy / mag) * sa) * mag * (0.6 + Math.random() * 0.2);
+            const nvy = ((m.vx / mag) * sa + (m.vy / mag) * ca) * mag * (0.6 + Math.random() * 0.2);
+            pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.3 + Math.random() * 0.2, len: 14 + Math.random() * 8, dx: nvx, dy: nvy, rmax: 0, a0: 0.75, cr: 255, cg: 210, cb: 140, lineWidth: 2 });
+          }
+        }
+      }
     }
     /** FX 池一遍扫描：余烬结 / 焚毁环（easeOut 扩张变细变淡）/ 点爆闪光 / 火花 */
     function drawFx(nowP: number, dt: number) {
@@ -1258,14 +1282,27 @@ export default function AtlasMap() {
           ctx.arc(fx.x, fx.y, 2 + fx.len * 0.08 * fade, 0, Math.PI * 2);
           ctx.fill();
         } else {
-          // 火花：外抛阻尼渐隐
+          // 火花/子碎片：外抛阻尼渐隐；len>0 的变体带微尾（碎裂后多亮块继续飞）
           fx.x += fx.dx * dt;
           fx.y += fx.dy * dt;
-          fx.dx *= 1 - 1.6 * dt;
-          fx.dy *= 1 - 1.6 * dt;
+          if (fx.len > 0) {
+            const damp = Math.max(0, 1 - 1.0 * dt); // 碎片阻尼小（保前抛感）
+            fx.dx *= damp;
+            fx.dy *= damp;
+            const vm = Math.hypot(fx.dx, fx.dy) || 1;
+            ctx.strokeStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
+            ctx.lineWidth = Math.max(0.6, fx.lineWidth * fade);
+            ctx.beginPath();
+            ctx.moveTo(fx.x - (fx.dx / vm) * fx.len, fx.y - (fx.dy / vm) * fx.len);
+            ctx.lineTo(fx.x, fx.y);
+            ctx.stroke();
+          } else {
+            fx.dx *= 1 - 1.6 * dt;
+            fx.dy *= 1 - 1.6 * dt;
+          }
           ctx.fillStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
           ctx.beginPath();
-          ctx.arc(fx.x, fx.y, 1.3 * fade + 0.4, 0, Math.PI * 2);
+          ctx.arc(fx.x, fx.y, fx.len > 0 ? 1.8 : 1.3 * fade + 0.4, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -1300,26 +1337,28 @@ export default function AtlasMap() {
         const m = meteorPool[k];
         if (!m) continue;
         m.life -= dt;
-        if (m.life <= -0.3) {
-          meteorPool[k] = null; // 尾迹余辉走完再归还（笔断意连）
+        if (m.life <= 0) {
+          // 空中焚毁（寿命尽处原位）——高空焚毁律：不锚球缘不触地，FX 余辉接管「笔断意连」
+          burnUp(m, nowP);
+          meteorPool[k] = null;
           continue;
-        }
-        if (m.rimA >= 0) {
-          // 焚毁点随缩放重锚（侧影圆对旋转不变，拖拽无碍）
-          m.tx = cx + R * zoom * Math.cos(m.rimA);
-          m.ty = cy + R * zoom * Math.sin(m.rimA);
         }
         // 脉冲推进：连续速度包络（快攻慢衰，峰均比≈3）——「一段一段向前冲」
         const age = m.life0 - m.life;
         const env = 0.3 + 0.7 * Math.pow(Math.max(0, Math.sin(m.f * Math.PI * 2 * age + m.ph)), 3);
         m.x += m.vx * env * dt;
         m.y += m.vy * env * dt;
-        // 热度：rim 型按接近度（最后 1/3 路程暖化）；横穿型按余寿
-        const heat = m.rimA >= 0
-          ? smoothstep(0.6, 1, 1 - Math.hypot(m.tx - m.x, m.ty - m.y) / m.dist0)
-          : smoothstep(0.45, 1, 1 - clamp(m.life / m.life0, 0, 1));
+        // 碎裂时刻表：age 越过即爆（时机不规则——防恒定节拍）
+        while (m.flares.length && age >= m.flares[0]) {
+          m.flares.shift();
+          flareUp(m, nowP);
+        }
+        if (m.flareT > 0) m.flareT -= dt;
+        const p = m.life / m.life0;
+        // 热史：沿余寿渐热（烧蚀谱）
+        const heat = smoothstep(0.45, 1, 1 - clamp(p, 0, 1));
         // 过峰检测：包络上行沿穿越 0.85 → 落一节余烬结（30% 跳拍防恒定节拍＝防「推进器」读感）
-        if (m.prevEnv < 0.85 && env >= 0.85 && m.life > 0 && Math.random() < 0.7) {
+        if (m.prevEnv < 0.85 && env >= 0.85 && Math.random() < 0.7) {
           const mag0 = Math.hypot(m.vx, m.vy) || 1;
           const hc = heatColor(heat);
           pushFx({
@@ -1331,16 +1370,10 @@ export default function AtlasMap() {
           });
         }
         m.prevEnv = env;
-        // 焚毁判定：抵达 rim 目标或扎进球盘 → boom
-        if (m.rimA >= 0 && (Math.hypot(m.tx - m.x, m.ty - m.y) < 7 || Math.hypot(m.x - cx, m.y - cy) < R * zoom)) {
-          burnUp(m, nowP);
-          meteorPool[k] = null;
-          continue;
-        }
-        const p = m.life / m.life0;
-        // 生命周期包络：入 15% 淡入、出 30% 淡出、余辉期残尾 ×0.35
-        const envL = p > 0.85 ? (1 - p) / 0.15 : p < 0 ? clamp(1 + p / 0.3, 0, 1) * 0.35 : 1;
-        const a = (m.big ? 0.65 : 0.45) * clamp(envL, 0, 1); // 红线：亮度不压灯与卫星数据层
+        // 生命周期包络：入 10% 淡入（头端先亮的点火感）
+        const envL = p > 0.9 ? (1 - p) / 0.1 : 1;
+        const flareK = m.flareT > 0 ? 1 + 0.7 * Math.sin((1 - m.flareT / 0.3) * Math.PI) : 1; // 碎裂耀斑：瞬时可为全屏最亮（亮度驻留分律）
+        const a = Math.min(1, (m.big ? 0.75 : 0.5) * clamp(envL, 0, 1) * flareK); // 稳态不压灯、瞬态可越
         if (a <= 0.01) continue;
         const mag = Math.hypot(m.vx, m.vy) || 1;
         const dx = m.vx / mag, dy = m.vy / mag;
@@ -1353,18 +1386,19 @@ export default function AtlasMap() {
         g.addColorStop(0.6, `rgba(226, 236, 255, ${(a * 0.6).toFixed(3)})`);
         g.addColorStop(1, `rgba(${hc[0] | 0}, ${hc[1] | 0}, ${hc[2] | 0}, ${a.toFixed(3)})`);
         ctx.strokeStyle = g;
-        ctx.lineWidth = (m.big ? 3 : 1.5) * (narrow ? 0.8 : 1);
+        ctx.lineWidth = (m.big ? 3.4 : 1.6) * (narrow ? 0.8 : 1);
         ctx.beginPath();
         ctx.moveTo(tx2, ty2);
         ctx.lineTo(m.x, m.y);
         ctx.stroke();
-        // 头部三层：火晕 + 白热芯（沿运动向微拉长＝运动 smear）
-        ctx.globalAlpha = clamp(a * (m.big ? 1 : 0.7), 0, 1);
-        ctx.drawImage(glowSprite(FIRE1), m.x - 10, m.y - 10, 20, 20);
+        // 头部三层：火晕（碎裂时 ×1.5 耀斑）+ 白热芯（沿运动向微拉长＝运动 smear）
+        const hg = 13 * flareK * (m.big ? 1 : 0.7);
+        ctx.globalAlpha = clamp(a, 0, 1);
+        ctx.drawImage(glowSprite(FIRE1), m.x - hg, m.y - hg, hg * 2, hg * 2);
         ctx.globalAlpha = 1;
         ctx.fillStyle = `rgba(255, 248, 235, ${Math.min(1, a * 1.6).toFixed(3)})`;
         ctx.beginPath();
-        ctx.ellipse(m.x, m.y, 2.6 + Math.abs(dx) * 1.4, 2.6 + Math.abs(dy) * 1.4, 0, 0, Math.PI * 2);
+        ctx.ellipse(m.x, m.y, (3.2 + Math.abs(dx) * 1.6) * flareK, (3.2 + Math.abs(dy) * 1.6) * flareK, 0, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
