@@ -1587,7 +1587,8 @@ export default function AtlasMap() {
      * 与过顶示意链（真实几何量触发：最近过顶 + 互见；无真实数据关系，形制更低调）。
      * 渲染统一 Beam：底弦 + 正弦行波（仅中继链）+ 行进脉冲 + 若隐若现包络 + 逐点 z 遮挡。 */
     interface Beam {
-      kind: 0 | 1; // 0=中继链 1=过顶示意
+      kind: 0 | 1; // 0=星间链 1=过顶示意
+      real: boolean; // 真实公开中继架构（强形态：正弦波+3 粒脉冲）vs 几何示意互见链（形制稍敛）
       a: SatItem;
       b: SatItem | null;
       lamp: (typeof lamps)[number] | null;
@@ -1619,21 +1620,37 @@ export default function AtlasMap() {
     function updateBeams(nowP: number) {
       for (let k = beams.length - 1; k >= 0; k--) if (nowP > beams[k].t0 + beams[k].dur * 1000) beams.splice(k, 1);
       if (reduced || !bootDone) return;
-      // 真实中继链：互见时泊松触发（同屏 ≤2 条中继，全局 ≤3 束）
-      if (nowP > relayNextAt) {
-        relayNextAt = nowP + 10000 + Math.random() * 8000;
-        if (beams.filter((b) => b.kind === 0).length < 2 && beams.length < 3) {
-          const tries = RELAY_PAIRS.slice().sort(() => Math.random() - 0.5);
-          for (const [na, nb] of tries) {
-            const A = satByNorad(na), B = satByNorad(nb);
-            if (!A || !B || !A.vis || !B.vis) continue;
+      // 星间链：先试真实中继对（公开架构，强形态），八成概率再泛化到任意互见对（几何示意：互见即通）
+      if (nowP > relayNextAt && beams.length < 6) {
+        relayNextAt = nowP + 2500 + Math.random() * 2500; // 密一些（原 10-18s）
+        let picked: Beam | null = null;
+        const tries = RELAY_PAIRS.slice().sort(() => Math.random() - 0.5);
+        for (const [na, nb] of tries) {
+          const A = satByNorad(na), B = satByNorad(nb);
+          if (!A || !B || !A.vis || !B.vis) continue;
+          if (beams.some((b) => (b.a === A && b.b === B) || (b.a === B && b.b === A))) continue;
+          if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
+          picked = { kind: 0, real: true, a: A, b: B, lamp: null, t0: nowP, dur: 2.8 + Math.random() * 1.2, seed: Math.random() };
+          break;
+        }
+        if (!picked && Math.random() < 0.8) {
+          for (let t2 = 0; t2 < 8 && !picked; t2++) {
+            const A = SAT_ITEMS[(Math.random() * SAT_ITEMS.length) | 0];
+            const B = SAT_ITEMS[(Math.random() * SAT_ITEMS.length) | 0];
+            if (!A || !B || A === B || !A.vis || !B.vis) continue;
+            if (Math.hypot(A.x - B.x, A.y - B.y) < 70) continue; // 太近的两星连线读不出「传输」
+            const pk = A.el.norad < B.el.norad ? `${A.el.norad}-${B.el.norad}` : `${B.el.norad}-${A.el.norad}`;
+            if ((beamCooldown.get("g:" + pk) ?? 0) > nowP) continue; // 配对冷却：轮换搭档
             if (beams.some((b) => (b.a === A && b.b === B) || (b.a === B && b.b === A))) continue;
             if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
-            beams.push({ kind: 0, a: A, b: B, lamp: null, t0: nowP, dur: 1.2 + Math.random() * 0.8, seed: Math.random() });
-            A.flashUntil = nowP + 500;
-            B.flashUntil = nowP + 500;
-            break;
+            picked = { kind: 0, real: false, a: A, b: B, lamp: null, t0: nowP, dur: 2.2 + Math.random(), seed: Math.random() };
+            beamCooldown.set("g:" + pk, nowP + 9000 + Math.random() * 6000);
           }
+        }
+        if (picked) {
+          beams.push(picked);
+          picked.a.flashUntil = nowP + 500;
+          if (picked.b) picked.b.flashUntil = nowP + 500;
         }
       }
       // 过顶示意链：最近点（星-灯点积局部极大）触发 + 冷却 45s/对 + 滞回重武装（<0.88 才再武装）
@@ -1656,9 +1673,9 @@ export default function AtlasMap() {
           continue;
         }
         if (bd < 0.88) st.armed = true;
-        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < 3 && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
-          beams.push({ kind: 1, a: s, b: null, lamp: best, t0: nowP, dur: 1.3, seed: Math.random() });
-          beamCooldown.set(`${s.el.norad}:${best.exch.mic}`, nowP + 45000);
+        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < 6 && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
+          beams.push({ kind: 1, real: false, a: s, b: null, lamp: best, t0: nowP, dur: 2.0, seed: Math.random() });
+          beamCooldown.set(`${s.el.norad}:${best.exch.mic}`, nowP + 30000);
           s.flashUntil = nowP + 500;
           st.armed = false;
         }
@@ -1714,12 +1731,12 @@ export default function AtlasMap() {
           } else ctx.lineTo(p[0], p[1]);
         }
         ctx.stroke();
-        // 正弦行波（仅中继链——3 波包端点归零，相位流动）
+        // 正弦行波（星间链皆有——3 波包端点归零，相位流动；真实中继稍强）
         if (bm.kind === 0) {
           const dxp = pts[pts.length - 1][0] - pts[0][0], dyp = pts[pts.length - 1][1] - pts[0][1];
           const dl = Math.hypot(dxp, dyp) || 1;
           const nx = -dyp / dl, ny = dxp / dl;
-          ctx.strokeStyle = `rgba(206, 218, 236, ${(0.22 * env).toFixed(3)})`;
+          ctx.strokeStyle = `rgba(206, 218, 236, ${((bm.real ? 0.22 : 0.15) * env).toFixed(3)})`;
           ctx.lineWidth = 1;
           ctx.beginPath();
           started = false;
@@ -1738,8 +1755,8 @@ export default function AtlasMap() {
           }
           ctx.stroke();
         }
-        // 行进脉冲：光速感走完全程（中继 3 粒 / 过顶 1 粒）
-        const nPulse = bm.kind === 0 ? 3 : 1;
+        // 行进脉冲：光速感走完全程（真实中继 3 粒 / 示意互见 2 粒 / 过顶 1 粒）
+        const nPulse = bm.kind === 1 ? 1 : bm.real ? 3 : 2;
         const trav = bm.kind === 0 ? 0.7 : 0.85;
         for (let pk = 0; pk < nPulse; pk++) {
           const ph = (((nowP - bm.t0) / 1000 / trav + pk / nPulse + bm.seed) % 1 + 1) % 1;
