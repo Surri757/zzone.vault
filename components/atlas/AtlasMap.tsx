@@ -588,6 +588,7 @@ export default function AtlasMap() {
           zoom,
           spinRate,
           mets: meteorCount(),
+          fx: fxCount(),
           beams: beams.length,
           satsVis: SAT_ITEMS.reduce((n, s) => n + (s.vis ? 1 : 0), 0),
           satsAll: SAT_ITEMS.length,
@@ -1076,9 +1077,20 @@ export default function AtlasMap() {
     interface Meteor {
       x: number; y: number; vx: number; vy: number;
       life: number; life0: number; len: number;
-      big: boolean; tw: number; twF: number;
+      big: boolean;
+      f: number; ph: number; prevEnv: number; // 脉冲频率/相位/上一拍包络（过峰检测落余烬结）
+      rimA: number; // 焚毁目标：球缘角（-1=横穿掠过型 Earth-grazer，真实存在）
+      tx: number; ty: number; dist0: number; // 目标点与初始距离（接近度暖色用；rim 型随缩放重锚）
+    }
+    interface Fx {
+      kind: 0 | 1 | 2 | 3; // 0=余烬结 1=焚毁冲击环 2=点爆闪光 3=火花
+      x: number; y: number; born: number; dur: number;
+      len: number; dx: number; dy: number; rmax: number; a0: number;
+      cr: number; cg: number; cb: number; lineWidth: number;
     }
     const meteorPool: Array<Meteor | null> = [null, null, null, null, null, null, null, null];
+    const fxPool: Array<Fx | null> = new Array(96).fill(null);
+    const FIRE1: [number, number, number] = [255, 170, 80]; // 火橙烧蚀色（2200-3500K；与金/朱、构造银蓝都留距离）
     let meteorTimer = 0;
     let meteorBigAt = 0; // 大流星让位窗（期间只出微流星）
     let lastMeteorAt = 0; // 上次成功生成时刻（空屏补发用）
@@ -1087,8 +1099,31 @@ export default function AtlasMap() {
       for (const m of meteorPool) if (m) n++;
       return n;
     }
+    function fxCount() {
+      let n = 0;
+      for (const f of fxPool) if (f) n++;
+      return n;
+    }
     function clearMeteors() {
       for (let k = 0; k < meteorPool.length; k++) meteorPool[k] = null;
+      for (let k = 0; k < fxPool.length; k++) fxPool[k] = null;
+    }
+    function pushFx(fx: Fx) {
+      for (let k = 0; k < fxPool.length; k++) {
+        if (!fxPool[k]) {
+          fxPool[k] = fx;
+          return;
+        }
+      }
+    }
+    /** 热史色：冷银 → 暖橙 → 炽橙（接近大气层才暖化——烧蚀谱） */
+    function heatColor(heat: number): [number, number, number] {
+      if (heat < 0.5) {
+        const t = heat / 0.5;
+        return [232 + 23 * t, 240 - 60 * t, 255 - 165 * t];
+      }
+      const t = (heat - 0.5) / 0.5;
+      return [255, 180 - 58 * t, 90 - 21 * t];
     }
     /** 夜半球门控：流星只认太阳（spawn 中点须在背日半屏——昼面物理上看不见流星） */
     function inNightHalf(x: number, y: number, sunV: { Sx: number; Sy: number; Sz: number }) {
@@ -1098,44 +1133,143 @@ export default function AtlasMap() {
     }
     function spawnMeteor(sunV: { Sx: number; Sy: number; Sz: number }): boolean {
       const narrowScreen = W < 640;
-      const cap = narrowScreen ? 3 : 4; // 密度红线：不得读出「流星雨事件」
+      const cap = narrowScreen ? 4 : 6; // 密度为展示节律不指示天文事件（纯美三律）；上限由视觉层级定
       if (meteorCount() >= cap) return false;
       const nowP = performance.now();
-      const big = nowP >= meteorBigAt && Math.random() < 0.3;
-      if (big) meteorBigAt = nowP + 6000; // 大流星后 6s 让位
-      // 方向：对角扇区（右下 20-70° / 左下 110-160°），杜绝水平垂直（与滚动带/刻度盘同构打架）
-      const fan = Math.random() < 0.5;
-      const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
+      const big = nowP >= meteorBigAt && Math.random() < 0.28;
+      if (big) meteorBigAt = nowP + 4000; // 大流星后 4s 让位
       const diag = Math.hypot(W, H);
-      const speed = diag * (big ? 0.85 + Math.random() * 0.35 : 0.6 + Math.random() * 0.4);
-      const life0 = big ? 1.8 + Math.random() * 0.8 : 0.9 + Math.random() * 0.5;
-      // 起点：上半屏随机；轨迹中点须过夜半门控（4 次机会，全败则本场不出）
-      let sx0 = 0;
-      let sy0 = 0;
+      const speed = diag * (big ? 0.8 + Math.random() * 0.35 : 0.55 + Math.random() * 0.4);
+      const rimHit = Math.random() < 0.6; // 六成冲向球缘焚毁、四成横穿掠过（防「围攻地球」机械读感）
+      let sx0 = 0, sy0 = 0, vx0 = 0, vy0 = 0, rimA = -1, tx = 0, ty = 0, life0 = 0;
       let placed = false;
-      for (let k = 0; k < 4; k++) {
-        sx0 = Math.random() * W;
-        sy0 = Math.random() * H * 0.45;
-        const mx = sx0 + Math.cos(ang) * speed * life0 * 0.5;
-        const my = sy0 + Math.sin(ang) * speed * life0 * 0.5;
-        if (inNightHalf(mx, my, sunV)) {
+      for (let k = 0; k < 4 && !placed; k++) {
+        if (rimHit) {
+          // 焚毁点：夜侧 rim 弧上纯随机（严禁瞄准灯——「流星砸灯」即伪事件）
+          const a = Math.random() * Math.PI * 2;
+          const rpx = cx + R * zoom * Math.cos(a), rpy = cy + R * zoom * Math.sin(a);
+          if (!inNightHalf(rpx, rpy, sunV)) continue;
+          rimA = a;
+          tx = rpx;
+          ty = rpy;
+          const off = (Math.random() - 0.5) * 0.5; // 来向抖动 ±14°（防辐射点汇聚）
+          const back = diag * (0.3 + Math.random() * 0.3);
+          sx0 = tx - Math.cos(a + Math.PI + off) * back;
+          sy0 = ty - Math.sin(a + Math.PI + off) * back;
+          const dd = Math.hypot(tx - sx0, ty - sy0) || 1;
+          vx0 = ((tx - sx0) / dd) * speed;
+          vy0 = ((ty - sy0) / dd) * speed;
+          life0 = dd / (speed * 0.55) + 0.3; // 保证抵达（包络均值 ≈0.55）
           placed = true;
-          break;
+        } else {
+          // 横穿型：对角扇区两族随机
+          const fan = Math.random() < 0.5;
+          const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
+          sx0 = Math.random() * W;
+          sy0 = Math.random() * H * 0.45;
+          const mx = sx0 + Math.cos(ang) * speed * life0 * 0.5;
+          const my = sy0 + Math.sin(ang) * speed * life0 * 0.5;
+          if (!inNightHalf(mx, my, sunV)) continue;
+          life0 = big ? 1.6 + Math.random() * 0.8 : 0.8 + Math.random() * 0.5;
+          vx0 = Math.cos(ang) * speed;
+          vy0 = Math.sin(ang) * speed;
+          tx = sx0 + vx0 * life0;
+          ty = sy0 + vy0 * life0;
+          placed = true;
         }
       }
       if (!placed) return false;
       for (let k = 0; k < meteorPool.length; k++) {
         if (meteorPool[k]) continue;
         meteorPool[k] = {
-          x: sx0, y: sy0,
-          vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
-          life: life0, life0,
-          len: diag * (big ? 0.5 + Math.random() * 0.15 : 0.18 + Math.random() * 0.08),
-          big, tw: Math.random() * Math.PI * 2, twF: 2 + Math.random() * 3,
+          x: sx0, y: sy0, vx: vx0, vy: vy0, life: life0, life0,
+          len: diag * (big ? 0.42 + Math.random() * 0.14 : 0.16 + Math.random() * 0.08),
+          big, f: big ? 1.9 + Math.random() * 0.9 : 3.0 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2,
+          prevEnv: 0, rimA, tx, ty, dist0: Math.hypot(tx - sx0, ty - sy0) || 1,
         };
         return true;
       }
       return false;
+    }
+    /** 焚毁 boom（rim 型终点）：火橙点爆 + 三环错峰 easeOut + 大款火花雨 + 贴边橙晕（烧蚀痕）。
+     * 扩张环专形按色温分域：流星=火橙烧蚀环，链路收讫=构造银蓝环。 */
+    function burnUp(m: Meteor, nowP: number) {
+      pushFx({ kind: 2, x: m.tx, y: m.ty, born: nowP, dur: 0.18, len: m.big ? 30 : 18, dx: 0, dy: 0, rmax: 0, a0: 0.95, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
+      const rings = W < 640 ? 2 : 3;
+      const rmax = m.big ? 120 : 68;
+      for (let k = 0; k < rings; k++)
+        pushFx({ kind: 1, x: m.tx, y: m.ty, born: nowP + k * 45, dur: 0.5, len: 0, dx: 0, dy: 0, rmax, a0: k === 0 ? 0.75 : k === 1 ? 0.55 : 0.35, cr: 255, cg: 170, cb: 80, lineWidth: 2.5 });
+      if (m.big) {
+        const sparks = W < 640 ? 4 : 8;
+        for (let k = 0; k < sparks; k++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 40 + Math.random() * 90;
+          pushFx({ kind: 3, x: m.tx, y: m.ty, born: nowP, dur: 0.4 + Math.random() * 0.25, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.7, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
+        }
+      }
+      pushFx({ kind: 2, x: m.tx, y: m.ty, born: nowP + 30, dur: 0.3, len: m.big ? 26 : 16, dx: 0, dy: 0, rmax: 0, a0: 0.5, cr: 255, cg: 140, cb: 60, lineWidth: 0 });
+    }
+    /** FX 池一遍扫描：余烬结 / 焚毁环（easeOut 扩张变细变淡）/ 点爆闪光 / 火花 */
+    function drawFx(nowP: number, dt: number) {
+      if (fxCount() === 0) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, W, H);
+      ctx.arc(cx, cy, R * zoom, 0, Math.PI * 2);
+      ctx.clip("evenodd"); // 焚毁环只剩球外半环＝「从球后冲出、在球缘烧毁」的正确遮挡
+      ctx.globalCompositeOperation = "lighter";
+      for (let k = 0; k < fxPool.length; k++) {
+        const fx = fxPool[k];
+        if (!fx) continue;
+        const age = (nowP - fx.born) / 1000;
+        if (age < 0) continue; // 错峰环未到点
+        const u = age / fx.dur;
+        if (u >= 1) {
+          fxPool[k] = null;
+          continue;
+        }
+        const fade = 1 - u;
+        if (fx.kind === 0) {
+          // 余烬结：原地驻留渐隐收缩（喷流 knot；冻结生成时热色＝热史）
+          const bx = fx.x - fx.dx * fx.len * (0.4 + 0.6 * fade);
+          const by = fx.y - fx.dy * fx.len * (0.4 + 0.6 * fade);
+          ctx.strokeStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
+          ctx.lineWidth = Math.max(0.6, fx.lineWidth * (0.5 + 0.5 * fade));
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.lineTo(fx.x + fx.dx * 2, fx.y + fx.dy * 2);
+          ctx.stroke();
+        } else if (fx.kind === 1) {
+          // 焚毁冲击环：easeOut 扩张、变细变淡（boom 一圈圈）
+          const eo = 1 - Math.pow(1 - u, 2.2);
+          ctx.strokeStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
+          ctx.lineWidth = Math.max(0.4, fx.lineWidth * fade);
+          ctx.beginPath();
+          ctx.arc(fx.x, fx.y, 5 + (fx.rmax - 5) * eo, 0, Math.PI * 2);
+          ctx.stroke();
+        } else if (fx.kind === 2) {
+          // 点爆闪光：暖 glow + 白芯快闪
+          const s = fx.len * (0.6 + 0.6 * (1 - fade));
+          ctx.globalAlpha = clamp(fx.a0 * fade, 0, 1);
+          ctx.drawImage(glowSprite([fx.cr, fx.cg, fx.cb]), fx.x - s, fx.y - s, s * 2, s * 2);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = `rgba(255, 250, 240, ${(fx.a0 * fade * 0.9).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(fx.x, fx.y, 2 + fx.len * 0.08 * fade, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // 火花：外抛阻尼渐隐
+          fx.x += fx.dx * dt;
+          fx.y += fx.dy * dt;
+          fx.dx *= 1 - 1.6 * dt;
+          fx.dy *= 1 - 1.6 * dt;
+          ctx.fillStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(fx.x, fx.y, 1.3 * fade + 0.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
     }
     function drawMeteors(dt: number, sunV: { Sx: number; Sy: number; Sz: number }) {
       if (reduced || !bootDone) return; // boot 演出独角戏；reduced 无流星（冻结的流星是划痕不是画）
@@ -1143,18 +1277,20 @@ export default function AtlasMap() {
       meteorTimer -= dt;
       if (meteorTimer <= 0) {
         if (spawnMeteor(sunV)) lastMeteorAt = nowP;
-        const mean = W < 640 ? 2.2 : 1.3;
-        meteorTimer = Math.max(0.35, -Math.log(Math.max(1e-6, Math.random())) * mean);
+        if (Math.random() < 0.15) spawnMeteor(sunV); // 15% 双发（天象感）
+        const mean = W < 640 ? 1.2 : 0.8;
+        meteorTimer = Math.max(0.25, -Math.log(Math.max(1e-6, Math.random())) * mean);
       }
-      // 常驻补发：空屏超 3.5s 强制一颗（带抖动防机械感）；夜半门控全败 1s 后再试
-      if (meteorCount() === 0 && nowP - lastMeteorAt > 3500) {
-        if (spawnMeteor(sunV)) lastMeteorAt = nowP + Math.random() * 800;
-        else lastMeteorAt = nowP - 2500;
+      // 常驻补发：空屏超 1.6s 强制一颗；夜半门控全败 0.6s 后再试
+      if (meteorCount() === 0 && nowP - lastMeteorAt > 1600) {
+        if (spawnMeteor(sunV)) lastMeteorAt = nowP + Math.random() * 500;
+        else lastMeteorAt = nowP - 1000;
       }
+      drawFx(nowP, dt); // 余烬/环/火花（流星死后余辉仍在走）
       if (meteorCount() === 0) return;
       const narrow = W < 640;
       ctx.save();
-      // 球后裁切：evenodd 挖去球盘——流星从球后掠过、在球缘被利落切断
+      // 球后裁切：evenodd 挖去球盘——流星从球后掠过、焚毁 boom 只剩球外半环
       ctx.beginPath();
       ctx.rect(0, 0, W, H);
       ctx.arc(cx, cy, R * zoom, 0, Math.PI * 2);
@@ -1168,57 +1304,68 @@ export default function AtlasMap() {
           meteorPool[k] = null; // 尾迹余辉走完再归还（笔断意连）
           continue;
         }
-        m.x += m.vx * dt;
-        m.y += m.vy * dt;
+        if (m.rimA >= 0) {
+          // 焚毁点随缩放重锚（侧影圆对旋转不变，拖拽无碍）
+          m.tx = cx + R * zoom * Math.cos(m.rimA);
+          m.ty = cy + R * zoom * Math.sin(m.rimA);
+        }
+        // 脉冲推进：连续速度包络（快攻慢衰，峰均比≈3）——「一段一段向前冲」
+        const age = m.life0 - m.life;
+        const env = 0.3 + 0.7 * Math.pow(Math.max(0, Math.sin(m.f * Math.PI * 2 * age + m.ph)), 3);
+        m.x += m.vx * env * dt;
+        m.y += m.vy * env * dt;
+        // 热度：rim 型按接近度（最后 1/3 路程暖化）；横穿型按余寿
+        const heat = m.rimA >= 0
+          ? smoothstep(0.6, 1, 1 - Math.hypot(m.tx - m.x, m.ty - m.y) / m.dist0)
+          : smoothstep(0.45, 1, 1 - clamp(m.life / m.life0, 0, 1));
+        // 过峰检测：包络上行沿穿越 0.85 → 落一节余烬结（30% 跳拍防恒定节拍＝防「推进器」读感）
+        if (m.prevEnv < 0.85 && env >= 0.85 && m.life > 0 && Math.random() < 0.7) {
+          const mag0 = Math.hypot(m.vx, m.vy) || 1;
+          const hc = heatColor(heat);
+          pushFx({
+            kind: 0, x: m.x, y: m.y, born: nowP, dur: 0.5 + Math.random() * 0.3,
+            len: (m.big ? 16 + Math.random() * 10 : 8 + Math.random() * 6) * (narrow ? 0.7 : 1),
+            dx: m.vx / mag0, dy: m.vy / mag0, rmax: 0,
+            a0: narrow ? (m.big ? 0.4 : 0.3) : m.big ? 0.55 : 0.4,
+            cr: hc[0], cg: hc[1], cb: hc[2], lineWidth: m.big ? 2.6 : 1.8,
+          });
+        }
+        m.prevEnv = env;
+        // 焚毁判定：抵达 rim 目标或扎进球盘 → boom
+        if (m.rimA >= 0 && (Math.hypot(m.tx - m.x, m.ty - m.y) < 7 || Math.hypot(m.x - cx, m.y - cy) < R * zoom)) {
+          burnUp(m, nowP);
+          meteorPool[k] = null;
+          continue;
+        }
         const p = m.life / m.life0;
-        // 生命周期包络：入 15% 淡入、出 30% 淡出、余辉期残尾 ×0.35；大流星另有独立频率脉冲
-        let env = p > 0.85 ? (1 - p) / 0.15 : p < 0 ? clamp(1 + p / 0.3, 0, 1) * 0.35 : 1;
-        if (m.big) env *= 0.72 + 0.28 * Math.sin(nowP * 0.001 * m.twF * Math.PI + m.tw);
-        const a = (m.big ? 0.65 : 0.45) * clamp(env, 0, 1); // 红线：亮度不压灯与卫星数据层
+        // 生命周期包络：入 15% 淡入、出 30% 淡出、余辉期残尾 ×0.35
+        const envL = p > 0.85 ? (1 - p) / 0.15 : p < 0 ? clamp(1 + p / 0.3, 0, 1) * 0.35 : 1;
+        const a = (m.big ? 0.65 : 0.45) * clamp(envL, 0, 1); // 红线：亮度不压灯与卫星数据层
         if (a <= 0.01) continue;
         const mag = Math.hypot(m.vx, m.vy) || 1;
         const dx = m.vx / mag, dy = m.vy / mag;
-        const tx = m.x - dx * m.len;
-        const ty = m.y - dy * m.len;
-        const g = ctx.createLinearGradient(tx, ty, m.x, m.y);
+        const tx2 = m.x - dx * m.len;
+        const ty2 = m.y - dy * m.len;
+        const hc = heatColor(heat);
+        // 基线尾（笔断意连）：冷银 → 头端暖化（烧蚀谱）
+        const g = ctx.createLinearGradient(tx2, ty2, m.x, m.y);
         g.addColorStop(0, "rgba(226, 236, 255, 0)");
-        g.addColorStop(1, `rgba(226, 236, 255, ${a.toFixed(3)})`);
+        g.addColorStop(0.6, `rgba(226, 236, 255, ${(a * 0.6).toFixed(3)})`);
+        g.addColorStop(1, `rgba(${hc[0] | 0}, ${hc[1] | 0}, ${hc[2] | 0}, ${a.toFixed(3)})`);
         ctx.strokeStyle = g;
         ctx.lineWidth = (m.big ? 3 : 1.5) * (narrow ? 0.8 : 1);
         ctx.beginPath();
-        ctx.moveTo(tx, ty);
+        ctx.moveTo(tx2, ty2);
         ctx.lineTo(m.x, m.y);
         ctx.stroke();
-        if (m.big && p > 0) {
-          // 头端 18% 暖白段：冷暖对比出质感（灯芯同族暖白——禁灯金）
-          const wx = m.x - dx * m.len * 0.18;
-          const wy = m.y - dy * m.len * 0.18;
-          const g2 = ctx.createLinearGradient(wx, wy, m.x, m.y);
-          g2.addColorStop(0, "rgba(255, 244, 224, 0)");
-          g2.addColorStop(1, `rgba(255, 244, 224, ${(a * 0.55).toFixed(3)})`);
-          ctx.strokeStyle = g2;
-          ctx.lineWidth = narrow ? 2.4 : 3;
-          ctx.beginPath();
-          ctx.moveTo(wx, wy);
-          ctx.lineTo(m.x, m.y);
-          ctx.stroke();
-          if (!narrow) {
-            // 火花粒子：头后两粒渐隐碎星
-            for (let sp = 0; sp < 2; sp++) {
-              ctx.fillStyle = `rgba(235, 240, 250, ${(a * (sp === 0 ? 0.5 : 0.3)).toFixed(3)})`;
-              ctx.beginPath();
-              ctx.arc(m.x - dx * m.len * (sp === 0 ? 0.28 : 0.46), m.y - dy * m.len * (sp === 0 ? 0.28 : 0.46), 1.2, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-          ctx.globalAlpha = a;
-          ctx.drawImage(glowSprite(SILVER), m.x - 9, m.y - 9, 18, 18);
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = `rgba(255, 244, 224, ${Math.min(1, a * 1.6).toFixed(3)})`;
-          ctx.beginPath();
-          ctx.arc(m.x, m.y, 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
+        // 头部三层：火晕 + 白热芯（沿运动向微拉长＝运动 smear）
+        ctx.globalAlpha = clamp(a * (m.big ? 1 : 0.7), 0, 1);
+        ctx.drawImage(glowSprite(FIRE1), m.x - 10, m.y - 10, 20, 20);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = `rgba(255, 248, 235, ${Math.min(1, a * 1.6).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.ellipse(m.x, m.y, 2.6 + Math.abs(dx) * 1.4, 2.6 + Math.abs(dy) * 1.4, 0, 0, Math.PI * 2);
+        ctx.fill();
       }
       ctx.restore();
     }
@@ -2728,7 +2875,7 @@ export default function AtlasMap() {
       updateBeams(nowP);
       drawBeams(nowP); // 链路层（星间中继 + 过顶示意）：卫星与灯之上
 
-      let alive = !bootDone || rotDrag || rotating || dialDragging || springT >= 0 || repaint || spinTarget > 0 || !!flight || meteorCount() > 0 || beams.length > 0;
+      let alive = !bootDone || rotDrag || rotating || dialDragging || springT >= 0 || repaint || spinTarget > 0 || !!flight || meteorCount() > 0 || fxCount() > 0 || beams.length > 0;
       for (const l of lamps) {
         if (!bootDone && bootT < l.activeAt * BOOT_SEC) continue;
         if (!bootDone && !l.bootLit) {
