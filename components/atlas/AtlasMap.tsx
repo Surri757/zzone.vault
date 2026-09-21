@@ -1088,12 +1088,13 @@ export default function AtlasMap() {
       len: number; dx: number; dy: number; rmax: number; a0: number;
       cr: number; cg: number; cb: number; lineWidth: number;
     }
-    const meteorPool: Array<Meteor | null> = new Array(12).fill(null);
-    const fxPool: Array<Fx | null> = new Array(128).fill(null);
+    const meteorPool: Array<Meteor | null> = new Array(16).fill(null);
+    const fxPool: Array<Fx | null> = new Array(160).fill(null);
     const FIRE1: [number, number, number] = [255, 170, 80]; // 火橙烧蚀色（2200-3500K；与金/朱、构造银蓝都留距离）
     let meteorTimer = 0;
     let meteorBigAt = 0; // 大流星让位窗（期间只出微流星）
     let lastMeteorAt = 0; // 上次成功生成时刻（空屏补发用）
+    const zoneLastAt: number[] = []; // 覆盖均匀：六区（3×2）轮转——最久未服务区优先
     function meteorCount() {
       let n = 0;
       for (const m of meteorPool) if (m) n++;
@@ -1133,7 +1134,7 @@ export default function AtlasMap() {
     }
     function spawnMeteor(sunV: { Sx: number; Sy: number; Sz: number }): boolean {
       const narrowScreen = W < 640;
-      const cap = narrowScreen ? 6 : 9; // 密度为展示节律不指示天文事件（纯美三律）；用户两轮要求加密
+      const cap = narrowScreen ? 8 : 12; // 密度为展示节律不指示天文事件（纯美三律）；用户三轮要求加密
       if (meteorCount() >= cap) return false;
       const nowP = performance.now();
       const big = nowP >= meteorBigAt && Math.random() < 0.32;
@@ -1142,15 +1143,28 @@ export default function AtlasMap() {
       const speed = diag * (big ? 0.8 + Math.random() * 0.35 : 0.55 + Math.random() * 0.4);
       const life0 = big ? 1.8 + Math.random() * 0.8 : 0.9 + Math.random() * 0.5;
       // 全员屏幕空间自由路径（高空焚毁律：烧蚀事件空中发生，禁锚球缘/地表）：
-      // 对角扇区两族随机（禁辐射点汇聚）；轨迹中点须过夜半门控（4 次机会）
+      // 对角扇区两族随机（禁辐射点汇聚）；**六区轮转保证覆盖均匀**（3×2 网格最久未服务区优先，
+      // 区内随机取点过夜半门控，全败退避 2s 让位别区，末两次尝试放开全域）
       const fan = Math.random() < 0.5;
       const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
+      if (zoneLastAt.length === 0) for (let zk = 0; zk < 6; zk++) zoneLastAt.push(0);
+      let zi = 0;
+      for (let zk = 1; zk < 6; zk++) if (zoneLastAt[zk] < zoneLastAt[zi]) zi = zk;
+      const zw = W / 3;
+      const zh = (H * 0.45) / 2;
       let sx0 = 0;
       let sy0 = 0;
       let placed = false;
+      let viaZone = false;
       for (let k = 0; k < 4; k++) {
-        sx0 = Math.random() * W;
-        sy0 = Math.random() * H * 0.45;
+        viaZone = k < 2;
+        if (viaZone) {
+          sx0 = (zi % 3) * zw + Math.random() * zw;
+          sy0 = Math.floor(zi / 3) * zh + Math.random() * zh;
+        } else {
+          sx0 = Math.random() * W;
+          sy0 = Math.random() * H * 0.45;
+        }
         const mx = sx0 + Math.cos(ang) * speed * life0 * 0.5;
         const my = sy0 + Math.sin(ang) * speed * life0 * 0.5;
         if (inNightHalf(mx, my, sunV)) {
@@ -1159,6 +1173,7 @@ export default function AtlasMap() {
         }
       }
       if (!placed) return false;
+      zoneLastAt[zi] = viaZone ? nowP : nowP + 2000; // 区内全败：退避 2s 让别区先走
       // 入场点火（渲染层淡入闪，不做「进入大气」隐喻）：大款必出、微款五成
       if (big || Math.random() < 0.5)
         pushFx({ kind: 2, x: sx0, y: sy0, born: nowP, dur: 0.15, len: big ? 16 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
@@ -1314,14 +1329,14 @@ export default function AtlasMap() {
       meteorTimer -= dt;
       if (meteorTimer <= 0) {
         if (spawnMeteor(sunV)) lastMeteorAt = nowP;
-        if (Math.random() < 0.22) spawnMeteor(sunV); // 22% 双发（天象感）
-        const mean = W < 640 ? 0.8 : 0.5;
-        meteorTimer = Math.max(0.2, -Math.log(Math.max(1e-6, Math.random())) * mean);
+        if (Math.random() < 0.3) spawnMeteor(sunV); // 30% 双发（天象感）
+        const mean = W < 640 ? 0.6 : 0.35;
+        meteorTimer = Math.max(0.15, -Math.log(Math.max(1e-6, Math.random())) * mean);
       }
-      // 常驻补发：空屏超 1.2s 强制一颗；夜半门控全败 0.5s 后再试
-      if (meteorCount() === 0 && nowP - lastMeteorAt > 1200) {
-        if (spawnMeteor(sunV)) lastMeteorAt = nowP + Math.random() * 400;
-        else lastMeteorAt = nowP - 700;
+      // 常驻补发：空屏超 1s 强制一颗；夜半门控全败 0.5s 后再试
+      if (meteorCount() === 0 && nowP - lastMeteorAt > 1000) {
+        if (spawnMeteor(sunV)) lastMeteorAt = nowP + Math.random() * 300;
+        else lastMeteorAt = nowP - 500;
       }
       drawFx(nowP, dt); // 余烬/环/火花（流星死后余辉仍在走）
       if (meteorCount() === 0) return;
