@@ -331,6 +331,77 @@ const smoothstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
+/* ---- 示意模型（符号层判例：只断言类别共性——桁架站/核心舱/镜筒/导航箱/气象盒，
+ * 不断言个体构型；来源=仓内手写低模，许可最干净。开源外源路径备档：Quaternius CC0 /
+ * NASA 3D Resources 公有领域，keeptrack AGPL 不碰）。姿态：体轴沿航向（真实速度方向差分），
+ * 翼轴对日（太阳矢量是场景真值）；气象星扫描仪绕体法向慢转（类别真行为）。 ---- */
+interface ModelPartDef { x: number; y: number; z: number; sx: number; sy: number; sz: number; kind: 0 | 1 | 2; scan?: boolean }
+interface ModelFace { p: ModelPartDef; n: [number, number, number] } // n：局部面法向（±轴单位）
+const MODEL_BASE: Array<[number, number, number]> = [
+  [206, 218, 236], // kind0 本体银
+  [140, 164, 204], // kind1 太阳翼深蓝
+  [170, 182, 198], // kind2 桁架/天线暗银
+];
+const SAT_MODELS: Record<string, { size: number; extent: number; parts: ModelPartDef[]; faces: ModelFace[] }> = (() => {
+  const mk = (size: number, parts: ModelPartDef[]) => {
+    let extent = 1;
+    for (const p of parts) extent = Math.max(extent, Math.abs(p.x) + p.sx / 2, Math.abs(p.y) + p.sy / 2, Math.abs(p.z) + p.sz / 2);
+    const faces: ModelFace[] = [];
+    for (const p of parts) {
+      faces.push({ p, n: [1, 0, 0] }, { p, n: [-1, 0, 0] }, { p, n: [0, 1, 0] }, { p, n: [0, -1, 0] }, { p, n: [0, 0, 1] }, { p, n: [0, 0, -1] });
+    }
+    return { size, extent, parts, faces };
+  };
+  // 国际空间站：主桁架（X 向长梁）+ 四对太阳翼（±Y 展开）+ 中部实验舱群（Z 向堆叠）
+  const issParts: ModelPartDef[] = [
+    { x: 0, y: 0, z: 0, sx: 26, sy: 1.1, sz: 1.1, kind: 2 },
+    { x: 0, z: 2.4, y: 0, sx: 7.5, sy: 1.9, sz: 1.9, kind: 0 },
+    { x: 0, z: 4.3, y: 0, sx: 5, sy: 1.5, sz: 1.5, kind: 0 },
+  ];
+  for (const wx of [-13, -6.5, 6.5, 13]) for (const wy of [-5.6, 5.6]) issParts.push({ x: wx, y: wy, z: 0, sx: 2, sy: 6.4, sz: 3.4, kind: 1 });
+  // 天和核心舱：圆柱体轴 + 两端单侧太阳翼 + 节点舱
+  const cssParts: ModelPartDef[] = [
+    { x: 0, y: 0, z: 0, sx: 11, sy: 2.5, sz: 2.5, kind: 0 },
+    { x: 6.7, y: 4.8, z: 0, sx: 1.7, sy: 7.4, sz: 2.4, kind: 1 },
+    { x: -6.7, y: -4.8, z: 0, sx: 1.7, sy: 7.4, sz: 2.4, kind: 1 },
+    { x: 0, y: 0, z: 2.5, sx: 3.6, sy: 1.7, sz: 1.7, kind: 2 },
+  ];
+  // 哈勃：镜筒体 + 前端遮光口 + 尾部双翼（±Z）
+  const hstParts: ModelPartDef[] = [
+    { x: 0, y: 0, z: 0, sx: 9, sy: 2.2, sz: 2.2, kind: 0 },
+    { x: 5.3, y: 0, z: 0, sx: 1.4, sy: 2.8, sz: 2.8, kind: 2 },
+    { x: -3.5, y: 0, z: 2.7, sx: 3.7, sy: 1.1, sz: 2.5, kind: 1 },
+    { x: -3.5, y: 0, z: -2.7, sx: 3.7, sy: 1.1, sz: 2.5, kind: 1 },
+  ];
+  // 导航星座（北斗/GPS/伽利略/GLONASS）：箱体 + 双翼（±Y）
+  const navParts: ModelPartDef[] = [
+    { x: 0, y: 0, z: 0, sx: 3.4, sy: 2.1, sz: 2.1, kind: 0 },
+    { x: 0, y: 4.6, z: 0, sx: 1.2, sy: 7.4, sz: 2.3, kind: 1 },
+    { x: 0, y: -4.6, z: 0, sx: 1.2, sy: 7.4, sz: 2.3, kind: 1 },
+  ];
+  // 气象星（风云/GOES/NOAA）：方箱 + 单翼 + 顶置扫描碟（慢转）
+  const wxParts: ModelPartDef[] = [
+    { x: 0, y: 0, z: 0, sx: 2.9, sy: 2.9, sz: 2.2, kind: 0 },
+    { x: 0, y: 4.7, z: 0, sx: 1.1, sy: 7.2, sz: 2.4, kind: 1 },
+    { x: 0, y: 0, z: 2.1, sx: 3.1, sy: 3.1, sz: 0.5, kind: 2, scan: true },
+  ];
+  return {
+    iss: mk(52, issParts),
+    css: mk(38, cssParts),
+    hst: mk(31, hstParts),
+    nav: mk(20, navParts),
+    wx: mk(24, wxParts),
+  };
+})();
+function modelOf(el: SatElement): { size: number; extent: number; parts: ModelPartDef[]; faces: ModelFace[] } | null {
+  if (el.norad === 25544) return SAT_MODELS.iss;
+  if (el.norad === 48274) return SAT_MODELS.css;
+  if (el.norad === 20580) return SAT_MODELS.hst;
+  if (el.tier === "meo") return SAT_MODELS.nav;
+  if (el.tier === "geo") return SAT_MODELS.wx;
+  return SAT_MODELS.wx; // LEO 气象/遥感族（NOAA-19）
+}
+
 export default function AtlasMap() {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -470,6 +541,7 @@ export default function AtlasMap() {
     let spinAngle = 0; // deg，绕倾斜后地轴的自转角
     let spinRate = 0; // deg/s（缓入缓出）
     let spinResumeAt = 0;
+    let simMs = Date.now(); // 单钟律：卫星传播与自转同一仪表时钟（挂自转积分同门，交互即停同停）
     function spinActive() {
       return (
         !reduced &&
@@ -1209,7 +1281,104 @@ export default function AtlasMap() {
       if (dash) ctx.setLineDash([]);
       ctx.restore();
     }
-    function drawSats(sunV: { Sx: number; Sy: number; Sz: number }) {
+    /** 示意模型：画家算法低模——顶点过同一投影基，面 Lambert 吃真实太阳，
+     * 背面剔除（法向·视轴），深度排序后按（材质×亮度档）合批填充。零 GL 改动。 */
+    function drawSatModel(
+      s: SatItem,
+      sunV: { Sx: number; Sy: number; Sz: number },
+      pu: { X: number; Y: number; Z: number },
+      vd: { X: number; Y: number; Z: number },
+      depth: number,
+      alphaK: number,
+      nowWall: number,
+    ): boolean {
+      const mdl = modelOf(s.el);
+      if (!mdl) return false;
+      // 模型基（ECEF）：体轴 T=航向；翼轴 W=太阳的垂轴分量（对日跟踪）；U=T×W
+      const Tx = vd.X, Ty = vd.Y, Tz = vd.Z;
+      const sd = sunV.Sx * Tx + sunV.Sy * Ty + sunV.Sz * Tz;
+      let Wx = sunV.Sx - sd * Tx, Wy = sunV.Sy - sd * Ty, Wz = sunV.Sz - sd * Tz;
+      let wl = Math.hypot(Wx, Wy, Wz);
+      if (wl < 0.05) {
+        const rd2 = pu.X * Tx + pu.Y * Ty + pu.Z * Tz;
+        Wx = pu.X - rd2 * Tx;
+        Wy = pu.Y - rd2 * Ty;
+        Wz = pu.Z - rd2 * Tz;
+        wl = Math.hypot(Wx, Wy, Wz) || 1;
+      }
+      Wx /= wl;
+      Wy /= wl;
+      Wz /= wl;
+      const Ux = Ty * Wz - Tz * Wy, Uy = Tz * Wx - Tx * Wz, Uz = Tx * Wy - Ty * Wx;
+      const rd = s.el.rDisp;
+      const scale = ((mdl.size * (W < 640 ? 0.65 : 1)) / mdl.extent) * zoom * (0.8 + 0.4 * depth);
+      const m = scale / (R * zoom); // 模型半尺寸（球半径单位）
+      const Rz2 = R * zoom;
+      const scanA = reduced ? 0.7 : (nowWall * 0.0006283); // 扫描碟 ~10s/圈（类别真行为）
+      const cs = Math.cos(scanA), sn = Math.sin(scanA);
+      const ox = rd * pu.X, oy = rd * pu.Y, oz = rd * pu.Z; // 轨道位置（显示半径）
+      interface Fq { pts: Array<[number, number]>; z: number; k: number; b: number }
+      const out: Fq[] = [];
+      for (const f of mdl.faces) {
+        // 世界面法向（基正交，直接组合）
+        const nx = f.n[0] * Tx + f.n[1] * Wx + f.n[2] * Ux;
+        const ny = f.n[0] * Ty + f.n[1] * Wy + f.n[2] * Uy;
+        const nz = f.n[0] * Tz + f.n[1] * Wz + f.n[2] * Uz;
+        if (nx * Ex + ny * Ey + nz * Ez <= 0.02) continue; // 背面剔除
+        const lit = Math.max(0, nx * sunV.Sx + ny * sunV.Sy + nz * sunV.Sz);
+        // 面四角（局部）；扫描部件绕体法向预旋
+        const ax = f.n[0] !== 0 ? "x" : f.n[1] !== 0 ? "y" : "z";
+        const hx = f.p.sx / 2, hy = f.p.sy / 2, hz = f.p.sz / 2;
+        const fixed = ax === "x" ? f.p.x + (f.n[0] > 0 ? hx : -hx) : ax === "y" ? f.p.y + (f.n[1] > 0 ? hy : -hy) : f.p.z + (f.n[2] > 0 ? hz : -hz);
+        const spans: Array<[number, number]> = ax === "x" ? [[f.p.y - hy, f.p.z - hz], [f.p.y + hy, f.p.z - hz], [f.p.y + hy, f.p.z + hz], [f.p.y - hy, f.p.z + hz]]
+          : ax === "y" ? [[f.p.x - hx, f.p.z - hz], [f.p.x + hx, f.p.z - hz], [f.p.x + hx, f.p.z + hz], [f.p.x - hx, f.p.z + hz]]
+            : [[f.p.x - hx, f.p.y - hy], [f.p.x + hx, f.p.y - hy], [f.p.x + hx, f.p.y + hy], [f.p.x - hx, f.p.y + hy]];
+        const pts: Array<[number, number]> = [];
+        let zSum = 0;
+        let ok = true;
+        for (const sp of spans) {
+          // spans 依轴序：x 面→[y,z]、y 面→[x,z]、z 面→[x,y]
+          let lx = ax === "x" ? fixed : sp[0];
+          let ly = ax === "y" ? fixed : ax === "x" ? sp[0] : sp[1];
+          let lz = ax === "z" ? fixed : sp[1];
+          if (f.p.scan) {
+            // 扫描碟绕局部 Z（体法向）慢转
+            const rx = lx * cs - ly * sn;
+            ly = lx * sn + ly * cs;
+            lx = rx;
+          }
+          const wx = ox + m * (lx * Tx + ly * Wx + lz * Ux);
+          const wy = oy + m * (lx * Ty + ly * Wy + lz * Uy);
+          const wz = oz + m * (lx * Tz + ly * Wz + lz * Uz);
+          const px = cx + Rz2 * (wx * Rx + wy * Ry);
+          const py = cy - Rz2 * (wx * Nx + wy * Ny + wz * Nz);
+          if (px < -60 || px > W + 60 || py < -60 || py > H + 60) ok = false;
+          pts.push([px, py]);
+          zSum += wx * Ex + wy * Ey + wz * Ez;
+        }
+        if (!ok) continue;
+        out.push({ pts, z: zSum / 4, k: f.p.kind, b: Math.round(lit * 3) });
+      }
+      out.sort((a, b2) => b2.z - a.z); // 远面先画
+      ctx.save();
+      ctx.lineWidth = 0.75;
+      for (let i = 0; i < out.length; i++) {
+        const q = out[i];
+        const base = MODEL_BASE[q.k];
+        const f2 = 0.24 + 0.76 * (q.b / 3); // ambient 0.24：背阳面留轮廓不真黑
+        ctx.fillStyle = `rgba(${Math.round(base[0] * f2)}, ${Math.round(base[1] * f2)}, ${Math.round(base[2] * f2)}, ${alphaK.toFixed(3)})`;
+        ctx.strokeStyle = `rgba(190, 205, 228, ${(0.24 * alphaK).toFixed(3)})`; // 棱线（背阳面即 rim）
+        ctx.beginPath();
+        ctx.moveTo(q.pts[0][0], q.pts[0][1]);
+        for (let j = 1; j < 4; j++) ctx.lineTo(q.pts[j][0], q.pts[j][1]);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+      return true;
+    }
+    function drawSats(sunV: { Sx: number; Sy: number; Sz: number }, tPos: number) {
       if (SAT_ITEMS.length === 0) return;
       const t = Date.now();
       const Rz2 = R * zoom;
@@ -1255,7 +1424,7 @@ export default function AtlasMap() {
           s.vis = false;
           continue; // 历元超龄：宁可缺席不可造假（弧随星同灭）
         }
-        const p = propagate(s.el, t);
+        const p = propagate(s.el, tPos);
         if (!p) {
           s.vis = false;
           continue;
@@ -1291,13 +1460,13 @@ export default function AtlasMap() {
         const coreA = clamp(a * (isGeo ? blink : 0.95) * flashK, 0, 1);
         const halo = isGeo ? 18 : s.el.tier === "meo" ? 11 : 10;
         const haloA = clamp(a * (isGeo ? blink * 0.75 : 0.55) * breath * flashK, 0, 1);
-        // 回看轨迹：真实传播的过去时间窗（时间窗放大＝保序变换；GEO 无尾是信息）
+        // 回看轨迹：真实传播的过去时间窗（sim 钟下按轨道弧取份——LEO 8%/MEO 7%；GEO 无尾是信息）
         if (s.el.tier !== "geo" && a > 0.25) {
-          const lookMs = (s.el.tier === "leo" ? 75 : 120) * 1000;
+          const lookMs = ((Math.PI * 2) / s.el.n) * 60000 * (s.el.tier === "leo" ? 0.08 : 0.07);
           let px0 = s.x, py0 = s.y;
           let pok = true;
           for (let k = 1; k <= 6; k++) {
-            const q = propagate(s.el, t - (lookMs * k) / 6);
+            const q = propagate(s.el, tPos - (lookMs * k) / 6);
             let qx = 0, qy = 0;
             let qok = false;
             if (q) {
@@ -1325,8 +1494,8 @@ export default function AtlasMap() {
         // 悬停全弧（选中才画轨道线）：过去半弧实线、未来半弧虚线消歧「将行」
         if (s === hoverSat) {
           const perMs = ((Math.PI * 2) / s.el.n) * 60000;
-          drawSatArc(s, t, -perMs / 2, 0, "rgba(201, 212, 228, 0.24)", 1);
-          drawSatArc(s, t, 0, perMs / 2, "rgba(201, 212, 228, 0.1)", 1, [3, 4]);
+          drawSatArc(s, tPos, -perMs / 2, 0, "rgba(201, 212, 228, 0.24)", 1);
+          drawSatArc(s, tPos, 0, perMs / 2, "rgba(201, 212, 228, 0.1)", 1, [3, 4]);
         }
         // 墨晕垫底（satvis 1px 暗描边惯例——任何底色上保持可读，全模式）
         ctx.fillStyle = "rgba(5, 8, 14, 0.4)";
@@ -1337,27 +1506,45 @@ export default function AtlasMap() {
         ctx.globalAlpha = haloA;
         ctx.drawImage(glowSprite(SILVER), s.x - halo, s.y - halo, halo * 2, halo * 2);
         ctx.globalAlpha = 1;
-        const col = `rgba(206, 218, 236, ${coreA.toFixed(3)})`; // 构造银蓝（金/朱/SILVER 语义色归灯）
-        if (s.el.tier === "meo") {
-          // 点 + 太阳能板两笔（「—·—」横担）；板面掠光：周期性反照增亮（物理真实）
-          const gph = (((t / 1000 + s.glintOff) % s.glintP) / s.glintP + 1) % 1;
-          const glint = gph < 0.12 ? Math.sin((gph / 0.12) * Math.PI) * 0.15 : 0;
-          const pcol = `rgba(206, 218, 236, ${clamp(coreA + glint, 0, 1).toFixed(3)})`;
-          ctx.strokeStyle = pcol;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(s.x - 4.5, s.y);
-          ctx.lineTo(s.x - 2, s.y);
-          ctx.moveTo(s.x + 2, s.y);
-          ctx.lineTo(s.x + 4.5, s.y);
-          ctx.stroke();
-          ctx.fillStyle = pcol;
-          ctx.fillRect(s.x - 1.5, s.y - 1.5, 3, 3);
-        } else {
-          ctx.fillStyle = col;
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, isGeo ? 3.5 : 3, 0, Math.PI * 2);
-          ctx.fill();
+        // 示意模型（zoom≥0.92 淡入；远看符号点、近看形体——画家算法零 GL 改动）
+        const modelK = smoothstep(0.92, 1.06, zoom);
+        let modelDrawn = false;
+        if (modelK > 0.02) {
+          const q2 = propagate(s.el, tPos + 20000); // 航向差分（20 sim 秒弧）
+          if (q2) {
+            const qf2 = Math.cos(q2.lat);
+            const vX = qf2 * Math.cos(q2.lon) - X, vY = qf2 * Math.sin(q2.lon) - Y, vZ = Math.sin(q2.lat) - Z;
+            const vl = Math.hypot(vX, vY, vZ);
+            if (vl > 1e-6)
+              modelDrawn = drawSatModel(
+                s, sunV, { X, Y, Z }, { X: vX / vl, Y: vY / vl, Z: vZ / vl },
+                clamp(zc / rd, -1, 1), clamp(a * modelK * flashK, 0, 1), t,
+              );
+          }
+        }
+        if (!modelDrawn) {
+          const col = `rgba(206, 218, 236, ${(coreA * (1 - modelK)).toFixed(3)})`; // 构造银蓝（金/朱/SILVER 语义色归灯）
+          if (s.el.tier === "meo") {
+            // 点 + 太阳能板两笔（「—·—」横担）；板面掠光：周期性反照增亮（物理真实）
+            const gph = (((t / 1000 + s.glintOff) % s.glintP) / s.glintP + 1) % 1;
+            const glint = gph < 0.12 ? Math.sin((gph / 0.12) * Math.PI) * 0.15 : 0;
+            const pcol = `rgba(206, 218, 236, ${(clamp(coreA + glint, 0, 1) * (1 - modelK)).toFixed(3)})`;
+            ctx.strokeStyle = pcol;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(s.x - 4.5, s.y);
+            ctx.lineTo(s.x - 2, s.y);
+            ctx.moveTo(s.x + 2, s.y);
+            ctx.lineTo(s.x + 4.5, s.y);
+            ctx.stroke();
+            ctx.fillStyle = pcol;
+            ctx.fillRect(s.x - 1.5, s.y - 1.5, 3, 3);
+          } else {
+            ctx.fillStyle = col;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, isGeo ? 3.5 : 3, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
     }
@@ -2076,7 +2263,9 @@ export default function AtlasMap() {
       const spinTarget = spinActive() ? 360 / SPIN_PERIOD_S : 0;
       spinRate += (spinTarget - spinRate) * (1 - Math.exp(-dtRaw * 2.2)); // ~0.45s 缓入缓出
       if (Math.abs(spinRate) > 0.005) {
-        spinAngle = (spinAngle + spinRate * dtRaw) % 360;
+        const dSpin = spinRate * dtRaw;
+        spinAngle = (spinAngle + dSpin) % 360;
+        simMs += dSpin * 240000; // 360° 自转 = 86400000ms 一天：卫星同钟快进（GEO 因此锚定经度）
       }
 
       /* 视角复原飞行：静默达到阈值 → 优雅飞回家；任意输入即刻打断 */
@@ -2222,7 +2411,7 @@ export default function AtlasMap() {
       if (!isGL) drawNoonMeridian(strong2); // 卫星图上 shader 已真实受光，日带=同件事画两遍
       drawSunAccent(isGL ? sunVec : realSun, strong2, isGL);
       if (!isGL) drawRim(realSun);
-      drawSats(sunVec); // 真实卫星层（球上、大气族下、交易所灯之下）
+      drawSats(sunVec, simMs); // 真实卫星层（球上、大气族下、交易所灯之下）
 
       let alive = !bootDone || rotDrag || rotating || dialDragging || springT >= 0 || repaint || spinTarget > 0 || !!flight || meteorCount() > 0;
       for (const l of lamps) {
@@ -2400,8 +2589,8 @@ export default function AtlasMap() {
       if (tip) {
         if (sat && !l) {
           const tierZh = sat.el.tier === "leo" ? "近地" : sat.el.tier === "meo" ? "中距" : "静止轨道";
-          const p = propagate(sat.el, Date.now());
-          tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前`;
+          const p = propagate(sat.el, simMs); // 高度与显示位置同钟（单钟律）
+          tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · 示意模型 · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前 · 仪表时钟×${Math.round(86400 / SPIN_PERIOD_S)}`;
           const tx = clamp(px + 14, 4, Math.max(4, W - 150));
           const ty = clamp(py - 30, 4, Math.max(4, H - 24));
           tip.style.transform = `translate(${tx}px, ${ty}px)`;
