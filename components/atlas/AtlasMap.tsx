@@ -1596,6 +1596,7 @@ export default function AtlasMap() {
       dur: number; // s
       seed: number;
       arrived?: number; // 已抵达信号计数（每信号爆一次）
+      lastBurstAt?: number; // 最近一次抵达爆闪时刻（离散爆闪：一球一爆，快收再爆）
     }
     const beams: Beam[] = [];
     const beamCooldown = new Map<string, number>();
@@ -1779,10 +1780,30 @@ export default function AtlasMap() {
         }
         if (arrived > (bm.arrived ?? 0)) {
           bm.arrived = arrived;
-          if (bm.kind === 1 && bm.lamp) bm.lamp.bloomT = Math.max(bm.lamp.bloomT, 0.5); // 灯连环爆（bloom 0.6s 衰减 vs 0.28s 间隔＝脉动常亮+连环扩张环）
+          bm.lastBurstAt = nowP; // 一球一爆：每个信号抵达独立爆闪（快收再爆，离散可数）
+          if (bm.kind === 1 && bm.lamp) bm.lamp.bloomT = Math.max(bm.lamp.bloomT, 0.3); // 灯底衬微亮（爆闪为主）
           else if (bm.kind === 0) {
             bm.a.flashUntil = nowP + 300;
             if (bm.b) bm.b.flashUntil = nowP + 300;
+          }
+        }
+        // 抵达爆闪演出（过顶链）：扩张环 + 辉斑 0.35s 快收——球到爆一次，多球连环爆
+        if (bm.kind === 1 && bm.lamp && bm.lastBurstAt !== undefined) {
+          const age = (nowP - bm.lastBurstAt) / 1000;
+          if (age >= 0 && age < 0.35) {
+            const k = age / 0.35;
+            ctx.strokeStyle = `rgba(235, 242, 252, ${(0.8 * (1 - k) * env).toFixed(3)})`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(bm.lamp.x, bm.lamp.y, 5 + k * 27, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = clamp(0.7 * (1 - k) * env, 0, 1);
+            ctx.drawImage(glowSprite(SILVER), bm.lamp.x - 10, bm.lamp.y - 10, 20, 20);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = `rgba(255, 250, 240, ${clamp(0.9 * (1 - k) * env, 0, 1).toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(bm.lamp.x, bm.lamp.y, 2.4 * (1 - k * 0.6), 0, Math.PI * 2);
+            ctx.fill();
           }
         }
         // 发端微辉（中继链）
