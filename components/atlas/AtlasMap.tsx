@@ -594,6 +594,7 @@ export default function AtlasMap() {
           mets: meteorCount(),
           fx: fxCount(),
           beams: beams.length,
+          mesh: meshEdges.size,
           satsVis: SAT_ITEMS.reduce((n, s) => n + (s.vis ? 1 : 0), 0),
           satsAll: SAT_ITEMS.length,
           sat0: (() => {
@@ -1822,6 +1823,17 @@ export default function AtlasMap() {
       }
       return null;
     }
+    /** 最近邻真距离（网骨架律条件④：悬停把唯一真值亮出）——单位向量大圆距 km */
+    function nearestNeighborKm(s: SatItem): number {
+      let best = Infinity;
+      for (const o of SAT_ITEMS) {
+        if (o === s || !o.vis) continue;
+        const d = Math.hypot(s.ux - o.ux, s.uy - o.uy, s.uz - o.uz);
+        const km = 2 * Math.asin(Math.min(1, d / 2)) * 6371;
+        if (km < best) best = km;
+      }
+      return best;
+    }
 
     /* ---- 链路层（几何真值连线律）----
      * 两类触发：真实中继链（公开架构事实：ISS/哈勃经 TDRS、天和经天链、北斗星间链——双真无需降格）
@@ -1864,12 +1876,119 @@ export default function AtlasMap() {
       const px = ax + dx * t, py = ay + dy * t, pz = az + dz * t;
       return px * px + py * py + pz * pz > 1.0;
     }
+    /* ---- 巨网骨架（网骨架律）：真 3D 距离 k 近邻 + 互见才连 + 常驻发丝线 ----
+     * 近邻为真实几何量、互连为呈现示意（README 双向披露）；不带脉冲/爆闪——事件语义专属 Beam 层。
+     * 工程红利：losClear 通过的弦在正交投影下=纯直线，零逐点遮挡成本。 */
+    interface MeshEdge { a: SatItem; b: SatItem; k: number }
+    const meshEdges = new Map<string, MeshEdge>();
+    let meshDegrade = false; // FPS 阀二级降档：k→1
+    function updateMesh(dtMs: number) {
+      const cand = SAT_ITEMS.filter((s) => s.vis && s.zc > 0);
+      const kN = meshDegrade ? 1 : W < 640 ? 2 : 3;
+      const want = new Set<string>();
+      for (const s of cand) {
+        const ds: Array<{ o: SatItem; d: number }> = [];
+        for (const o of cand) {
+          if (o === s) continue;
+          const dx = s.el.rDisp * s.ux - o.el.rDisp * o.ux;
+          const dy = s.el.rDisp * s.uy - o.el.rDisp * o.uy;
+          const dz = s.el.rDisp * s.uz - o.el.rDisp * o.uz;
+          ds.push({ o, d: dx * dx + dy * dy + dz * dz });
+        }
+        ds.sort((a, b) => a.d - b.d);
+        for (let i = 0; i < kN && i < ds.length; i++) {
+          const o = ds[i].o;
+          const key = s.el.norad < o.el.norad ? `${s.el.norad}-${o.el.norad}` : `${o.el.norad}-${s.el.norad}`;
+          want.add(key);
+          if (!meshEdges.has(key))
+            meshEdges.set(key, { a: s.el.norad < o.el.norad ? s : o, b: s.el.norad < o.el.norad ? o : s, k: 0 });
+        }
+      }
+      for (const [key, e] of meshEdges) {
+        const target = want.has(key) ? 1 : 0;
+        e.k += (target - e.k) * Math.min(1, dtMs / 400); // 生灭 0.4s 淡入出（呼吸感，无 pop）
+        if (target === 0 && e.k < 0.03) meshEdges.delete(key);
+      }
+    }
+    function drawMesh() {
+      if (!meshEdges.size) return;
+      const dimK = (W < 640 ? 0.5 : 1) * (meshDegrade ? 0.6 : 1);
+      ctx.save();
+      ctx.lineWidth = 0.75; // 发丝线
+      for (const e of meshEdges.values()) {
+        const A = e.a, B = e.b;
+        if (!A.vis || !B.vis || A.zc <= 0 || B.zc <= 0) continue;
+        if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
+        const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
+        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK; // 弦长→α
+        if (a0 <= 0.01) continue;
+        ctx.strokeStyle = `rgba(190, 205, 230, ${a0.toFixed(3)})`; // 骨架更冷（亮度金字塔最底层）
+        ctx.beginPath();
+        ctx.moveTo(A.x, A.y);
+        ctx.lineTo(B.x, B.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    /* ---- 轨道弧常驻（真值织笼，常驻升档条款：纯真值结构免注）----
+     * 四条异构真弧：ISS 51.6° / 北斗 IGSO（8 字地迹）/ NOAA-19 极轨 / GPS MEO。
+     * 49 点 ECEF 单位向量缓存 2s 刷新（自然错峰），帧间只做点积投影；实线——虚线是悬停「将行」专属语义。 */
+    const ORBIT_BONES = [25544, 44204, 33591, 40534];
+    const orbitCache = new Map<number, { pts: Float32Array; at: number }>();
+    function drawOrbitBones(tPos: number) {
+      const arcAlpha = W < 640 ? 0.075 : 0.055;
+      const bones = W < 640 ? ORBIT_BONES.slice(0, 2) : ORBIT_BONES;
+      ctx.save();
+      ctx.strokeStyle = `rgba(190, 205, 230, ${arcAlpha.toFixed(3)})`;
+      ctx.lineWidth = 1;
+      const Rz2 = R * zoom;
+      for (const gn of bones) {
+        const s0 = satByNorad(gn);
+        if (!s0 || stale(s0.el, Date.now())) continue;
+        let c = orbitCache.get(gn);
+        if (!c || tPos - c.at > 2000) {
+          const perMs = ((Math.PI * 2) / s0.el.n) * 60000;
+          const pts = new Float32Array(49 * 3);
+          for (let i = 0; i <= 48; i++) {
+            const q = propagate(s0.el, tPos - perMs / 2 + (perMs * i) / 48);
+            if (q) {
+              const qf = Math.cos(q.lat);
+              pts[i * 3] = qf * Math.cos(q.lon);
+              pts[i * 3 + 1] = qf * Math.sin(q.lon);
+              pts[i * 3 + 2] = Math.sin(q.lat);
+            }
+          }
+          c = { pts, at: tPos };
+          orbitCache.set(gn, c);
+        }
+        const rd = s0.el.rDisp;
+        ctx.beginPath();
+        let started = false;
+        for (let i = 0; i <= 48; i++) {
+          const X = c.pts[i * 3], Y = c.pts[i * 3 + 1], Z = c.pts[i * 3 + 2];
+          const zc = (X * Ex + Y * Ey + Z * Ez) * rd;
+          const rho = Math.sqrt(Math.max(0, rd * rd - zc * zc));
+          if (zc < 0 && rho < 1) {
+            started = false;
+            continue;
+          }
+          const x = cx + Rz2 * rd * (X * Rx + Y * Ry);
+          const y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     function updateBeams(nowP: number) {
       for (let k = beams.length - 1; k >= 0; k--) if (nowP > beams[k].t0 + beams[k].dur * 1000) beams.splice(k, 1);
       if (reduced || !bootDone) return;
       // 星间链：先试真实中继对（公开架构，强形态），八成概率再泛化到任意互见对（几何示意：互见即通）
-      if (nowP > relayNextAt && beams.length < (W < 640 ? 6 : 8)) {
-        relayNextAt = nowP + 2500 + Math.random() * 2500; // 密一些（原 10-18s）
+      if (nowP > relayNextAt && beams.length < (W < 640 ? 8 : 12)) {
+        relayNextAt = nowP + 1800 + Math.random() * 2200; // 密一些（原 10-18s）
         let picked: Beam | null = null;
         const tries = RELAY_PAIRS.slice().sort(() => Math.random() - 0.5);
         for (const [na, nb] of tries) {
@@ -1877,7 +1996,7 @@ export default function AtlasMap() {
           if (!A || !B || !A.vis || !B.vis) continue;
           if (beams.some((b) => (b.a === A && b.b === B) || (b.a === B && b.b === A))) continue;
           if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
-          picked = { kind: 0, real: true, a: A, b: B, lamp: null, t0: nowP, dur: 2.8 + Math.random() * 1.2, seed: Math.random() };
+          picked = { kind: 0, real: true, a: A, b: B, lamp: null, t0: nowP, dur: 5 + Math.random() * 3, seed: Math.random() };
           break;
         }
         if (!picked && Math.random() < 0.8) {
@@ -1890,7 +2009,7 @@ export default function AtlasMap() {
             if ((beamCooldown.get("g:" + pk) ?? 0) > nowP) continue; // 配对冷却：轮换搭档
             if (beams.some((b) => (b.a === A && b.b === B) || (b.a === B && b.b === A))) continue;
             if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
-            picked = { kind: 0, real: false, a: A, b: B, lamp: null, t0: nowP, dur: 2.2 + Math.random(), seed: Math.random() };
+            picked = { kind: 0, real: false, a: A, b: B, lamp: null, t0: nowP, dur: 4 + Math.random() * 2, seed: Math.random() };
             beamCooldown.set("g:" + pk, nowP + 9000 + Math.random() * 6000);
           }
         }
@@ -1920,8 +2039,8 @@ export default function AtlasMap() {
           continue;
         }
         if (bd < 0.88) st.armed = true;
-        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < (W < 640 ? 6 : 8) && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
-          beams.push({ kind: 1, real: false, a: s, b: null, lamp: best, t0: nowP, dur: 2.0, seed: Math.random() });
+        if (st.armed && st.dot > 0.92 && bd < st.dot && beams.length < (W < 640 ? 8 : 12) && (beamCooldown.get(`${s.el.norad}:${best.exch.mic}`) ?? 0) < nowP) {
+          beams.push({ kind: 1, real: false, a: s, b: null, lamp: best, t0: nowP, dur: 3.2, seed: Math.random() });
           beamCooldown.set(`${s.el.norad}:${best.exch.mic}`, nowP + 30000);
           s.flashUntil = nowP + 500;
           st.armed = false;
@@ -1934,7 +2053,7 @@ export default function AtlasMap() {
       for (const l of lamps) {
         const due = lampNextAt.get(l.exch.mic) ?? 0;
         if (nowP < due) continue;
-        if (l.z < 0.15 || beams.length >= (W < 640 ? 6 : 8)) {
+        if (l.z < 0.15 || beams.length >= (W < 640 ? 8 : 12)) {
           lampNextAt.set(l.exch.mic, nowP + 3000);
           continue;
         }
@@ -1950,7 +2069,7 @@ export default function AtlasMap() {
           }
         }
         if (pick) {
-          beams.push({ kind: 1, real: false, a: pick, b: null, lamp: l, t0: nowP, dur: 2.0, seed: Math.random() });
+          beams.push({ kind: 1, real: false, a: pick, b: null, lamp: l, t0: nowP, dur: 3.2, seed: Math.random() });
           beamCooldown.set(`${pick.el.norad}:${l.exch.mic}`, nowP + 30000);
           pick.flashUntil = nowP + 500;
           lampNextAt.set(l.exch.mic, nowP + 25000 + Math.random() * 20000);
@@ -1966,11 +2085,11 @@ export default function AtlasMap() {
         const due = geoNextAt.get(gn) ?? nowP + 5000 + Math.random() * 20000;
         if (nowP < due) continue;
         geoNextAt.set(gn, nowP + 45000 + Math.random() * 45000);
-        if (beams.length >= (W < 640 ? 6 : 8)) continue;
+        if (beams.length >= (W < 640 ? 8 : 12)) continue;
         const covered = lamps.filter((l) => l.z > 0.15 && g.ux * l.vx + g.uy * l.vy + g.uz * l.vz > 0.31 && !beams.some((b) => b.kind === 2 && b.lamp === l));
         if (!covered.length) continue;
         const l = covered[(Math.random() * covered.length) | 0];
-        beams.push({ kind: 2, real: false, a: g, b: null, lamp: l, t0: nowP, dur: 2.6, seed: Math.random() });
+        beams.push({ kind: 2, real: false, a: g, b: null, lamp: l, t0: nowP, dur: 4, seed: Math.random() });
         g.flashUntil = nowP + 500;
       }
     }
@@ -2009,7 +2128,7 @@ export default function AtlasMap() {
         }
         const lowK = bm.kind === 1 ? 0.7 : 1; // 过顶示意整体更低调（判例条件 b）
         // 底弦（波导；GEO 波束更宽更淡——区域覆盖的「驻留」读感）
-        ctx.strokeStyle = `rgba(206, 218, 236, ${((bm.kind === 2 ? 0.09 : 0.13) * env * (bm.kind === 1 ? 0.7 : 1)).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(206, 218, 236, ${((bm.kind === 2 ? 0.12 : 0.18) * env * (bm.kind === 1 ? 0.7 : 1)).toFixed(3)})`;
         ctx.lineWidth = bm.kind === 2 ? 1.5 : 1;
         ctx.beginPath();
         let started = false;
@@ -2777,7 +2896,10 @@ export default function AtlasMap() {
         fpsEmaMs += (rawMs - fpsEmaMs) * 0.05;
         if (fpsEmaMs > 22) {
           if (!fpsBadSince) fpsBadSince = nowP;
-          else if (nowP - fpsBadSince > 3000 && !narrowModelsOff) narrowModelsOff = true;
+          else if (nowP - fpsBadSince > 3000) {
+            if (!narrowModelsOff) narrowModelsOff = true;
+            else meshDegrade = true; // 二级降档：网骨架 k→1
+          }
         } else fpsBadSince = 0;
       }
       const dt = Math.min(0.05, (nowP - last) / 1000);
@@ -2975,7 +3097,10 @@ export default function AtlasMap() {
       if (!isGL) drawNoonMeridian(strong2); // 卫星图上 shader 已真实受光，日带=同件事画两遍
       drawSunAccent(isGL ? sunVec : realSun, strong2, isGL);
       if (!isGL) drawRim(realSun);
+      drawOrbitBones(simMs); // 轨道弧常驻（真值织笼，卫星层下）
       drawSats(sunVec, simMs); // 真实卫星层（球上、大气族下、交易所灯之下）
+      updateMesh(dt * 1000);
+      drawMesh(); // 巨网骨架（事件层下、结构底衬）
       updateBeams(nowP);
       drawBeams(nowP); // 链路层（星间中继 + 过顶示意）：卫星与灯之上
 
@@ -3158,7 +3283,7 @@ export default function AtlasMap() {
         if (sat && !l) {
           const tierZh = sat.el.tier === "leo" ? "近地" : sat.el.tier === "meo" ? "中距" : "静止轨道";
           const p = propagate(sat.el, simMs); // 高度与显示位置同钟（单钟律）
-          tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · 示意模型 · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前 · 仪表时钟×${Math.round(86400 / SPIN_PERIOD_S)}`;
+          tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · 最近邻 ${Math.round(nearestNeighborKm(sat))}km · 示意模型 · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前 · 仪表时钟×${Math.round(86400 / SPIN_PERIOD_S)}`;
           const tx = clamp(px + 14, 4, Math.max(4, W - 150));
           const ty = clamp(py - 30, 4, Math.max(4, H - 24));
           tip.style.transform = `translate(${tx}px, ${ty}px)`;
@@ -3191,7 +3316,7 @@ export default function AtlasMap() {
           if (tip) {
             const tierZh = sat.el.tier === "leo" ? "近地" : sat.el.tier === "meo" ? "中距" : "静止轨道";
             const p = propagate(sat.el, simMs); // 高度与显示位置同钟（单钟律）
-            tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · 示意模型 · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前 · 仪表时钟×${Math.round(86400 / SPIN_PERIOD_S)}`;
+            tip.textContent = `${sat.el.zh || sat.name} · ${tierZh} · ${p ? Math.round(p.altKm) + "km" : ""} · 最近邻 ${Math.round(nearestNeighborKm(sat))}km · 示意模型 · TLE 历元 ${Math.max(0, Math.round((Date.now() - sat.el.epoch) / 86400000))} 天前 · 仪表时钟×${Math.round(86400 / SPIN_PERIOD_S)}`;
             tip.style.transform = `translate(${clamp(tapDownSat.x + 14, 4, Math.max(4, W - 150))}px, ${clamp(tapDownSat.y - 30, 4, Math.max(4, H - 24))}px)`;
             tip.style.opacity = "1";
           }
@@ -3384,6 +3509,7 @@ export default function AtlasMap() {
       if (document.hidden) {
         clearMeteors(); // 回来无僵尸光条
         beams.length = 0; // 链路同清（回来再自然触发）
+        meshEdges.clear();
         clearTimeout(boundaryTimer);
         clearInterval(safetyTimer);
       } else {
