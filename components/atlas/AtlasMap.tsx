@@ -295,6 +295,7 @@ interface SatItem {
   zc: number;
   rho: number;
   vis: boolean;
+  hidden: boolean; // 球后被遮（坐标已补算——透视网笼用，实体不透视）
   ux: number; // ECEF 单位向量（链路层互见/过顶判定用）
   uy: number;
   uz: number;
@@ -319,7 +320,7 @@ const SAT_ITEMS: SatItem[] =
             if (el)
               out.push({
                 el, name: String(s.name || ""), x: 0, y: 0, zc: 0, rho: 1, vis: false,
-                ux: 0, uy: 0, uz: 0,
+                ux: 0, uy: 0, uz: 0, hidden: false,
                 ph: si * 2.399963, glintP: 8 + (si % 5), glintOff: si * 1.7, lit: 0, flashUntil: 0,
               });
             si++;
@@ -1663,6 +1664,16 @@ export default function AtlasMap() {
           }
         }
         ctx.stroke();
+        // 幽灵外箍：穿盘段（球后）降 α 补全整圈——笼的最大半径一笔，眼睛拿它定壳（透视律）
+        ctx.strokeStyle = "rgba(160, 175, 205, 0.055)";
+        ctx.beginPath();
+        for (let k = 0; k < 64; k += 2) {
+          const p1 = pts[k], p2 = pts[(k + 1) % 64];
+          if (p1.ok || p2.ok) continue; // 前侧段已在上面画过
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+        }
+        ctx.stroke();
         let bx: { x: number; y: number } | null = null;
         for (const p of pts) if (p.ok && (!bx || p.x > bx.x)) bx = p;
         if (W < 640) {
@@ -1684,6 +1695,7 @@ export default function AtlasMap() {
       for (const s of SAT_ITEMS) {
         if (stale(s.el, t)) {
           s.vis = false;
+          s.hidden = false; // 防陈旧坐标混入透视候选池
           continue; // 历元超龄：宁可缺席不可造假（弧随星同灭）
         }
         const p = propagate(s.el, tPos);
@@ -1706,9 +1718,19 @@ export default function AtlasMap() {
         const rho = Math.sqrt(Math.max(0, rd * rd - zc * zc)); // 屏面偏移（球半径单位）
         const limbK = zc < 0 ? clamp((rho - 0.96) / 0.04, 0, 1) : 1;
         if (zc < 0 && limbK <= 0.02) {
+          // 球后补算坐标（透视律：结构层要用真实球后位置；实体不透视——vis 仍 false，satAt 天然排除）
+          s.zc = zc;
+          s.rho = rho;
+          s.x = cx + Rz2 * rd * (X * Rx + Y * Ry);
+          s.y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
+          s.ux = X;
+          s.uy = Y;
+          s.uz = Z;
+          s.hidden = true;
           s.vis = false;
           continue;
         }
+        s.hidden = false;
         s.zc = zc;
         s.rho = rho;
         s.x = cx + Rz2 * rd * (X * Rx + Y * Ry);
@@ -1883,7 +1905,7 @@ export default function AtlasMap() {
     const meshEdges = new Map<string, MeshEdge>();
     let meshDegrade = false; // FPS 阀二级降档：k→1
     function updateMesh(dtMs: number) {
-      const cand = SAT_ITEMS.filter((s) => s.vis && s.zc > 0);
+      const cand = SAT_ITEMS.filter((s) => s.vis || s.hidden); // 全池（含球后）——拓扑稳定，透视网笼的后半张
       const kN = meshDegrade ? 1 : W < 640 ? 2 : 3;
       const want = new Set<string>();
       for (const s of cand) {
@@ -1913,16 +1935,47 @@ export default function AtlasMap() {
     function drawMesh() {
       if (!meshEdges.size) return;
       const dimK = (W < 640 ? 0.5 : 1) * (meshDegrade ? 0.6 : 1);
+      const aScale = Math.min(1, 45 / meshEdges.size); // 密度保险丝：边多整体压暗防灰雾
+      const alive = (q: SatItem) => q.vis || q.hidden;
       ctx.save();
       ctx.lineWidth = 0.75; // 发丝线
+      // pass 1：幽灵（球后段——透视律：位置真值、前亮后暗为硬性深度线索、更冷色）
+      if (!meshDegrade) {
+        const gk = dimK * (W < 640 ? 0.3 : 1);
+        for (const e of meshEdges.values()) {
+          const A = e.a, B = e.b;
+          if (!alive(A) || !alive(B)) continue;
+          const front = A.zc > 0 && B.zc > 0;
+          if (front && losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue; // 前侧互见边走 pass 2
+          const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
+          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35) * e.k * gk * aScale;
+          ctx.strokeStyle = `rgba(160, 175, 205, ${a0.toFixed(3)})`; // 更冷一档
+          ctx.beginPath();
+          ctx.moveTo(A.x, A.y);
+          ctx.lineTo(B.x, B.y);
+          ctx.stroke();
+        }
+        // 球后幽灵节点微点（网要收口——环不能穿「空」；实体不透视故只此微点无辉光）
+        ctx.fillStyle = `rgba(160, 175, 205, ${(0.1 * gk).toFixed(3)})`;
+        for (const q of SAT_ITEMS) {
+          if (!q.hidden) continue;
+          let linked = false;
+          for (const e of meshEdges.values()) if (e.a === q || e.b === q) { linked = true; break; }
+          if (!linked) continue;
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      // pass 2：前侧（现款）
       for (const e of meshEdges.values()) {
         const A = e.a, B = e.b;
         if (!A.vis || !B.vis || A.zc <= 0 || B.zc <= 0) continue;
         if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
         const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK; // 弦长→α
+        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK * aScale;
         if (a0 <= 0.01) continue;
-        ctx.strokeStyle = `rgba(190, 205, 230, ${a0.toFixed(3)})`; // 骨架更冷（亮度金字塔最底层）
+        ctx.strokeStyle = `rgba(190, 205, 230, ${a0.toFixed(3)})`;
         ctx.beginPath();
         ctx.moveTo(A.x, A.y);
         ctx.lineTo(B.x, B.y);
@@ -1933,13 +1986,13 @@ export default function AtlasMap() {
     /* ---- 轨道弧常驻（真值织笼，常驻升档条款：纯真值结构免注）----
      * 四条异构真弧：ISS 51.6° / 北斗 IGSO（8 字地迹）/ NOAA-19 极轨 / GPS MEO。
      * 49 点 ECEF 单位向量缓存 2s 刷新（自然错峰），帧间只做点积投影；实线——虚线是悬停「将行」专属语义。 */
-    const ORBIT_BONES = [25544, 44204, 33591, 40534];
+    const ORBIT_BONES = [25544, 44204, 33591, 40534, 44714, 42803, 40128]; // +星链 53°/铱星极轨/伽利略 MEO
     const orbitCache = new Map<number, { pts: Float32Array; at: number }>();
     function drawOrbitBones(tPos: number) {
-      const arcAlpha = W < 640 ? 0.075 : 0.055;
+      const arcAlpha = W < 640 ? 0.075 : 0.045;
+      const ghostAlpha = W < 640 ? 0.026 : 0.02; // 透视律：球后段降 α 连续（前亮后暗=深度线索）
       const bones = W < 640 ? ORBIT_BONES.slice(0, 2) : ORBIT_BONES;
       ctx.save();
-      ctx.strokeStyle = `rgba(190, 205, 230, ${arcAlpha.toFixed(3)})`;
       ctx.lineWidth = 1;
       const Rz2 = R * zoom;
       for (const gn of bones) {
@@ -1962,24 +2015,29 @@ export default function AtlasMap() {
           orbitCache.set(gn, c);
         }
         const rd = s0.el.rDisp;
-        ctx.beginPath();
-        let started = false;
-        for (let i = 0; i <= 48; i++) {
-          const X = c.pts[i * 3], Y = c.pts[i * 3 + 1], Z = c.pts[i * 3 + 2];
-          const zc = (X * Ex + Y * Ey + Z * Ez) * rd;
-          const rho = Math.sqrt(Math.max(0, rd * rd - zc * zc));
-          if (zc < 0 && rho < 1) {
-            started = false;
-            continue;
+        // 双 pass：前段常 α + 球后段幽灵 α（断笔改降亮——笼的后半张）
+        for (let pass = 0; pass < 2; pass++) {
+          ctx.strokeStyle = `rgba(190, 205, 230, ${(pass === 0 ? arcAlpha : ghostAlpha).toFixed(3)})`;
+          ctx.beginPath();
+          let started = false;
+          for (let i = 0; i <= 48; i++) {
+            const X = c.pts[i * 3], Y = c.pts[i * 3 + 1], Z = c.pts[i * 3 + 2];
+            const zc = (X * Ex + Y * Ey + Z * Ez) * rd;
+            const rho = Math.sqrt(Math.max(0, rd * rd - zc * zc));
+            const behind = zc < 0 && rho < 1;
+            if ((pass === 0) === behind) {
+              started = false;
+              continue;
+            }
+            const x = cx + Rz2 * rd * (X * Rx + Y * Ry);
+            const y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else ctx.lineTo(x, y);
           }
-          const x = cx + Rz2 * rd * (X * Rx + Y * Ry);
-          const y = cy - Rz2 * rd * (X * Nx + Y * Ny + Z * Nz);
-          if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-          } else ctx.lineTo(x, y);
+          ctx.stroke();
         }
-        ctx.stroke();
       }
       ctx.restore();
     }
