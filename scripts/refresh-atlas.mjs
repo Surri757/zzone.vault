@@ -357,6 +357,14 @@ const SATS = [
   { norad: 44059, name: "ONEWEB-0008", zh: "OneWeb 0008", tier: "leo" },
   { norad: 40882, name: "INMARSAT 5-F3", zh: "国际海事 5-F3", tier: "geo" },
   { norad: 41380, name: "SES-9", zh: "SES-9", tier: "geo" },
+  { norad: 62339, name: "GPS BIII-7 (PRN 01)", zh: "GPS III 01", tier: "meo" },
+  { norad: 39533, name: "GPS BIIF-5 (PRN 30)", zh: "GPS IIF 30", tier: "meo" },
+  { norad: 26407, name: "GPS BIIR-5 (PRN 22)", zh: "GPS IIR 22", tier: "meo" },
+  { norad: 32275, name: "COSMOS 2433 (720)", zh: "格洛纳斯 720", tier: "meo" },
+  { norad: 40315, name: "COSMOS 2501 (702K)", zh: "格洛纳斯 K 702", tier: "meo" },
+  { norad: 59598, name: "GSAT0225 (GALILEO 29)", zh: "伽利略 29", tier: "meo" },
+  { norad: 41550, name: "GSAT0210 (GALILEO 13)", zh: "伽利略 13", tier: "meo" },
+  { norad: 43928, name: "IRIDIUM 175", zh: "铱星 175", tier: "leo" },
 ];
 
 /** 拉取精选卫星 TLE：缓存 → CelesTrak 直连（内容校验防节流 200 假响应）→ 全败不写文件（卫星层缺席） */

@@ -420,7 +420,7 @@ function modelOf(el: SatElement): { size: number; extent: number; parts: ModelPa
   if (el.norad === 20580) return SAT_MODELS.hst;
   if (el.norad === 42915 || el.norad === 49011 || el.norad === 40882 || el.norad === 41380) return SAT_MODELS.relay; // 中继/通信 GEO 同类
   if (el.norad === 44714 || el.norad === 44718 || (el.norad >= 44057 && el.norad <= 44059)) return SAT_MODELS.sl; // 平板宽带批产类（星链/OneWeb）
-  if (el.norad === 42803 || el.norad === 42811 || el.norad === 41917 || el.norad === 41924) return SAT_MODELS.nav; // 铱星：通信箱+双翼（按类别建档，不新开式样）
+  if (el.norad === 42803 || el.norad === 42811 || el.norad === 41917 || el.norad === 41924 || el.norad === 43928) return SAT_MODELS.nav; // 铱星：通信箱+双翼（按类别建档，不新开式样）
   if (el.tier === "meo") return SAT_MODELS.nav;
   if (el.tier === "geo") return SAT_MODELS.wx;
   return SAT_MODELS.wx; // LEO 气象/遥感族（NOAA-19）
@@ -596,6 +596,19 @@ export default function AtlasMap() {
           fx: fxCount(),
           beams: beams.length,
           mesh: meshEdges.size,
+          meshGrid: (() => { // 覆盖均匀探针：网边中点 3×3 屏格（前侧+幽灵分计）
+            const g = new Array(18).fill(0);
+            for (const e of meshEdges.values()) {
+              const A = e.a, B = e.b;
+              if (!(A.vis || A.hidden) || !(B.vis || B.hidden)) continue;
+              const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+              const cx9 = mx < W / 3 ? 0 : mx < (2 * W) / 3 ? 1 : 2;
+              const cy9 = my < H / 3 ? 0 : my < (2 * H) / 3 ? 1 : 2;
+              const ghost = A.zc <= 0 || B.zc <= 0;
+              g[cy9 * 3 + cx9 + (ghost ? 9 : 0)]++;
+            }
+            return g;
+          })(),
           satsVis: SAT_ITEMS.reduce((n, s) => n + (s.vis ? 1 : 0), 0),
           satsAll: SAT_ITEMS.length,
           sat0: (() => {
