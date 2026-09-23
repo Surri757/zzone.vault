@@ -338,72 +338,137 @@ const smoothstep = (a: number, b: number, x: number) => {
 };
 
 /* ---- 示意模型（符号层判例：只断言类别共性——桁架站/核心舱/镜筒/导航箱/气象盒，
- * 不断言个体构型；来源=仓内手写低模，许可最干净。开源外源路径备档：Quaternius CC0 /
+ * 不断言个体构型；判则「量可随真、名不可指认」：连续量（比例/部件间隙/圆柱语言）可参照
+ * 真实典型，离散指纹（等距部件计数恰好拼出真星构型、独有件如机械臂）禁——ISS 翼位
+ * 非等距三对即此律的落点。来源=仓内手写低模，许可最干净。开源外源路径备档：Quaternius CC0 /
  * NASA 3D Resources 公有领域，keeptrack AGPL 不碰）。姿态：体轴沿航向（真实速度方向差分），
  * 翼轴对日（太阳矢量是场景真值）；气象星扫描仪绕体法向慢转（类别真行为）。 ---- */
-interface ModelPartDef { x: number; y: number; z: number; sx: number; sy: number; sz: number; kind: 0 | 1 | 2; scan?: boolean }
-interface ModelFace { p: ModelPartDef; n: [number, number, number] } // n：局部面法向（±轴单位）
+interface ModelPartDef {
+  x: number; y: number; z: number; sx: number; sy: number; kind: 0 | 1 | 2 | 3; scan?: boolean;
+  /** box：sx/sy/sz=三向半长×2。cyl：sx=轴长、sy=直径、sz 不用（seg 棱柱近似圆柱）。taper：sx=轴长、sy=起端径、sz=末端径（锥台）。axis=柱轴方向 */
+  shape?: "box" | "cyl" | "taper"; seg?: number; axis?: "x" | "z"; sz?: number;
+}
+interface ModelFace { v: Array<[number, number, number]>; n: [number, number, number]; k: 0 | 1 | 2 | 3; scan?: boolean } // v：局部面顶点（任意边数）；n：局部面法向
 const MODEL_BASE: Array<[number, number, number]> = [
   [206, 218, 236], // kind0 本体银
   [140, 164, 204], // kind1 太阳翼深蓝
   [170, 182, 198], // kind2 桁架/天线暗银
+  [232, 236, 240], // kind3 散热板暖白
 ];
-const MODEL_FILL_CACHE: string[] = []; // 材质×亮度档 12 串 rgb 预缓存（α 走 globalAlpha）
+const MODEL_FILL_CACHE: string[] = []; // 材质×亮度档 32 串 rgb 预缓存（4 材质×8 档，α 走 globalAlpha）
 const SAT_MODELS: Record<string, { size: number; extent: number; parts: ModelPartDef[]; faces: ModelFace[] }> = (() => {
+  const v3 = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
   const mk = (size: number, parts: ModelPartDef[]) => {
     let extent = 1;
-    for (const p of parts) extent = Math.max(extent, Math.abs(p.x) + p.sx / 2, Math.abs(p.y) + p.sy / 2, Math.abs(p.z) + p.sz / 2);
+    for (const p of parts) {
+      const rad = Math.max(p.sy, p.sz ?? 0) / 2;
+      const ex = p.shape && p.axis === "z" ? Math.abs(p.x) + rad : Math.abs(p.x) + p.sx / 2;
+      const ey = Math.abs(p.y) + (p.shape ? rad : p.sy / 2);
+      const ez = p.shape && p.axis === "z" ? Math.abs(p.z) + p.sx / 2 : Math.abs(p.z) + (p.shape ? rad : (p.sz ?? 0) / 2);
+      extent = Math.max(extent, ex, ey, ez);
+    }
     const faces: ModelFace[] = [];
     for (const p of parts) {
-      faces.push({ p, n: [1, 0, 0] }, { p, n: [-1, 0, 0] }, { p, n: [0, 1, 0] }, { p, n: [0, -1, 0] }, { p, n: [0, 0, 1] }, { p, n: [0, 0, -1] });
+      if (!p.shape || p.shape === "box") {
+        const x0 = p.x - p.sx / 2, x1 = p.x + p.sx / 2, y0 = p.y - p.sy / 2, y1 = p.y + p.sy / 2, z0 = p.z - (p.sz ?? 0) / 2, z1 = p.z + (p.sz ?? 0) / 2;
+        faces.push({ v: [v3(x1, y0, z0), v3(x1, y1, z0), v3(x1, y1, z1), v3(x1, y0, z1)], n: [1, 0, 0], k: p.kind, scan: p.scan });
+        faces.push({ v: [v3(x0, y0, z0), v3(x0, y0, z1), v3(x0, y1, z1), v3(x0, y1, z0)], n: [-1, 0, 0], k: p.kind, scan: p.scan });
+        faces.push({ v: [v3(x0, y1, z0), v3(x0, y1, z1), v3(x1, y1, z1), v3(x1, y1, z0)], n: [0, 1, 0], k: p.kind, scan: p.scan });
+        faces.push({ v: [v3(x0, y0, z0), v3(x1, y0, z0), v3(x1, y0, z1), v3(x0, y0, z1)], n: [0, -1, 0], k: p.kind, scan: p.scan });
+        faces.push({ v: [v3(x0, y0, z1), v3(x1, y0, z1), v3(x1, y1, z1), v3(x0, y1, z1)], n: [0, 0, 1], k: p.kind, scan: p.scan });
+        faces.push({ v: [v3(x0, y0, z0), v3(x0, y1, z0), v3(x1, y1, z0), v3(x1, y0, z0)], n: [0, 0, -1], k: p.kind, scan: p.scan });
+        continue;
+      }
+      // 棱柱/锥台：沿局部 x 生成，axis=z 时坐标 x↔z 互换（旋转对称体，镜像即旋转）
+      const seg = p.seg ?? 8;
+      const L = p.sx;
+      const rA = p.sy / 2; // 起端半径（cyl 两端同径）
+      const rB = p.shape === "cyl" ? p.sy / 2 : (p.sz ?? 0) / 2; // 末端半径（taper 收放）
+      const a0 = p.x - L / 2, a1 = p.x + L / 2;
+      for (let i = 0; i < seg; i++) {
+        const t0 = (i / seg) * Math.PI * 2, t1 = ((i + 1) / seg) * Math.PI * 2;
+        const s0 = Math.sin(t0), c0 = Math.cos(t0), s1 = Math.sin(t1), c1 = Math.cos(t1);
+        const sm = (s0 + s1) / 2, cm = (c0 + c1) / 2;
+        const nl = Math.hypot(rA - rB, L * sm, L * cm) || 1; // 弦中点非单位向量——按真模长归一
+        const n: [number, number, number] = [(rA - rB) / nl, (L * sm) / nl, (L * cm) / nl];
+        faces.push({
+          v: [v3(a0, rA * s0, rA * c0), v3(a0, rA * s1, rA * c1), v3(a1, rB * s1, rB * c1), v3(a1, rB * s0, rB * c0)],
+          n, k: p.kind, scan: p.scan,
+        });
+      }
+      const capF: Array<[number, number, number]> = [];
+      const capB: Array<[number, number, number]> = [];
+      for (let i = 0; i < seg; i++) {
+        const t = (i / seg) * Math.PI * 2;
+        capF.push(v3(a1, rB * Math.sin(t), rB * Math.cos(t)));
+        capB.push(v3(a0, rA * Math.sin(t), rA * Math.cos(t)));
+      }
+      faces.push({ v: capF, n: [1, 0, 0], k: p.kind, scan: p.scan });
+      faces.push({ v: capB, n: [-1, 0, 0], k: p.kind, scan: p.scan });
+      if (p.axis === "z") {
+        // 生成期坐标置换 x↔z（含法向）——不引入运行时分支
+        for (let fi = faces.length - (seg + 2); fi < faces.length; fi++) {
+          const f = faces[fi];
+          f.v = f.v.map((w) => v3(w[2], w[1], w[0]));
+          f.n = [f.n[2], f.n[1], f.n[0]];
+        }
+      }
     }
     return { size, extent, parts, faces };
   };
-  // 国际空间站：主桁架（X 向长梁）+ 四对太阳翼（±Y 展开）+ 中部实验舱群（Z 向堆叠）
+  // 国际空间站（类别桁架站）：主桁架（X 向长梁）+ 垂向六棱舱段串（Z 向堆叠，端头节点舱）
+  // + 白色散热板 + 非等距三对太阳翼（去指纹判则：不取四对等距=真星实测构型）
   const issParts: ModelPartDef[] = [
     { x: 0, y: 0, z: 0, sx: 26, sy: 1.1, sz: 1.1, kind: 2 },
-    { x: 0, z: 2.4, y: 0, sx: 7.5, sy: 1.9, sz: 1.9, kind: 0 },
-    { x: 0, z: 4.3, y: 0, sx: 5, sy: 1.5, sz: 1.5, kind: 0 },
+    { x: 0, y: 0, z: 0.6, sx: 5.5, sy: 2.4, kind: 0, shape: "cyl", seg: 6, axis: "z" },
+    { x: 0, y: 0, z: 5.3, sx: 4.5, sy: 2.2, kind: 0, shape: "cyl", seg: 6, axis: "z" },
+    { x: 0, y: 0, z: 8.4, sx: 2.2, sy: 2.7, kind: 0, shape: "cyl", seg: 6, axis: "z" },
+    { x: 3.6, y: 0, z: -2.6, sx: 7, sy: 2.2, sz: 0.5, kind: 3 },
   ];
-  for (const wx of [-13, -6.5, 6.5, 13]) for (const wy of [-5.6, 5.6]) issParts.push({ x: wx, y: wy, z: 0, sx: 2, sy: 6.4, sz: 3.4, kind: 1 });
-  // 天和核心舱：圆柱体轴 + 两端单侧太阳翼 + 节点舱
+  for (const wx of [-12, -4, 9]) for (const wy of [-5.2, 5.2]) issParts.push({ x: wx, y: wy, z: 0, sx: 0.7, sy: 6.2, sz: 2.3, kind: 1 });
+  // 天和核心舱（类别核心舱）：六棱舱身 + 尾部收细锥台 + 前端节点舱/对接段 + 单侧双翼（留缝不贴身）
   const cssParts: ModelPartDef[] = [
-    { x: 0, y: 0, z: 0, sx: 11, sy: 2.5, sz: 2.5, kind: 0 },
-    { x: 6.7, y: 4.8, z: 0, sx: 1.7, sy: 7.4, sz: 2.4, kind: 1 },
-    { x: -6.7, y: -4.8, z: 0, sx: 1.7, sy: 7.4, sz: 2.4, kind: 1 },
-    { x: 0, y: 0, z: 2.5, sx: 3.6, sy: 1.7, sz: 1.7, kind: 2 },
+    { x: 0, y: 0, z: 0, sx: 10, sy: 2.6, kind: 0, shape: "cyl", seg: 6 },
+    { x: -5.8, y: 0, z: 0, sx: 1.6, sy: 2.6, sz: 1.9, kind: 0, shape: "taper", seg: 6 },
+    { x: 5.9, y: 0, z: 0, sx: 2.2, sy: 2.9, kind: 0, shape: "cyl", seg: 6 },
+    { x: 7.6, y: 0, z: 0, sx: 1.2, sy: 1.5, sz: 1.5, kind: 2 },
+    { x: 4.2, y: 5.2, z: 0, sx: 0.7, sy: 7.2, sz: 2.4, kind: 1 },
+    { x: 4.2, y: -5.2, z: 0, sx: 0.7, sy: 7.2, sz: 2.4, kind: 1 },
   ];
-  // 哈勃：镜筒体 + 前端遮光口 + 尾部双翼（±Z）
+  // 哈勃（类别镜筒望远镜）：八棱镜筒 + 外张遮光口锥台 + 尾部设备环 + 薄翼（±Z，留缝）
   const hstParts: ModelPartDef[] = [
-    { x: 0, y: 0, z: 0, sx: 9, sy: 2.2, sz: 2.2, kind: 0 },
-    { x: 5.3, y: 0, z: 0, sx: 1.4, sy: 2.8, sz: 2.8, kind: 2 },
-    { x: -3.5, y: 0, z: 2.7, sx: 3.7, sy: 1.1, sz: 2.5, kind: 1 },
-    { x: -3.5, y: 0, z: -2.7, sx: 3.7, sy: 1.1, sz: 2.5, kind: 1 },
+    { x: -0.4, y: 0, z: 0, sx: 8.4, sy: 2.2, kind: 0, shape: "cyl", seg: 8 },
+    { x: 4.9, y: 0, z: 0, sx: 1.7, sy: 2.2, sz: 3.1, kind: 2, shape: "taper", seg: 8 },
+    { x: -5.4, y: 0, z: 0, sx: 1.8, sy: 2.7, kind: 2, shape: "cyl", seg: 6 },
+    { x: -2.8, y: 0, z: 2.5, sx: 3.2, sy: 1.0, sz: 2.4, kind: 1 },
+    { x: -2.8, y: 0, z: -2.5, sx: 3.2, sy: 1.0, sz: 2.4, kind: 1 },
   ];
-  // 导航星座（北斗/GPS/伽利略/GLONASS）：箱体 + 双翼（±Y）
+  // 导航星座（北斗/GPS/伽利略/GLONASS）：箱体 + 双翼（±Y 留缝）+ 对地天线杆（类别身份件）
   const navParts: ModelPartDef[] = [
     { x: 0, y: 0, z: 0, sx: 3.4, sy: 2.1, sz: 2.1, kind: 0 },
-    { x: 0, y: 4.6, z: 0, sx: 1.2, sy: 7.4, sz: 2.3, kind: 1 },
-    { x: 0, y: -4.6, z: 0, sx: 1.2, sy: 7.4, sz: 2.3, kind: 1 },
+    { x: 0, y: 5.1, z: 0, sx: 1.0, sy: 7.4, sz: 2.3, kind: 1 },
+    { x: 0, y: -5.1, z: 0, sx: 1.0, sy: 7.4, sz: 2.3, kind: 1 },
+    { x: 0, y: 0, z: -1.7, sx: 0.8, sy: 0.8, sz: 1.2, kind: 2 },
   ];
-  // 气象星（风云/GOES/NOAA）：方箱 + 单翼 + 顶置扫描碟（慢转）
+  // 气象星（风云/GOES/NOAA）：方箱 + 单翼（留缝）+ 顶置八棱扫描碟（慢转）
   const wxParts: ModelPartDef[] = [
     { x: 0, y: 0, z: 0, sx: 2.9, sy: 2.9, sz: 2.2, kind: 0 },
-    { x: 0, y: 4.7, z: 0, sx: 1.1, sy: 7.2, sz: 2.4, kind: 1 },
-    { x: 0, y: 0, z: 2.1, sx: 3.1, sy: 3.1, sz: 0.5, kind: 2, scan: true },
+    { x: 0, y: 5.2, z: 0, sx: 1.0, sy: 7.2, sz: 2.4, kind: 1 },
+    { x: 0, y: 0, z: 2.0, sx: 0.55, sy: 3.3, kind: 2, shape: "cyl", seg: 8, axis: "z", scan: true },
   ];
-  // 中继星（TDRS/天链）：箱体 + 双大翼 + 顶置双天线碟（一碟对地慢转）——「大翼+天线阵」独占符号
+  // 中继星（TDRS/天链）：箱体 + 桁塔 + 双天线碟（一碟对地慢转；副碟银色拉开明度分离）+ 双大翼（留缝）
   const relayParts: ModelPartDef[] = [
     { x: 0, y: 0, z: 0, sx: 3.2, sy: 2.6, sz: 2.6, kind: 0 },
-    { x: 0, y: 5.4, z: 0, sx: 1.2, sy: 9.6, sz: 2.6, kind: 1 },
-    { x: 0, y: -5.4, z: 0, sx: 1.2, sy: 9.6, sz: 2.6, kind: 1 },
-    { x: 1.4, y: 0, z: 2.4, sx: 2.4, sy: 2.4, sz: 0.4, kind: 2, scan: true },
-    { x: -1.4, y: 0, z: 2.4, sx: 1.8, sy: 1.8, sz: 0.4, kind: 2 },
+    { x: 0, y: 6.1, z: 0, sx: 0.8, sy: 9.2, sz: 2.6, kind: 1 },
+    { x: 0, y: -6.1, z: 0, sx: 0.8, sy: 9.2, sz: 2.6, kind: 1 },
+    { x: 0, y: 0, z: 1.7, sx: 1.0, sy: 1.0, sz: 2.4, kind: 2 },
+    { x: 1.4, y: 0, z: 3.4, sx: 0.45, sy: 2.5, kind: 2, shape: "cyl", seg: 8, axis: "z", scan: true },
+    { x: -1.4, y: 0, z: 3.4, sx: 0.4, sy: 1.9, kind: 0, shape: "cyl", seg: 8, axis: "z" },
   ];
-  // 星链：扁平平板体 + 偏置单翼（类别真特征）
+  // 星链：扁平平板体 + 偏置薄板单翼（类别真特征；14px 不加面，只修比例）
   const slParts: ModelPartDef[] = [
     { x: 0, y: 0, z: 0, sx: 4.4, sy: 1.2, sz: 2.6, kind: 0 },
-    { x: 2.6, y: 0, z: 0.9, sx: 2.2, sy: 0.9, sz: 1.8, kind: 1 },
+    { x: 2.7, y: 0, z: 0.9, sx: 3.0, sy: 0.7, sz: 1.5, kind: 1 },
   ];
   return {
     iss: mk(52, issParts),
@@ -1586,22 +1651,13 @@ export default function AtlasMap() {
         const nz = f.n[0] * Tz + f.n[1] * Wz + f.n[2] * Uz;
         if (nx * Ex + ny * Ey + nz * Ez <= 0.02) continue; // 背面剔除
         const lit = Math.max(0, nx * sunV.Sx + ny * sunV.Sy + nz * sunV.Sz);
-        // 面四角（局部）；扫描部件绕体法向预旋
-        const ax = f.n[0] !== 0 ? "x" : f.n[1] !== 0 ? "y" : "z";
-        const hx = f.p.sx / 2, hy = f.p.sy / 2, hz = f.p.sz / 2;
-        const fixed = ax === "x" ? f.p.x + (f.n[0] > 0 ? hx : -hx) : ax === "y" ? f.p.y + (f.n[1] > 0 ? hy : -hy) : f.p.z + (f.n[2] > 0 ? hz : -hz);
-        const spans: Array<[number, number]> = ax === "x" ? [[f.p.y - hy, f.p.z - hz], [f.p.y + hy, f.p.z - hz], [f.p.y + hy, f.p.z + hz], [f.p.y - hy, f.p.z + hz]]
-          : ax === "y" ? [[f.p.x - hx, f.p.z - hz], [f.p.x + hx, f.p.z - hz], [f.p.x + hx, f.p.z + hz], [f.p.x - hx, f.p.z + hz]]
-            : [[f.p.x - hx, f.p.y - hy], [f.p.x + hx, f.p.y - hy], [f.p.x + hx, f.p.y + hy], [f.p.x - hx, f.p.y + hy]];
+        // 面顶点（局部，任意边数——棱柱端盖/盒面同路）；扫描部件绕体法向预旋
         const pts: Array<[number, number]> = [];
         let zSum = 0;
         let ok = true;
-        for (const sp of spans) {
-          // spans 依轴序：x 面→[y,z]、y 面→[x,z]、z 面→[x,y]
-          let lx = ax === "x" ? fixed : sp[0];
-          let ly = ax === "y" ? fixed : ax === "x" ? sp[0] : sp[1];
-          let lz = ax === "z" ? fixed : sp[1];
-          if (f.p.scan) {
+        for (const v of f.v) {
+          let lx = v[0], ly = v[1], lz = v[2];
+          if (f.scan) {
             // 扫描碟绕局部 Z（体法向）慢转
             const rx = lx * cs - ly * sn;
             ly = lx * sn + ly * cs;
@@ -1617,19 +1673,23 @@ export default function AtlasMap() {
           zSum += wx * Ex + wy * Ey + wz * Ez;
         }
         if (!ok) continue;
-        out.push({ pts, z: zSum / 4, k: f.p.kind, b: Math.round(lit * 3) });
+        // 8 档亮度（棱柱柱面成立的前提——4 档相邻柱面同档糊成平板）；翼面对日亮一档=廉价镜面
+        const b = Math.min(7, Math.round(lit * 7) + (f.k === 1 && lit > 0.8 ? 1 : 0));
+        out.push({ pts, z: zSum / pts.length, k: f.k, b });
       }
       out.sort((a, b2) => b2.z - a.z); // 远面先画
+      const wide = W >= 640;
+      const mpx = mdl.extent * scale; // 模型屏显尺寸（px）——细节层门控
       ctx.save();
       ctx.lineWidth = 0.75;
-      const noStroke = W < 640; // 窄屏去棱线 stroke（×0.75 后难辨，省一半绘制）
       ctx.globalAlpha = clamp(alphaK, 0, 1);
+      const grid: number[] = []; // 电池串栅格线段（缓存到填充后画，不打断 stroke 状态）
       for (let i = 0; i < out.length; i++) {
         const q = out[i];
         const base = MODEL_BASE[q.k];
-        const f2 = 0.24 + 0.76 * (q.b / 3); // ambient 0.24：背阳面留轮廓不真黑
-        // fillStyle 12 串预缓存（材质×亮度档）——α 走 globalAlpha，26 颗全画不产模板串
-        const ckey = q.k * 4 + q.b;
+        const f2 = 0.24 + 0.76 * (q.b / 7); // ambient 0.24：背阳面留轮廓不真黑
+        // fillStyle 32 串预缓存（材质×亮度档）——α 走 globalAlpha，34 颗全画不产模板串
+        const ckey = q.k * 8 + q.b;
         let fillC = MODEL_FILL_CACHE[ckey];
         if (!fillC) {
           fillC = MODEL_FILL_CACHE[ckey] = `rgb(${Math.round(base[0] * f2)}, ${Math.round(base[1] * f2)}, ${Math.round(base[2] * f2)})`;
@@ -1637,10 +1697,33 @@ export default function AtlasMap() {
         ctx.fillStyle = fillC;
         ctx.beginPath();
         ctx.moveTo(q.pts[0][0], q.pts[0][1]);
-        for (let j = 1; j < 4; j++) ctx.lineTo(q.pts[j][0], q.pts[j][1]);
+        for (let j = 1; j < q.pts.length; j++) ctx.lineTo(q.pts[j][0], q.pts[j][1]);
         ctx.closePath();
         ctx.fill();
-        if (!noStroke) ctx.stroke();
+        // 窄屏去棱线 stroke 省绘制，但大模型保本体棱线（工程图精致感的下限）
+        if (wide || (q.k === 0 && mpx > 13)) ctx.stroke();
+        // 太阳翼电池串栅格：两分线（类别共性构造语言，程序化泛型不指向个体）
+        if (q.k === 1 && wide && q.pts.length === 4 && mpx > 16) {
+          const [c0, c1, c2, c3] = q.pts;
+          const e1x = c1[0] - c0[0], e1y = c1[1] - c0[1], e2x = c3[0] - c0[0], e2y = c3[1] - c0[1];
+          const l1 = Math.hypot(e1x, e1y), l2 = Math.hypot(e2x, e2y);
+          if (Math.max(l1, l2) > 14 && Math.min(l1, l2) > 4.2) {
+            for (const t of [1 / 3, 2 / 3]) {
+              if (l2 <= l1) grid.push(c0[0] + e2x * t, c0[1] + e2y * t, c1[0] + (c2[0] - c1[0]) * t, c1[1] + (c2[1] - c1[1]) * t);
+              else grid.push(c0[0] + e1x * t, c0[1] + e1y * t, c3[0] + (c2[0] - c3[0]) * t, c3[1] + (c2[1] - c3[1]) * t);
+            }
+          }
+        }
+      }
+      if (grid.length) {
+        ctx.strokeStyle = "rgba(18, 36, 70, 0.4)";
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        for (let gi = 0; gi < grid.length; gi += 4) {
+          ctx.moveTo(grid[gi], grid[gi + 1]);
+          ctx.lineTo(grid[gi + 2], grid[gi + 3]);
+        }
+        ctx.stroke();
       }
       ctx.globalAlpha = 1;
       ctx.restore();
