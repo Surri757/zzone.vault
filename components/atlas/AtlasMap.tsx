@@ -300,6 +300,7 @@ interface SatItem {
   uy: number;
   uz: number;
   ph: number; // 呼吸相位（去同步）
+  boost: number; // 三壳潮汐亮度（呼吸律：1.0-1.7，随壳节律）
   glintP: number; // 板面掠光周期（s）
   glintOff: number; // 掠光相位偏移（s）
   lit: number; // 当前日照符号（+1 阳 / -1 影，0 未初始化）
@@ -320,7 +321,7 @@ const SAT_ITEMS: SatItem[] =
             if (el)
               out.push({
                 el, name: String(s.name || ""), x: 0, y: 0, zc: 0, rho: 1, vis: false,
-                ux: 0, uy: 0, uz: 0, hidden: false,
+                ux: 0, uy: 0, uz: 0, hidden: false, boost: 1,
                 ph: si * 2.399963, glintP: 8 + (si % 5), glintOff: si * 1.7, lit: 0, flashUntil: 0,
               });
             si++;
@@ -613,7 +614,7 @@ export default function AtlasMap() {
           satsAll: SAT_ITEMS.length,
           sat0: (() => {
             const s = SAT_ITEMS.find((q) => q.vis);
-            return s ? { x: Math.round(s.x), y: Math.round(s.y), tier: s.el.tier } : null;
+            return s ? { x: Math.round(s.x), y: Math.round(s.y), tier: s.el.tier, b: Math.round(s.boost * 100) / 100 } : null;
           })(),
         };
       }
@@ -1666,7 +1667,8 @@ export default function AtlasMap() {
           });
         }
         ctx.save();
-        ctx.strokeStyle = "rgba(201, 212, 228, 0.17)";
+        const geoTide = 1 + 0.15 * Math.max(0, Math.sin((t / 26000) * Math.PI * 2)); // GEO 壳潮（外箍呼吸 rim）
+        ctx.strokeStyle = `rgba(201, 212, 228, ${(0.17 * geoTide).toFixed(3)})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let k = 0; k < 64; k += 2) {
@@ -1678,7 +1680,7 @@ export default function AtlasMap() {
         }
         ctx.stroke();
         // 幽灵外箍：穿盘段（球后）降 α 补全整圈——笼的最大半径一笔，眼睛拿它定壳（透视律）
-        ctx.strokeStyle = "rgba(160, 175, 205, 0.055)";
+        ctx.strokeStyle = `rgba(160, 175, 205, ${(0.055 * geoTide).toFixed(3)})`;
         ctx.beginPath();
         for (let k = 0; k < 64; k += 2) {
           const p1 = pts[k], p2 = pts[(k + 1) % 64];
@@ -1754,12 +1756,15 @@ export default function AtlasMap() {
         s.vis = true;
         const depth = 0.55 + 0.45 * clamp(zc / rd, -1, 1); // 深度下限 0.55：背面近临边不熄
         const a = clamp(depth * limbK, 0, 1);
-        const breath = 0.9 + 0.1 * Math.sin(t * 0.0006 + s.ph); // 去同步呼吸（~10.5s 周期）
+        const breath = 0.9 + 0.1 * Math.sin(t * 0.0006 + s.ph); // 微呼吸底
+        // 三壳潮汐（呼吸律）：LEO 12s/MEO 18s/GEO 26s 内快外慢，半波 sin³（吸-呼），壳内去同步；峰值×1.7
+        const tideP = s.el.tier === "leo" ? 12000 : s.el.tier === "meo" ? 18000 : 26000;
+        s.boost = reduced ? 1 : 1 + (s.el.tier === "leo" ? 0.7 : s.el.tier === "meo" ? 0.6 : 0.5) * Math.pow(Math.max(0, Math.sin((t / tideP) * Math.PI * 2 + s.ph * 0.35)), 3);
         const isGeo = s.el.tier === "geo";
         const blink = isGeo ? 0.4 + 0.35 * (0.5 + 0.5 * Math.sin((t / 3000) * Math.PI * 2)) : 1;
         const coreA = clamp(a * (isGeo ? blink : 0.95) * flashK, 0, 1);
         const halo = isGeo ? 18 : s.el.tier === "meo" ? 11 : 10;
-        const haloA = clamp(a * (isGeo ? blink * 0.75 : 0.55) * breath * flashK, 0, 1);
+        const haloA = clamp(a * (isGeo ? blink * 0.75 : 0.55) * breath * flashK * s.boost, 0, 1); // 潮汐入辉光（白芯不动防糊点）
         // 回看轨迹：真实传播的过去时间窗（sim 钟下按轨道弧取份——LEO 8%/MEO 7%；GEO 无尾是信息）。
         // 单 gradient 连续 α（幂律衰减）+ 宽度渐细 + 12 采样圆滑弧——连续感是真实感，阶跃是「粘上」
         if (s.el.tier !== "geo" && a > 0.25) {
@@ -1961,7 +1966,7 @@ export default function AtlasMap() {
           const front = A.zc > 0 && B.zc > 0;
           if (front && losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue; // 前侧互见边走 pass 2
           const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35) * e.k * gk * aScale;
+          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35) * e.k * gk * aScale * (1 + 0.7 * ((A.boost + B.boost) / 2 - 1));
           ctx.strokeStyle = `rgba(160, 175, 205, ${a0.toFixed(3)})`; // 更冷一档
           ctx.beginPath();
           ctx.moveTo(A.x, A.y);
@@ -1986,7 +1991,7 @@ export default function AtlasMap() {
         if (!A.vis || !B.vis || A.zc <= 0 || B.zc <= 0) continue;
         if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
         const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK * aScale;
+        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK * aScale * (1 + 0.7 * ((A.boost + B.boost) / 2 - 1));
         if (a0 <= 0.01) continue;
         ctx.strokeStyle = `rgba(190, 205, 230, ${a0.toFixed(3)})`;
         ctx.beginPath();
@@ -2076,6 +2081,7 @@ export default function AtlasMap() {
             const B = SAT_ITEMS[(Math.random() * SAT_ITEMS.length) | 0];
             if (!A || !B || A === B || !A.vis || !B.vis) continue;
             if (Math.hypot(A.x - B.x, A.y - B.y) < 70) continue; // 太近的两星连线读不出「传输」
+            if (Math.random() > 0.7 + ((A.boost + B.boost) / 2 - 1) * 0.43) continue; // 编排共振：潮峰优先（时机策展，门槛不降）
             const pk = A.el.norad < B.el.norad ? `${A.el.norad}-${B.el.norad}` : `${B.el.norad}-${A.el.norad}`;
             if ((beamCooldown.get("g:" + pk) ?? 0) > nowP) continue; // 配对冷却：轮换搭档
             if (beams.some((b) => (b.a === A && b.b === B) || (b.a === B && b.b === A))) continue;
@@ -2133,7 +2139,9 @@ export default function AtlasMap() {
         for (const s of SAT_ITEMS) {
           if (!s.vis || s.el.tier === "geo") continue;
           if ((beamCooldown.get(`${s.el.norad}:${l.exch.mic}`) ?? 0) > nowP) continue;
-          const d = s.ux * l.vx + s.uy * l.vy + s.uz * l.vz;
+          const dTrue = s.ux * l.vx + s.uy * l.vy + s.uz * l.vz;
+          if (dTrue < 0.92) continue; // 几何门槛以真 dot 判（密度形制律：门槛不降）
+          const d = dTrue + (s.boost - 1) * 0.05; // 潮峰微偏置只参与排序
           if (d > pd) {
             pd = d;
             pick = s;
