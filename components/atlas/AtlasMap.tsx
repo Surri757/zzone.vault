@@ -1920,7 +1920,7 @@ export default function AtlasMap() {
     /* ---- 巨网骨架（网骨架律）：真 3D 距离 k 近邻 + 互见才连 + 常驻发丝线 ----
      * 近邻为真实几何量、互连为呈现示意（README 双向披露）；不带脉冲/爆闪——事件语义专属 Beam 层。
      * 工程红利：losClear 通过的弦在正交投影下=纯直线，零逐点遮挡成本。 */
-    interface MeshEdge { a: SatItem; b: SatItem; k: number }
+    interface MeshEdge { a: SatItem; b: SatItem; k: number; ph: number; pe: number } // ph/pe=闪烁相位/周期（星配闪烁：与星野同族但更醒目）
     const meshEdges = new Map<string, MeshEdge>();
     let meshDegrade = false; // FPS 阀二级降档：k→1
     function updateMesh(dtMs: number) {
@@ -1941,8 +1941,10 @@ export default function AtlasMap() {
           const o = ds[i].o;
           const key = s.el.norad < o.el.norad ? `${s.el.norad}-${o.el.norad}` : `${o.el.norad}-${s.el.norad}`;
           want.add(key);
-          if (!meshEdges.has(key))
-            meshEdges.set(key, { a: s.el.norad < o.el.norad ? s : o, b: s.el.norad < o.el.norad ? o : s, k: 0 });
+          if (!meshEdges.has(key)) {
+            const hv = ((s.el.norad * 31 + o.el.norad * 17) % 997) / 997;
+            meshEdges.set(key, { a: s.el.norad < o.el.norad ? s : o, b: s.el.norad < o.el.norad ? o : s, k: 0, ph: hv * Math.PI * 2, pe: 2.1 + (((s.el.norad + o.el.norad) % 13) / 13) * 1.4 }); // 2.1-3.5s 随线而异
+          }
         }
       }
       for (const [key, e] of meshEdges) {
@@ -1953,11 +1955,12 @@ export default function AtlasMap() {
     }
     function drawMesh() {
       if (!meshEdges.size) return;
+      const nowP = performance.now();
       const dimK = (W < 640 ? 0.5 : 1) * (meshDegrade ? 0.6 : 1);
       const aScale = Math.min(1, 45 / meshEdges.size); // 密度保险丝：边多整体压暗防灰雾
       const alive = (q: SatItem) => q.vis || q.hidden;
       ctx.save();
-      ctx.lineWidth = 0.75; // 发丝线
+      ctx.lineWidth = 0.85; // 发丝线（闪烁亮段另加粗）
       // pass 1：幽灵（球后段——透视律：位置真值、前亮后暗为硬性深度线索、更冷色）
       if (!meshDegrade) {
         const gk = dimK * (W < 640 ? 0.3 : 1);
@@ -1967,8 +1970,10 @@ export default function AtlasMap() {
           const front = A.zc > 0 && B.zc > 0;
           if (front && losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue; // 前侧互见边走 pass 2
           const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35) * e.k * gk * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
+          const twk = reduced ? 0 : Math.max(0, Math.sin((nowP / 1000 / e.pe) * Math.PI * 2 + e.ph)); // 星配闪烁（半波：暗-亮-暗）
+          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35 * (0.3 + 1.3 * Math.pow(twk, 1.8))) * e.k * gk * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
           ctx.strokeStyle = `rgba(160, 175, 205, ${a0.toFixed(3)})`; // 更冷一档
+          ctx.lineWidth = 0.85 + twk * twk * 0.55;
           ctx.beginPath();
           ctx.moveTo(A.x, A.y);
           ctx.lineTo(B.x, B.y);
@@ -1992,9 +1997,11 @@ export default function AtlasMap() {
         if (!A.vis || !B.vis || A.zc <= 0 || B.zc <= 0) continue;
         if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
         const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
+        const twk = reduced ? 0 : Math.max(0, Math.sin((nowP / 1000 / e.pe) * Math.PI * 2 + e.ph));
+        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * (0.3 + 1.3 * Math.pow(twk, 1.8)) * e.k * dimK * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
         if (a0 <= 0.01) continue;
         ctx.strokeStyle = `rgba(190, 205, 230, ${a0.toFixed(3)})`;
+        ctx.lineWidth = 0.85 + twk * twk * 0.55;
         ctx.beginPath();
         ctx.moveTo(A.x, A.y);
         ctx.lineTo(B.x, B.y);
