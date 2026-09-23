@@ -1920,10 +1920,11 @@ export default function AtlasMap() {
     /* ---- 巨网骨架（网骨架律）：真 3D 距离 k 近邻 + 互见才连 + 常驻发丝线 ----
      * 近邻为真实几何量、互连为呈现示意（README 双向披露）；不带脉冲/爆闪——事件语义专属 Beam 层。
      * 工程红利：losClear 通过的弦在正交投影下=纯直线，零逐点遮挡成本。 */
-    interface MeshEdge { a: SatItem; b: SatItem; k: number; ph: number; pe: number } // ph/pe=闪烁相位/周期（星配闪烁：与星野同族但更醒目）
+    interface MeshEdge { a: SatItem; b: SatItem; k: number; ph: number; pe: number; gl: number; gt: number; gp: number } // gl/gt/gp=glint 下一闪时刻/计时/线上位置
     const meshEdges = new Map<string, MeshEdge>();
     let meshDegrade = false; // FPS 阀二级降档：k→1
     function updateMesh(dtMs: number) {
+      const nowM = performance.now();
       const cand = SAT_ITEMS.filter((s) => s.vis || s.hidden); // 全池（含球后）——拓扑稳定，透视网笼的后半张
       const kN = meshDegrade ? 1 : W < 640 ? 2 : 3;
       const want = new Set<string>();
@@ -1943,14 +1944,25 @@ export default function AtlasMap() {
           want.add(key);
           if (!meshEdges.has(key)) {
             const hv = ((s.el.norad * 31 + o.el.norad * 17) % 997) / 997;
-            meshEdges.set(key, { a: s.el.norad < o.el.norad ? s : o, b: s.el.norad < o.el.norad ? o : s, k: 0, ph: hv * Math.PI * 2, pe: 2.8 + (((s.el.norad + o.el.norad) % 13) / 13) * 1.7 }); // 2.8-4.5s 人息节律，随线而异
+            meshEdges.set(key, { a: s.el.norad < o.el.norad ? s : o, b: s.el.norad < o.el.norad ? o : s, k: 0, ph: hv * Math.PI * 2, pe: 2.8 + (((s.el.norad + o.el.norad) % 13) / 13) * 1.7, gl: 0, gt: 0, gp: 0.5 });
           }
         }
       }
       for (const [key, e] of meshEdges) {
         const target = want.has(key) ? 1 : 0;
         e.k += (target - e.k) * Math.min(1, dtMs / 400); // 生灭 0.4s 淡入出（呼吸感，无 pop）
-        if (target === 0 && e.k < 0.03) meshEdges.delete(key);
+        if (target === 0 && e.k < 0.03) {
+          meshEdges.delete(key);
+          continue;
+        }
+        // 亮闪闪 glint：每条线不定时急闪一次（快攻稍慢收），线上随机点一粒白蓝闪点
+        if (reduced) continue;
+        if (e.gt > 0) e.gt -= dtMs / 1000;
+        else if (nowM >= e.gl) {
+          e.gt = 0.5;
+          e.gp = 0.15 + Math.random() * 0.7;
+          e.gl = nowM + 6000 + Math.random() * 10000;
+        }
       }
     }
     function drawMesh() {
@@ -1971,7 +1983,8 @@ export default function AtlasMap() {
           if (front && losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue; // 前侧互见边走 pass 2
           const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
           const twk = reduced ? 0 : Math.max(0, Math.sin((nowP / 1000 / e.pe) * Math.PI * 2 + e.ph)); // 呼吸节奏（若隐若现：暗谷 0.15 近无）
-          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.3 : d3 < 1.1 ? 0.19 : 0.1) * 0.35 * (0.15 + 1.45 * Math.pow(twk, 1.6))) * e.k * gk * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
+          const gk0 = e.gt > 0 ? Math.sin((1 - e.gt / 0.5) * Math.PI) : 0; // glint 包络（快攻慢收的近似半波）
+          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.3 : d3 < 1.1 ? 0.19 : 0.1) * 0.35 * (0.15 + 1.45 * Math.pow(twk, 1.6) + gk0 * 2.2)) * e.k * gk * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
           ctx.strokeStyle = `rgba(60, 135, 225, ${a0.toFixed(3)})`; // 深海蓝（幽灵档）
           ctx.lineWidth = 0.85 + twk * twk * 0.55;
           ctx.beginPath();
@@ -1998,14 +2011,27 @@ export default function AtlasMap() {
         if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
         const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
         const twk = reduced ? 0 : Math.max(0, Math.sin((nowP / 1000 / e.pe) * Math.PI * 2 + e.ph));
-        const a0 = (d3 < 0.6 ? 0.3 : d3 < 1.1 ? 0.19 : 0.1) * (0.15 + 1.45 * Math.pow(twk, 1.6)) * e.k * dimK * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
+        const gk0 = e.gt > 0 ? Math.sin((1 - e.gt / 0.5) * Math.PI) : 0;
+        const a0 = (d3 < 0.6 ? 0.3 : d3 < 1.1 ? 0.19 : 0.1) * (0.15 + 1.45 * Math.pow(twk, 1.6) + gk0 * 2.2) * e.k * dimK * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
         if (a0 <= 0.01) continue;
         ctx.strokeStyle = `rgba(85, 175, 255, ${a0.toFixed(3)})`; // 电光海洋蓝（网的身份色）
-        ctx.lineWidth = 0.85 + twk * twk * 0.55;
+        ctx.lineWidth = 0.85 + twk * twk * 0.55 + gk0 * gk0 * 2.2;
         ctx.beginPath();
         ctx.moveTo(A.x, A.y);
         ctx.lineTo(B.x, B.y);
         ctx.stroke();
+        if (gk0 > 0.05) {
+          // 亮闪闪闪点：glint 时线上随机处一粒白蓝星芒
+          const gx = A.x + (B.x - A.x) * e.gp;
+          const gy = A.y + (B.y - A.y) * e.gp;
+          ctx.globalAlpha = clamp(gk0 * 0.95, 0, 1);
+          ctx.drawImage(glowSprite([160, 205, 255]), gx - 7, gy - 7, 14, 14);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = `rgba(225, 240, 255, ${clamp(gk0, 0, 1).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(gx, gy, 1.2 + gk0 * 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
       ctx.restore();
     }
