@@ -1668,7 +1668,7 @@ export default function AtlasMap() {
         }
         ctx.save();
         const geoTide = 0.12 + 0.12 * Math.max(0, Math.sin((t / 20000) * Math.PI * 2)); // GEO 壳潮（外箍呼吸 rim，幅度加倍）
-        ctx.strokeStyle = `rgba(201, 212, 228, ${geoTide.toFixed(3)})`;
+        ctx.strokeStyle = `rgba(64, 150, 235, ${geoTide.toFixed(3)})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let k = 0; k < 64; k += 2) {
@@ -1680,7 +1680,7 @@ export default function AtlasMap() {
         }
         ctx.stroke();
         // 幽灵外箍：穿盘段（球后）降 α 补全整圈——笼的最大半径一笔，眼睛拿它定壳（透视律）
-        ctx.strokeStyle = `rgba(160, 175, 205, ${(0.35 * geoTide).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(46, 112, 190, ${(0.35 * geoTide).toFixed(3)})`;
         ctx.beginPath();
         for (let k = 0; k < 64; k += 2) {
           const p1 = pts[k], p2 = pts[(k + 1) % 64];
@@ -1943,7 +1943,7 @@ export default function AtlasMap() {
           want.add(key);
           if (!meshEdges.has(key)) {
             const hv = ((s.el.norad * 31 + o.el.norad * 17) % 997) / 997;
-            meshEdges.set(key, { a: s.el.norad < o.el.norad ? s : o, b: s.el.norad < o.el.norad ? o : s, k: 0, ph: hv * Math.PI * 2, pe: 2.1 + (((s.el.norad + o.el.norad) % 13) / 13) * 1.4 }); // 2.1-3.5s 随线而异
+            meshEdges.set(key, { a: s.el.norad < o.el.norad ? s : o, b: s.el.norad < o.el.norad ? o : s, k: 0, ph: hv * Math.PI * 2, pe: 2.8 + (((s.el.norad + o.el.norad) % 13) / 13) * 1.7 }); // 2.8-4.5s 人息节律，随线而异
           }
         }
       }
@@ -1970,9 +1970,9 @@ export default function AtlasMap() {
           const front = A.zc > 0 && B.zc > 0;
           if (front && losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue; // 前侧互见边走 pass 2
           const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-          const twk = reduced ? 0 : Math.max(0, Math.sin((nowP / 1000 / e.pe) * Math.PI * 2 + e.ph)); // 星配闪烁（半波：暗-亮-暗）
-          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35 * (0.3 + 1.3 * Math.pow(twk, 1.8))) * e.k * gk * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
-          ctx.strokeStyle = `rgba(160, 175, 205, ${a0.toFixed(3)})`; // 更冷一档
+          const twk = reduced ? 0 : Math.max(0, Math.sin((nowP / 1000 / e.pe) * Math.PI * 2 + e.ph)); // 呼吸节奏（若隐若现：暗谷 0.15 近无）
+          const a0 = Math.max(0.02, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35 * (0.15 + 1.45 * Math.pow(twk, 1.6))) * e.k * gk * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
+          ctx.strokeStyle = `rgba(46, 112, 190, ${a0.toFixed(3)})`; // 深海蓝（幽灵档）
           ctx.lineWidth = 0.85 + twk * twk * 0.55;
           ctx.beginPath();
           ctx.moveTo(A.x, A.y);
@@ -1980,7 +1980,7 @@ export default function AtlasMap() {
           ctx.stroke();
         }
         // 球后幽灵节点微点（网要收口——环不能穿「空」；实体不透视故只此微点无辉光）
-        ctx.fillStyle = `rgba(160, 175, 205, ${(0.1 * gk).toFixed(3)})`;
+        ctx.fillStyle = `rgba(46, 112, 190, ${(0.22 * gk).toFixed(3)})`;
         for (const q of SAT_ITEMS) {
           if (!q.hidden) continue;
           let linked = false;
@@ -1998,9 +1998,9 @@ export default function AtlasMap() {
         if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
         const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
         const twk = reduced ? 0 : Math.max(0, Math.sin((nowP / 1000 / e.pe) * Math.PI * 2 + e.ph));
-        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * (0.3 + 1.3 * Math.pow(twk, 1.8)) * e.k * dimK * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
+        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * (0.15 + 1.45 * Math.pow(twk, 1.6)) * e.k * dimK * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
         if (a0 <= 0.01) continue;
-        ctx.strokeStyle = `rgba(190, 205, 230, ${a0.toFixed(3)})`;
+        ctx.strokeStyle = `rgba(64, 150, 235, ${a0.toFixed(3)})`; // 海洋蓝（网的身份色，与银点/银信号分层）
         ctx.lineWidth = 0.85 + twk * twk * 0.55;
         ctx.beginPath();
         ctx.moveTo(A.x, A.y);
@@ -2043,7 +2043,7 @@ export default function AtlasMap() {
         const rd = s0.el.rDisp;
         // 双 pass：前段常 α + 球后段幽灵 α（断笔改降亮——笼的后半张）
         for (let pass = 0; pass < 2; pass++) {
-          ctx.strokeStyle = `rgba(190, 205, 230, ${(pass === 0 ? arcAlpha : ghostAlpha).toFixed(3)})`;
+          ctx.strokeStyle = `rgba(64, 150, 235, ${(pass === 0 ? arcAlpha : ghostAlpha).toFixed(3)})`;
           ctx.beginPath();
           let started = false;
           for (let i = 0; i <= 48; i++) {
