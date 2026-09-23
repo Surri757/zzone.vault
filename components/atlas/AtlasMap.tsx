@@ -1667,8 +1667,8 @@ export default function AtlasMap() {
           });
         }
         ctx.save();
-        const geoTide = 1 + 0.15 * Math.max(0, Math.sin((t / 26000) * Math.PI * 2)); // GEO 壳潮（外箍呼吸 rim）
-        ctx.strokeStyle = `rgba(201, 212, 228, ${(0.17 * geoTide).toFixed(3)})`;
+        const geoTide = 0.12 + 0.12 * Math.max(0, Math.sin((t / 20000) * Math.PI * 2)); // GEO 壳潮（外箍呼吸 rim，幅度加倍）
+        ctx.strokeStyle = `rgba(201, 212, 228, ${geoTide.toFixed(3)})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let k = 0; k < 64; k += 2) {
@@ -1680,7 +1680,7 @@ export default function AtlasMap() {
         }
         ctx.stroke();
         // 幽灵外箍：穿盘段（球后）降 α 补全整圈——笼的最大半径一笔，眼睛拿它定壳（透视律）
-        ctx.strokeStyle = `rgba(160, 175, 205, ${(0.055 * geoTide).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(160, 175, 205, ${(0.35 * geoTide).toFixed(3)})`;
         ctx.beginPath();
         for (let k = 0; k < 64; k += 2) {
           const p1 = pts[k], p2 = pts[(k + 1) % 64];
@@ -1758,8 +1758,8 @@ export default function AtlasMap() {
         const a = clamp(depth * limbK, 0, 1);
         const breath = 0.9 + 0.1 * Math.sin(t * 0.0006 + s.ph); // 微呼吸底
         // 三壳潮汐（呼吸律）：LEO 12s/MEO 18s/GEO 26s 内快外慢，半波 sin³（吸-呼），壳内去同步；峰值×1.7
-        const tideP = s.el.tier === "leo" ? 12000 : s.el.tier === "meo" ? 18000 : 26000;
-        s.boost = reduced ? 1 : 1 + (s.el.tier === "leo" ? 0.7 : s.el.tier === "meo" ? 0.6 : 0.5) * Math.pow(Math.max(0, Math.sin((t / tideP) * Math.PI * 2 + s.ph * 0.35)), 3);
+        const tideP = s.el.tier === "leo" ? 10000 : s.el.tier === "meo" ? 14000 : 20000; // LEO=0.1Hz 共振呼吸频率
+        s.boost = reduced ? 1 : 1 + (s.el.tier === "leo" ? 0.7 : s.el.tier === "meo" ? 0.6 : 0.5) * Math.pow(Math.max(0, Math.sin((t / tideP) * Math.PI * 2 + s.ph * 0.35)), 1.5); // 宽包络：任意时刻更多星在吸气
         const isGeo = s.el.tier === "geo";
         const blink = isGeo ? 0.4 + 0.35 * (0.5 + 0.5 * Math.sin((t / 3000) * Math.PI * 2)) : 1;
         const coreA = clamp(a * (isGeo ? blink : 0.95) * flashK, 0, 1);
@@ -1809,9 +1809,10 @@ export default function AtlasMap() {
         ctx.beginPath();
         ctx.arc(s.x, s.y, 7, 0, Math.PI * 2);
         ctx.fill();
-        // 辉光精灵（径向立方衰减家族——StuffInSpace pow(r+0.1,³) 惯例）
+        // 辉光精灵（径向立方衰减家族）——潮汐 swell：尺寸呼吸（比纯 α 显眼，总增幅仍 ≤×1.8）
+        const swell = 1 + (s.boost - 1) * 0.85;
         ctx.globalAlpha = haloA;
-        ctx.drawImage(glowSprite(SILVER), s.x - halo, s.y - halo, halo * 2, halo * 2);
+        ctx.drawImage(glowSprite(SILVER), s.x - halo * swell, s.y - halo * swell, halo * 2 * swell, halo * 2 * swell);
         ctx.globalAlpha = 1;
         // 示意模型（zoom≥0.92 淡入；远看符号点、近看形体——画家算法零 GL 改动）
         const modelK = smoothstep(0.92, 1.06, zoom);
@@ -1827,7 +1828,7 @@ export default function AtlasMap() {
             if (vl > 1e-6)
               modelDrawn = drawSatModel(
                 s, sunV, { X, Y, Z }, { X: vX / vl, Y: vY / vl, Z: vZ / vl },
-                clamp(zc / rd, -1, 1), clamp(a * modelK * flashK, 0, 1), t,
+                clamp(zc / rd, -1, 1), clamp(a * modelK * flashK * (1 + (s.boost - 1) * 0.5), 0, 1), t,
               );
           }
         }
@@ -1966,7 +1967,7 @@ export default function AtlasMap() {
           const front = A.zc > 0 && B.zc > 0;
           if (front && losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue; // 前侧互见边走 pass 2
           const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35) * e.k * gk * aScale * (1 + 0.7 * ((A.boost + B.boost) / 2 - 1));
+          const a0 = Math.max(0.03, (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * 0.35) * e.k * gk * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
           ctx.strokeStyle = `rgba(160, 175, 205, ${a0.toFixed(3)})`; // 更冷一档
           ctx.beginPath();
           ctx.moveTo(A.x, A.y);
@@ -1991,7 +1992,7 @@ export default function AtlasMap() {
         if (!A.vis || !B.vis || A.zc <= 0 || B.zc <= 0) continue;
         if (!losClear(A.el.rDisp * A.ux, A.el.rDisp * A.uy, A.el.rDisp * A.uz, B.el.rDisp * B.ux, B.el.rDisp * B.uy, B.el.rDisp * B.uz)) continue;
         const d3 = Math.hypot(A.el.rDisp * A.ux - B.el.rDisp * B.ux, A.el.rDisp * A.uy - B.el.rDisp * B.uy, A.el.rDisp * A.uz - B.el.rDisp * B.uz);
-        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK * aScale * (1 + 0.7 * ((A.boost + B.boost) / 2 - 1));
+        const a0 = (d3 < 0.6 ? 0.16 : d3 < 1.1 ? 0.1 : 0.05) * e.k * dimK * aScale * (1 + 1.0 * ((A.boost + B.boost) / 2 - 1));
         if (a0 <= 0.01) continue;
         ctx.strokeStyle = `rgba(190, 205, 230, ${a0.toFixed(3)})`;
         ctx.beginPath();
