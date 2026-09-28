@@ -56,10 +56,19 @@ export default function ModuleHall() {
             const delay = { "--d": `${240 + i * 80}ms` } as React.CSSProperties;
             const inner = (
               <>
-                <span className="hl-no">{String(i + 1).padStart(2, "0")}</span>
+                <span className="hl-no">BAY {String(i + 1).padStart(2, "0")}</span>
                 <span className="hl-name">{m.title}</span>
                 <span className="hl-en">{m.subtitle}</span>
-                <span className="hl-state">{live ? "已点亮" : "待点亮"}</span>
+                <span className="hl-state" aria-label={live ? "已点亮" : "待点亮"}>
+                  {live ? (
+                    <>
+                      <i>STANDBY</i>
+                      <b>LINKED</b>
+                    </>
+                  ) : (
+                    <i>SEALED</i>
+                  )}
+                </span>
               </>
             );
             return live ? (

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { fetchEast, probeEast, emBanned, emBanRetryInMs, emChannel } from "./em-transport";
+import { fetchEast, probeEast, emBanned, emBanRetryInMs, emChannel, takeSubrequestSlot } from "./em-transport";
 import { fetchMirrorDay, fetchMirrorLatest, mirrorStatus } from "./flow-mirrors";
 import { UpstreamGuard, loadLastGood, persistLastGood } from "./upstream-guard";
 
@@ -50,8 +50,13 @@ const TTL_BY_STATE_MS: Record<NotesFlowBundle["state"], number> = {
   收盘: 600_000,
 };
 
-/** 快照/fflow 共用主机（同一延迟层级，避免拼接缝跳变；封禁冷却会自动收缩梯子成本） */
-const HOSTS = ["push2delay.eastmoney.com", "push2.eastmoney.com", "63.push2.eastmoney.com"];
+/** 快照/fflow 共用主机。workerd 只用单主机：Cloudflare 单次调用子请求上限 50，
+ *  梯子会把预算烧光（2026-09-28 线上实测 Too many subrequests）——失败快转接棒源。
+ *  本地保留梯子（curl 通道 + 封禁冷却自动收缩）。 */
+const HOSTS =
+  typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers"
+    ? ["push2delay.eastmoney.com"]
+    : ["push2delay.eastmoney.com", "push2.eastmoney.com", "63.push2.eastmoney.com"];
 
 const num = (v: unknown): number | null => {
   const n = typeof v === "number" ? v : Number(v);
@@ -222,6 +227,7 @@ const TX_HEADERS: Record<string, string> = {
 };
 
 async function txJson(path: string): Promise<unknown> {
+  takeSubrequestSlot();
   const res = await fetch(`${TX_BASE}${path}`, {
     cache: "no-store",
     headers: TX_HEADERS,
@@ -355,6 +361,7 @@ async function buildBundle(prev?: NotesFlowBundle): Promise<NotesFlowBundle> {
   );
 
   const series: NotesFlowSeries[] = [];
+  let consecFails = 0;
   for (const b of snapshot) {
     const base = prevByCode.get(b.code);
     if (base && base.length >= 2) {
@@ -367,11 +374,20 @@ async function buildBundle(prev?: NotesFlowBundle): Promise<NotesFlowBundle> {
       continue;
     }
     // 新面孔/跨日/缓存缺失：整条全天历史（fflow）
-    const day = await fetchBoardFlowDay(b.code);
-    if (day.points.length >= 2) {
-      series.push({ code: b.code, name: b.name, points: day.points });
-      continue;
+    try {
+      const day = await fetchBoardFlowDay(b.code);
+      if (day.points.length >= 2) {
+        series.push({ code: b.code, name: b.name, points: day.points });
+        consecFails = 0;
+        continue;
+      }
+    } catch {
+      /* 落到下面的单点线 */
     }
+    consecFails += 1;
+    // 连续 5 板拿不到 = 源整体异常（非单板问题），立刻止损转接棒源——
+    // 别把 Cloudflare 子请求预算（50/次）爬光在必死的循环上
+    if (consecFails >= 5) throw new Error("fflow 连续失败，源异常止损");
     // fflow 也拿不到（停牌/新股板块）：至少把快照现值记成单点线
     series.push({ code: b.code, name: b.name, points: [{ t: now.hm, v: b.flowYi }] });
   }

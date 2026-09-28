@@ -105,27 +105,48 @@ async function putKvMirror(body: string): Promise<void> {
   }
 }
 
-/** 读存粮：过期（maxAgeMs）或不存在返回 null。 */
+/** 读存粮：workerd 先 Cache API 再 KV（双副本），Node 读盘；过期或不存在返回 null。 */
 export async function loadLastGood<T>(maxAgeMs: number): Promise<LastGood<T> | null> {
   try {
-    const cdn = (globalThis as { caches?: CacheStorage & { default?: Cache } }).caches;
-    const raw = cdn?.default
-      ? await (await cdn.default.match(PERSIST_KEY))?.text()
-      : await readPersistFile();
-    if (!raw) return null;
-    const last = JSON.parse(raw) as LastGood<T>;
-    if (typeof last?.at !== "number" || !last.payload || Date.now() - last.at > maxAgeMs) return null;
+    const last = (await loadPersistCacheApi<T>()) ?? (await loadPersistKv<T>()) ?? (await loadPersistFile<T>());
+    if (!last) return null;
+    if (Date.now() - last.at > maxAgeMs) return null;
     return last;
   } catch {
     return null;
   }
 }
 
-async function readPersistFile(): Promise<string | null> {
+async function parseLastGood<T>(raw: string | undefined | null): Promise<LastGood<T> | null> {
+  if (!raw) return null;
+  const last = JSON.parse(raw) as LastGood<T>;
+  return last && typeof last.at === "number" && last.payload ? last : null;
+}
+
+async function loadPersistCacheApi<T>(): Promise<LastGood<T> | null> {
+  const cdn = (globalThis as { caches?: CacheStorage & { default?: Cache } }).caches;
+  if (!cdn?.default) return null;
+  const hit = await cdn.default.match(PERSIST_KEY);
+  return parseLastGood<T>(hit ? await hit.text() : null);
+}
+
+async function loadPersistKv<T>(): Promise<LastGood<T> | null> {
+  try {
+    const mod = (await import("@opennextjs/cloudflare")) as {
+      getCloudflareContext?: () => { env?: { NS_FLOW?: { get: (key: string) => Promise<string | null> } } };
+    };
+    const raw = await mod.getCloudflareContext?.().env?.NS_FLOW?.get("flow:latest");
+    return parseLastGood<T>(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function loadPersistFile<T>(): Promise<LastGood<T> | null> {
   try {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
-    return readFileSync(join(process.cwd(), PERSIST_FILE), "utf8");
+    return parseLastGood<T>(readFileSync(join(process.cwd(), PERSIST_FILE), "utf8"));
   } catch {
     return null;
   }

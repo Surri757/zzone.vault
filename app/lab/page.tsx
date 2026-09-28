@@ -11,17 +11,17 @@ export const metadata: Metadata = {
 const entries = [
   {
     no: "Q1",
-    tag: "基座模型 · DAY 02",
-    title: "上下文窗口：128k 到底能装几本书？",
-    desc: "窗口 vs 参数量 · Lost in the Middle · 超窗三策略。内含装书计算器。",
-    href: "/lianmo/lessons/0003-context-window.html"
+    tag: "基座模型 · DAY 03",
+    title: "采样与温度：为什么每次回答不一样？",
+    desc: "自回归掷骰 · temperature / top-p · T=0 的复现性边界。内含温度采样模拟器。",
+    href: "/lianmo/lessons/0005-temperature-sampling.html"
   },
   {
     no: "Q2",
-    tag: "AGENT · DAY 02",
-    title: "Function Calling：模型怎么「伸手」拿工具？",
-    desc: "五步闭环 · 意图与执行分离 · 错误回喂自纠。真实 JSON 步进器。",
-    href: "/lianmo/lessons/0004-function-calling.html"
+    tag: "AGENT · DAY 03",
+    title: "记忆的两档：短期窗口 vs 长期向量库",
+    desc: "写入/读出循环 · 向量 vs 关键词 · 记忆过时治理。内含记忆开关演示。",
+    href: "/lianmo/lessons/0006-agent-memory.html"
   },
   {
     no: "MAP",
@@ -34,7 +34,7 @@ const entries = [
     no: "CARD",
     tag: "沉淀",
     title: "知识卡册",
-    desc: "一题一卡，集卡进度 4 / 50。复盘日翻卡自测。",
+    desc: "一题一卡，集卡进度 6 / 50。复盘日翻卡自测。",
     href: "/lianmo/reference/0002-knowledge-cards.html"
   },
   {
@@ -108,19 +108,24 @@ export default function LabPage() {
             ))}
           </nav>
 
-          <p className="mt-10 text-center font-mono text-[11px] text-ink/40">
-            ✅ 已完成 Day 01 · quiz 4/4 + 4/4 ——{" "}
+          <p className="mt-10 text-center font-mono text-[11px] leading-6 text-ink/40">
+            ✅ 已完成 Day 01-02 · quiz 全 4/4 ——{" "}
             <a href="/lianmo/lessons/0001-token-strawberry.html" className="text-gold/80 transition-colors hover:text-gold">
-              复习第 1 题
+              D1·strawberry
             </a>{" "}
-            /{" "}
             <a href="/lianmo/lessons/0002-what-is-agent.html" className="text-gold/80 transition-colors hover:text-gold">
-              第 2 题
+              D1·Agent
+            </a>{" "}
+            <a href="/lianmo/lessons/0003-context-window.html" className="text-gold/80 transition-colors hover:text-gold">
+              D2·窗口
+            </a>{" "}
+            <a href="/lianmo/lessons/0004-function-calling.html" className="text-gold/80 transition-colors hover:text-gold">
+              D2·FC
             </a>
           </p>
 
           <footer className="mt-14 border-t border-ink/10 pt-6 font-mono text-[11px] leading-6 text-ink/35">
-            开炉 2026-09-22 · DAY 02 · 集卡 4 / 50
+            开炉 2026-09-22 · DAY 03 · 集卡 6 / 50
             <br />
             内容源：本地教学工作区 · npm run sync:lianmo 同步 · 随版本部署
           </footer>

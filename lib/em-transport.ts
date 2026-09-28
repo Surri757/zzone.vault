@@ -89,6 +89,24 @@ function paced<T>(job: () => Promise<T>): Promise<T> {
   return run.then(job);
 }
 
+/* ---------------- 子请求账本：Cloudflare 单次调用上限 50，超限是 runtime 级击杀 ----------------
+ *  所有出网点（东财/腾讯/GitHub 镜像）统一在这里取额度；46 封顶给收尾留余量，
+ *  超限优雅抛错——让 catch 链走陈旧保供而不是被 runtime 掐死（2026-09-28 线上实测教训）。 */
+let subreqCount = 0;
+const SUBREQ_CAP =
+  typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers" ? 46 : 400;
+
+export function takeSubrequestSlot(): void {
+  subreqCount += 1;
+  if (subreqCount > SUBREQ_CAP) {
+    throw new EmTransportError("spawn", null, "子请求预算耗尽（本次调用内）");
+  }
+}
+
+export function subrequestCount(): number {
+  return subreqCount;
+}
+
 /* ---------------- IP 封禁冷却：reset 族失败 → 全局闭闸 ---------------- */
 
 /**
@@ -176,6 +194,7 @@ export async function fetchEast(url: string, timeoutMs = 8000): Promise<unknown>
       `IP 封禁冷却中（${Math.ceil(emBanRetryInMs() / 60000)}min 后探针）`
     );
   }
+  takeSubrequestSlot();
   return paced(async () => {
     if (isWorkerd) {
       // 线上出口：原生 fetch 一直健康（带全套浏览器头）

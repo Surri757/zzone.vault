@@ -23,6 +23,21 @@
   --ink-font-sans: var(--font-zz-sans), "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --ink-font-mono: var(--font-zz-mono), "JetBrains Mono", "SFMono-Regular", "Cascadia Code", Consolas, monospace;
   --ink-header-offset: 4.75rem;
+  /* —— HUD 双谱纪律（轨道档案馆）：银立骨 · 金行仪式 · 一束冷蓝信号 —— */
+  --hud-silver: #e7e6e3;
+  --hud-silver-2: #aba9a4;
+  --hud-silver-3: #9c9da1;
+  --hud-hairline: #3a3a3f;
+  --hud-hairline-soft: rgba(255, 255, 255, 0.14);
+  --hud-signal: #3e78ff;
+  --hud-micro-size: 12px;
+  --hud-micro-lh: 2;
+  --hud-ls-a: 0.08em;
+  --hud-ls-b: 0.17em;
+  --hud-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --hud-t-fast: 150ms;
+  --hud-t-out: 240ms;
+  --hud-t-enter: 450ms;
   --ink-paper-fiber: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cfilter id='fiber'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.58 .09' numOctaves='3' seed='23' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23fiber)' opacity='.44'/%3E%3C/svg%3E");
   background: var(--ink-carbon);
   color: var(--ink-paper);
@@ -669,6 +684,72 @@ section[id] {
   scale: 0.96;
 }
 
+/* —— v11 HUD·舱门铭牌取景框：四角 L 括号 + 遥测微文案，只在 UI 错峰第 4 拍浮现 —— */
+.laser-forge .forge-hud {
+  position: absolute;
+  inset: 18px;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--hud-t-enter) var(--hud-ease);
+}
+
+.laser-forge .forge-hud.is-visible {
+  opacity: 1;
+}
+
+.laser-forge .fh-c {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 0 solid rgba(255, 255, 255, 0.28);
+}
+
+.laser-forge .fh-tl { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+.laser-forge .fh-tr { top: 0; right: 0; border-top-width: 1px; border-right-width: 1px; }
+.laser-forge .fh-bl { bottom: 0; left: 0; border-bottom-width: 1px; border-left-width: 1px; }
+.laser-forge .fh-br { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
+
+.laser-forge .fh-read {
+  position: absolute;
+  font-family: var(--ink-font-mono);
+  font-size: var(--hud-micro-size);
+  line-height: var(--hud-micro-lh);
+  font-weight: 500;
+  letter-spacing: var(--hud-ls-b);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: rgba(231, 230, 227, 0.4);
+}
+
+.laser-forge .fh-read-tl {
+  top: 6px;
+  left: 18px;
+}
+
+.laser-forge .fh-read-br {
+  bottom: 6px;
+  right: 18px;
+}
+
+.laser-forge .fh-read-br .mini {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .laser-forge .fh-read-tl {
+    display: none;
+  }
+
+  .laser-forge .fh-read-br .full {
+    display: none;
+  }
+
+  .laser-forge .fh-read-br .mini {
+    display: inline;
+  }
+}
+
 /* EXIT 色调桥接：黑银画面暖化为大厅金棕后再跳转 */
 .exit-tint {
   position: absolute;
@@ -771,6 +852,64 @@ section[id] {
   transform-origin: left center;
 }
 
+/* —— v11 领先彗尾：4px 亮头 + 向左 12px 渐隐尾，跟随填充前端 —— */
+.boot-progress s {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 3px;
+  background: #f5f5f7;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot-progress s::before {
+  content: "";
+  position: absolute;
+  right: 4px;
+  top: 0;
+  width: 12px;
+  height: 3px;
+  background: linear-gradient(90deg, rgba(245, 245, 247, 0), rgba(245, 245, 247, 0.85));
+}
+
+/* —— v11 任务读出：mono 微文案随进度交叉淡入换句；READY 是全片唯一冷蓝时刻之一 —— */
+.boot-read {
+  position: relative;
+  display: grid;
+  height: 1.5rem;
+  margin-top: 0.65rem;
+}
+
+.boot-read span {
+  grid-area: 1 / 1;
+  justify-self: center;
+  font-family: var(--ink-font-mono);
+  font-size: var(--hud-micro-size);
+  line-height: 1.5rem;
+  font-weight: 500;
+  letter-spacing: var(--hud-ls-a);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: rgba(245, 245, 247, 0.52);
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity 170ms var(--hud-ease),
+    transform 170ms var(--hud-ease);
+}
+
+.boot-read span.is-on {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.boot-read span.is-ready {
+  color: var(--hud-signal);
+  text-shadow: 0 0 6px rgba(62, 120, 255, 0.45);
+}
+
 .boot-meta {
   display: flex;
   align-items: baseline;
@@ -813,6 +952,7 @@ section[id] {
 .laser-forge.is-exiting .forge-canvas,
 .laser-forge.is-exiting .forge-eyebrow,
 .laser-forge.is-exiting .forge-sub,
+.laser-forge.is-exiting .forge-hud,
 .laser-forge.is-exiting .enter-gate {
   transition: opacity 0.45s cubic-bezier(0.4, 0, 0.6, 1);
   opacity: 0;
@@ -931,54 +1071,83 @@ html.laser-hall {
 }
 
 .hall-line {
+  position: relative;
   display: grid;
-  grid-template-columns: 3.2rem minmax(0, 1fr) auto auto;
+  grid-template-columns: 4rem minmax(0, 1fr) auto auto;
   align-items: baseline;
   gap: 1.2rem;
   padding: 1.15rem 0.4rem;
-  border-top: 1px solid #424245;
+  border-top: 1px solid var(--hud-hairline);
   color: rgba(255, 255, 255, 0.45);
   transition:
     color 0.24s cubic-bezier(0.4, 0, 0.6, 1),
-    translate 0.3s cubic-bezier(0.25, 0.1, 0.3, 1);
+    background-color 180ms var(--hud-ease);
 }
 
 .hall-line:last-child {
-  border-bottom: 1px solid #424245;
+  border-bottom: 1px solid var(--hud-hairline);
+}
+
+/* v11 舱口通电：左侧金竖线自顶向下点亮（进快出慢），通电只点亮、不弹跳 */
+.hall-line::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: linear-gradient(180deg, #f5d76e, #c9962f);
+  transform: scaleY(0);
+  transform-origin: top center;
+  transition: transform var(--hud-t-out) var(--hud-ease);
 }
 
 .hall-line:hover,
 .hall-line:focus-visible {
   color: rgba(255, 255, 255, 0.92);
-  translate: 6px 0;
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.hall-line:hover::before,
+.hall-line:focus-visible::before,
+.hall-line.is-boarding::before {
+  transform: scaleY(1);
+  transition-duration: 150ms;
 }
 
 .hall-line.is-boarding {
   color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.03);
 }
 
 .hall-line.is-sealed {
   color: rgba(255, 255, 255, 0.22);
 }
 
+.hall-line.is-sealed::before {
+  display: none;
+}
+
 .hall-line.is-sealed:hover,
 .hall-line.is-sealed:focus-visible {
   color: rgba(255, 255, 255, 0.3);
-  translate: 0 0;
 }
 
 .hl-no {
   font-family: var(--ink-font-mono);
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.01em;
-  color: rgba(255, 255, 255, 0.28);
+  letter-spacing: var(--hud-ls-a);
+  color: rgba(255, 255, 255, 0.35);
   transition: color 0.24s cubic-bezier(0.4, 0, 0.6, 1);
 }
 
 .hall-line:hover .hl-no,
-.hall-line:focus-visible .hl-no,
+.hall-line:focus-visible .hl-no {
+  color: var(--hud-silver);
+}
+
 .hall-line.is-boarding .hl-no {
   color: var(--ink-gold);
 }
@@ -999,10 +1168,92 @@ html.laser-hall {
   color: rgba(255, 255, 255, 0.4);
 }
 
+/* v11 状态字：mono 定宽 7ch，STANDBY→LINKED 交叉淡入（通电瞬变，无宽度抖动） */
 .hl-state {
-  font-size: 0.75rem;
-  letter-spacing: 0.02em;
+  position: relative;
+  display: grid;
+  width: 7ch;
+  font-family: var(--ink-font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.6;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+.hl-state i,
+.hl-state b {
+  grid-area: 1 / 1;
+  justify-self: end;
+  font-style: normal;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: opacity var(--hud-t-fast) var(--hud-ease);
+}
+
+.hl-state i {
   color: rgba(255, 255, 255, 0.4);
+  opacity: 1;
+}
+
+.hl-state b {
+  color: var(--hud-silver-2);
+  opacity: 0;
+}
+
+.hall-line:hover .hl-state i,
+.hall-line:focus-visible .hl-state i,
+.hall-line.is-boarding .hl-state i {
+  opacity: 0;
+}
+
+.hall-line:hover .hl-state b,
+.hall-line:focus-visible .hl-state b,
+.hall-line.is-boarding .hl-state b {
+  opacity: 1;
+}
+
+.hall-line.is-boarding .hl-state b {
+  color: var(--hud-silver);
+}
+
+.hall-line.is-sealed .hl-state i {
+  color: rgba(255, 255, 255, 0.26);
+}
+
+/* —— v11 大厅移动端：藏英文副标、三列收窄、通电改按压瞬态 —— */
+@media (max-width: 640px) {
+  .hall-line {
+    grid-template-columns: 3.4rem minmax(0, 1fr) auto;
+    gap: 0.9rem;
+    padding: 1rem 0.4rem;
+  }
+
+  .hl-en {
+    display: none;
+  }
+
+  .hl-name {
+    font-size: clamp(1.25rem, 5vw, 1.6rem);
+  }
+
+  .hall-line:active {
+    background-color: rgba(255, 255, 255, 0.03);
+  }
+
+  .hall-line:active::before {
+    transform: scaleY(1);
+    transition-duration: 150ms;
+  }
+
+  .hall-line:active .hl-state i {
+    opacity: 0;
+  }
+
+  .hall-line:active .hl-state b {
+    opacity: 1;
+  }
 }
 
 .hall-back {

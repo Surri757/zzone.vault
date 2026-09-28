@@ -16,20 +16,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/error.js"
     ],
-    "/atlas/page": [
+    "/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/atlas/page.js"
-    ],
-    "/api/atlas/signals/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/atlas/signals/route.js"
-    ],
-    "/_not-found/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/_not-found/page.js"
+      "static/chunks/app/page.js"
     ]
   }
 }

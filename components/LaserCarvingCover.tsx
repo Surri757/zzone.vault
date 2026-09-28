@@ -208,6 +208,7 @@ export default function LaserCarvingCover() {
   const eyebrowRef = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
   const tintRef = useRef<HTMLDivElement>(null);
+  const hudRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   /** v9：effect 内注册的猫目送回调（Enter 时慢眨 + 右眼金闪） */
   const catApiRef = useRef<{ farewell?: () => void }>({});
@@ -1351,6 +1352,8 @@ export default function LaserCarvingCover() {
       at(0, () => eyebrowRef.current?.classList.add("is-visible"));
       at(150, () => subRef.current?.classList.add("is-visible"));
       at(300, () => enterRef.current?.classList.add("is-visible"));
+      // 第 4 拍：HUD 取景框收尾——铭牌获得它的遥测
+      at(750, () => hudRef.current?.classList.add("is-visible"));
     }
 
     function finishNow() {
@@ -1826,6 +1829,9 @@ export default function LaserCarvingCover() {
   const bootFillRef = useRef<HTMLElement>(null);
   const bootPctRef = useRef<HTMLSpanElement>(null);
   const bootStageRef = useRef<HTMLSpanElement>(null);
+  const bootReadARef = useRef<HTMLSpanElement>(null);
+  const bootReadBRef = useRef<HTMLSpanElement>(null);
+  const bootDotRef = useRef<HTMLElement>(null);
   const bootRafRef = useRef(0);
 
   /** 阶段色锚点：银 → 金 → 深金，百分比颜色沿其插值 */
@@ -1844,12 +1850,30 @@ export default function LaserCarvingCover() {
     return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
   }
 
-  /** 填充/百分比/阶段词同源驱动，节奏与 CSS 的 0.34s 延迟 + 1.05s 填充对齐 */
+  /** 填充/百分比/阶段词同源驱动，节奏与 CSS 的 0.34s 延迟 + 1.05s 填充对齐；v11 加 mono 读出（A/B 交叉淡入）与领先彗尾 */
   function startBootDriver() {
     const fill = bootFillRef.current;
     const pct = bootPctRef.current;
     const stage = bootStageRef.current;
+    const readA = bootReadARef.current;
+    const readB = bootReadBRef.current;
+    const dot = bootDotRef.current;
     if (!fill || !pct || !stage) return;
+    const READS = ["BLADE STOWED · PWR NOM", "BRIDGE SPAN · GIMBAL OK", "HALL DOCK · LINK --"];
+    let readIdx = -1;
+    let showA = true;
+    const setRead = (idx: number, ready = false) => {
+      if (!readA || !readB) return;
+      const text = ready ? "READY" : READS[idx];
+      const onEl = showA ? readA : readB;
+      const offEl = showA ? readB : readA;
+      onEl.textContent = text;
+      onEl.classList.toggle("is-ready", ready);
+      onEl.classList.add("is-on");
+      offEl.classList.remove("is-on", "is-ready");
+      showA = !showA;
+    };
+    const trackW = fill.parentElement?.clientWidth ?? 240;
     const t0 = performance.now();
     const tick = (now: number) => {
       const p = easeReveal(clamp((now - t0 - 340) / 1050, 0, 1));
@@ -1857,7 +1881,21 @@ export default function LaserCarvingCover() {
       fill.style.backgroundPosition = `${(p * 100).toFixed(1)}% 0`;
       pct.textContent = `${Math.round(p * 100)}%`;
       pct.style.color = bootColor(p);
-      stage.textContent = p < 0.34 ? "熄刀" : p < 0.72 ? "过桥" : "落厅";
+      const si = p < 0.34 ? 0 : p < 0.72 ? 1 : 2;
+      stage.textContent = si === 0 ? "熄刀" : si === 1 ? "过桥" : "落厅";
+      if (si !== readIdx) {
+        readIdx = si;
+        setRead(si);
+      }
+      if (p >= 0.995 && readIdx !== 3) {
+        readIdx = 3;
+        setRead(0, true);
+      }
+      if (dot) {
+        const x = Math.round(p * (trackW - 4));
+        dot.style.transform = `translate3d(${x}px, 0, 0)`;
+        dot.style.opacity = p > 0.005 && p < 0.999 ? "1" : "0";
+      }
       if (p < 1) bootRafRef.current = requestAnimationFrame(tick);
     };
     bootRafRef.current = requestAnimationFrame(tick);
@@ -1879,9 +1917,9 @@ export default function LaserCarvingCover() {
     containerRef.current?.classList.add("is-booting");
     startBootDriver();
     router.prefetch("/modules");
-    // 进度充满 → 徽标淡出 → 落入大厅；节奏对齐 CSS（fill 0.34s+1.05s，leave 1.38s）
-    setTimeout(() => containerRef.current?.classList.add("is-leaving"), 1380);
-    setTimeout(() => router.push("/modules"), 1700);
+    // 进度充满 → READY 蓝闪 → 徽标淡出 → 落入大厅；节奏对齐 CSS（fill 0.34s+1.05s，READY 闪完再 leave）
+    setTimeout(() => containerRef.current?.classList.add("is-leaving"), 1460);
+    setTimeout(() => router.push("/modules"), 1780);
   }
 
   return (
@@ -1894,14 +1932,30 @@ export default function LaserCarvingCover() {
       <div className="boot-layer" aria-hidden="true">
         <div className="boot-mark">N</div>
         <div className="boot-gauge">
-          <div className="boot-progress"><i ref={bootFillRef} /></div>
+          <div className="boot-progress"><i ref={bootFillRef} /><s ref={bootDotRef} /></div>
           <div className="boot-meta">
             <span ref={bootStageRef} className="boot-stage">熄刀</span>
             <span ref={bootPctRef} className="boot-pct">0%</span>
           </div>
+          <div className="boot-read">
+            <span ref={bootReadARef} className="is-on">BLADE STOWED · PWR NOM</span>
+            <span ref={bootReadBRef} aria-hidden="true"></span>
+          </div>
         </div>
       </div>
       {!fontReady && !fontError && <div className="forge-loading">Zz.one</div>}
+
+      <div ref={hudRef} className="forge-hud" aria-hidden="true">
+        <i className="fh-c fh-tl" />
+        <i className="fh-c fh-tr" />
+        <i className="fh-c fh-bl" />
+        <i className="fh-c fh-br" />
+        <span className="fh-read fh-read-tl">ETCH-07 // Ti-6AL-4V</span>
+        <span className="fh-read fh-read-br">
+          <span className="full">DOCK 2.16s · COOL NOM</span>
+          <span className="mini">ETCH-07 · DOCK 2.16s</span>
+        </span>
+      </div>
 
       <div ref={eyebrowRef} className="forge-eyebrow">Ninglo · Vault of Ink</div>
       <div ref={subRef} className="forge-sub">以墨观势 · 驭数入墨</div>

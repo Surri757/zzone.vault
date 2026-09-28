@@ -1,5 +1,6 @@
 import "server-only";
 
+import { takeSubrequestSlot } from "./em-transport";
 import type { NotesFlowBundle } from "./notes-flow.server";
 
 /**
@@ -37,6 +38,7 @@ function integrityOk(b: NotesFlowBundle): boolean {
 }
 
 async function gh(path: string, accept: string): Promise<string | null> {
+  takeSubrequestSlot();
   const res = await fetch(`${GH}${path}`, {
     headers: { Accept: accept, "User-Agent": "zzone-vault-mirror" },
     signal: AbortSignal.timeout(10_000),
