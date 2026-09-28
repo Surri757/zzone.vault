@@ -20,7 +20,7 @@
   h1{font-size:26px;border-bottom:3px solid var(--ink);padding-bottom:12px}
   .sub{color:var(--muted);font-size:14.5px}
   .bar{background:#e5e7eb;border-radius:999px;height:22px;overflow:hidden;margin:14px 0 6px}
-  .bar>div{height:100%;background:linear-gradient(90deg,#f59e0b,#ef4444);border-radius:999px;width:8%;transition:width .5s}
+  .bar>div{height:100%;background:linear-gradient(90deg,#f59e0b,#ef4444);border-radius:999px;width:12%;transition:width .5s}
   .barlabel{font-size:13px;color:var(--muted)}
   .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px;margin-top:22px}
   .flip{perspective:1000px;height:230px;cursor:pointer}
@@ -59,8 +59,8 @@
 <h1>📇 知识卡册</h1>
 <p class="sub">每做完一题集一张卡。复盘日（D7/D14/D21/D28）只刷卡不做新题——点击卡片翻面，先看正面回忆，再翻面对答案。集齐约 50 张即完成知识地图。</p>
 
-<div class="bar"><div id="pbar"></div></div>
-<p class="barlabel" id="plabel">集卡进度：4 / 50（Day 02）</p>
+<div class="bar"><div id="pbar" style="width:12%"></div></div>
+<p class="barlabel" id="plabel">集卡进度：6 / 50（Day 03）</p>
 
 <div class="cards">
   <div class="flip" onclick="this.classList.toggle('on')">
@@ -118,6 +118,36 @@
         <div><b>考点</b>：五步闭环 · 意图/执行分离（模型从不执行）· schema 三件套 · 参数幻觉三防（枚举/必填/二次校验）· 错误回喂自纠 · FC 靠 SFT 轨迹数据训出<br><br>
         <b>易错</b>：以为模型自己执行了函数；description 随便写；失败就盲目重试不回喂<br><br>
         <b>出处</b>：OpenAI FC Guide（2023-06）· 美团「FC 三连炮」· 小林笔记 16 题 · Anthropic Tool Use</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flip" onclick="this.classList.toggle('on')">
+    <div class="inner">
+      <div class="face front">
+        <div class="tag">CARD #5 · 基模 · Day 03</div>
+        <div class="big">「生成 = 逐 token 掷骰；<br>temperature 是骰子的偏心程度：<br>T 低偏心稳定，T 高公平发散。」</div>
+        <div class="hint">📇 点击翻面 → 考点 / 易错 / 出处</div>
+      </div>
+      <div class="face back">
+        <div><b>考点</b>：自回归（分布→采样→拼回）· T 缩放 logits（p∝exp(z/T)，0~2 默认 1）· top_p 截断、二选一调 · T=0 贪心仍受浮点/批间数值差影响 · 幻觉≠采样问题<br><br>
+        <b>易错</b>：把多样性当"模型在思考"；把调 T 当修复幻觉的旋钮；以为 T=0 百分百可复现；T 和 top_p 一起猛调<br><br>
+        <b>出处</b>：OpenAI API 文档（temperature/top_p 口径）· HF《How to generate》· 各厂解码策略连环炮</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flip" onclick="this.classList.toggle('on')">
+    <div class="inner">
+      <div class="face front blue">
+        <div class="tag">CARD #6 · AGENT · Day 03</div>
+        <div class="big">「短期记忆 = 窗口（内存，会话级易失）；<br>长期记忆 = 向量库 + 档案（硬盘，跨会话）。<br>写入：提炼→向量→入库；<br>读出：向量→top-k→注入。」</div>
+        <div class="hint">📇 点击翻面 → 考点 / 易错 / 出处</div>
+      </div>
+      <div class="face back">
+        <div><b>考点</b>：两档架构 · 写读各四步 · 向量（语义）vs BM25（精确词）混合 · 记忆治理（时间戳/覆盖/遗忘）<br><br>
+        <b>易错</b>：以为窗口能跨会话；以为所有记忆都该向量化；记忆只增不改；把长期记忆当窗口的替代（是补充）<br><br>
+        <b>出处</b>：Lilian Weng《Agent》记忆一节 · Pinecone 教程 · 字节/阿里「设计有记忆的客服 Agent」原题方向</div>
       </div>
     </div>
   </div>

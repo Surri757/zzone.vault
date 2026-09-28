@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 03 · Q2｜Agent 记忆：短期 vs 长期，为什么用向量库？</title>
+<style>
+  :root{
+    --ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#ffffff;
+    --blue:#2563eb;--blue-bg:#dbeafe;--blue-bd:#93c5fd;
+    --green:#16a34a;--green-bg:#dcfce7;--green-bd:#86efac;
+    --amber:#b45309;--amber-bg:#fef3c7;--amber-bd:#fcd34d;
+    --purple:#7c3aed;--purple-bg:#ede9fe;--purple-bd:#c4b5fd;
+    --red:#dc2626;--red-bg:#fee2e2;--red-bd:#fca5a5;
+  }
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.85;margin:0}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 90px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#2563eb;border-color:#93c5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#60a5fa;border-color:#2f4368}
+  }
+  header{border-bottom:3px solid var(--ink);padding-bottom:16px;margin-bottom:10px}
+  .kicker{font-size:13px;letter-spacing:2px;color:var(--muted);font-weight:600}
+  h1{font-size:26px;margin:8px 0 6px;line-height:1.4}
+  .meta{font-size:14px;color:var(--muted)}
+  .srcbar{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}
+  .chip{font-size:12.5px;padding:4px 12px;border-radius:999px;border:1px solid}
+  .chip.src{background:var(--blue-bg);border-color:var(--blue-bd);color:#1e40af}
+  .chip.proof{background:var(--green-bg);border-color:var(--green-bd);color:#166534}
+  .chip.rewrite{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber)}
+  h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:5px solid #ea580c}
+  h2 .no{color:var(--muted);font-size:14px;font-weight:600;margin-right:6px}
+  .card{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:22px 24px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .fig{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 14px 8px;margin:18px 0;text-align:center}
+  .fig figcaption{font-size:13.5px;color:var(--muted);padding:8px 10px 10px}
+  details{background:var(--card);border:1px solid #e7e5df;border-radius:14px;padding:0;margin:12px 0;overflow:hidden}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";color:var(--amber);transition:transform .2s;font-size:15px}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .body{padding:2px 20px 16px;border-top:1px dashed #e7e5df}
+  details.l1 summary{background:#fffbeb}details.l2 summary{background:#fefce8}details.l3 summary{background:#fdf4ff}
+  .lab{background:#0f172a;color:#e2e8f0;border-radius:16px;padding:22px;margin:18px 0}
+  .lab h3{margin:0 0 6px;font-size:16px;color:#7dd3fc}
+  .lab p{font-size:13.5px;color:#94a3b8;margin:4px 0 14px}
+  .lab .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .lab button.go{background:#2563eb;color:#fff;border-radius:10px;padding:9px 18px;font-size:14.5px;font-weight:700;cursor:pointer;border:none;font-family:inherit}
+  .lab .behav{font-size:12.5px;color:#94a3b8;background:#1e293b;border-radius:10px;padding:10px 14px;margin:14px 0 0;line-height:1.9}
+  /* 开关 */
+  .sw{position:relative;display:inline-block;width:56px;height:28px;flex:none}
+  .sw input{opacity:0;width:0;height:0}
+  .sl{position:absolute;inset:0;background:#475569;border-radius:999px;transition:.2s;cursor:pointer}
+  .sl:before{content:"";position:absolute;width:22px;height:22px;border-radius:50%;background:#fff;top:3px;left:3px;transition:.2s}
+  .sw input:checked + .sl{background:#16a34a}
+  .sw input:checked + .sl:before{transform:translateX(28px)}
+  /* 两栏演示 */
+  .memcols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  @media(max-width:700px){.memcols{grid-template-columns:1fr}}
+  .memcol{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:12px 14px;transition:opacity .3s,filter .3s}
+  .memcol.dim{opacity:.35;filter:grayscale(.55)}
+  .memcol h4{margin:0 0 4px;font-size:14.5px}
+  #coloff h4{color:#fca5a5}#colon h4{color:#86efac}
+  .rlabel{font-size:12px;color:#fbbf24;font-weight:800;letter-spacing:.5px;margin:12px 0 2px}
+  .bub{max-width:92%;padding:7px 12px;border-radius:12px;font-size:13.5px;margin:6px 0;line-height:1.65}
+  .bub.u{background:#2563eb;color:#fff;margin-left:auto;border-bottom-right-radius:4px}
+  .bub.a{background:#334155;color:#e2e8f0;margin-right:auto;border-bottom-left-radius:4px}
+  .rv{display:none}
+  .rv.show{display:block;animation:pop .25s}
+  @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .pipe{font-size:12px;color:#7dd3fc;margin:2px 0 6px;line-height:1.7}
+  .vdb{border:1.5px dashed #38bdf8;border-radius:12px;padding:8px 12px;margin:6px 0}
+  .vdb .vt{font-size:12px;color:#7dd3fc;font-weight:800}
+  .vchip{display:inline-block;background:#0c4a6e;border:1px solid #0284c7;color:#bae6fd;border-radius:8px;padding:2px 9px;font-size:11.5px;margin:3px 4px 0 0;font-family:Consolas,monospace}
+  .retr{background:#14532d;border:1px solid #22c55e;border-radius:12px;padding:9px 12px;font-size:12.5px;color:#dcfce7;margin:6px 0;line-height:1.75}
+  .retr b{color:#86efac}
+  .simtag{display:inline-block;background:#3f3160;color:#ddd6fe;border-radius:6px;padding:1px 8px;font-size:11.5px;margin-top:3px}
+  .verdict{margin-top:14px;background:#0b1322;border:1px solid #334155;border-radius:12px;padding:12px 16px;font-size:13.5px;color:#e2e8f0;line-height:1.85}
+  .quiz{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 22px;margin:14px 0}
+  .quiz .qq{font-weight:700;margin:0 0 12px}
+  .opt{display:block;width:100%;text-align:left;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:12px;padding:11px 16px;margin:8px 0;font-size:15px;cursor:pointer;font-family:inherit;transition:all .15s}
+  .opt:hover{border-color:#ea580c;background:#fff7ed}
+  .opt.right{background:var(--green-bg);border-color:var(--green);font-weight:700}
+  .opt.wrong{background:var(--red-bg);border-color:var(--red)}
+  .fb{font-size:14px;margin:10px 0 0;min-height:20px}
+  .fb.ok{color:var(--green)}.fb.no{color:var(--red)}
+  .score{font-size:14px;color:var(--muted)}
+  .flip{perspective:1000px;height:220px;cursor:pointer;margin:18px 0}
+  .inner{position:relative;width:100%;height:100%;transition:transform .55s;transform-style:preserve-3d}
+  .flip.on .inner{transform:rotateY(180deg)}
+  .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .face.front{background:linear-gradient(135deg,#ffedd5,#fef3c7);border:2px solid #fdba74}
+  .face.front .big{font-size:18px;font-weight:800;line-height:1.7}
+  .face.back{background:var(--card);border:2px solid var(--ink);transform:rotateY(180deg);font-size:14px;line-height:1.8;text-align:left;justify-content:flex-start;overflow:auto}
+  .face .hint{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .back b{color:#c2410c}
+  .next{background:linear-gradient(135deg,#dcfce7,#d1fae5);border:1.5px solid var(--green-bd);border-radius:16px;padding:18px 24px;margin:26px 0}
+  .refs{font-size:14px;line-height:2}
+  .refs a{color:#ea580c;text-decoration:none;border-bottom:1px dashed #fdba74}
+  .askme{background:#fff7ed;border:1.5px dashed #fdba74;border-radius:14px;padding:14px 20px;font-size:14.5px;margin:24px 0}
+  nav.pager{display:flex;justify-content:space-between;gap:12px;margin-top:40px;font-size:15px}
+  nav.pager a{color:#ea580c;text-decoration:none;font-weight:700}
+  code{background:#f1f5f9;border-radius:6px;padding:1px 7px;font-size:.92em;color:#0f172a}
+  .guess .opt{display:inline-block;width:auto;margin:6px 8px 6px 0;font-size:16px;font-weight:800;padding:10px 22px}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme:dark;
+      --ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;
+      --blue:#60a5fa;--blue-bg:#1c2a44;--blue-bd:#2f4368;
+      --green:#4ade80;--green-bg:#163024;--green-bd:#24523a;
+      --amber:#fbbf24;--amber-bg:#2e2310;--amber-bd:#57411a;
+      --purple:#a78bfa;--purple-bg:#282041;--purple-bd:#3f3160;
+      --red:#f87171;--red-bg:#3a1c1c;--red-bd:#5f2a2a;
+    }
+    .card,.fig,.quiz,details{border-color:#34383e}
+    details.l1 summary{background:#2a2312}
+    details.l2 summary{background:#272415}
+    details.l3 summary{background:#241f33}
+    details .body{border-top-color:#34383e}
+    .opt{background:#22252b;border-color:#3a3f47}
+    .opt:hover{background:#33270f;border-color:#fb923c}
+    .next{background:linear-gradient(135deg,#0f281b,#0e2c20)}
+    .askme{background:#2a2113;border-color:#57411a}
+    code{background:#22252b;color:#e2e8f0}
+    .chip.src{color:#93c5fd}
+    .chip.proof{color:#4ade80}
+    .chip.rewrite{color:var(--amber)}
+    .face.front{background:linear-gradient(135deg,#2e2510,#3a1c1c);border-color:#57411a}
+    .face.back{background:var(--card)}
+    .fig svg{background:#f6f5f0;border-radius:10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="../reference/0003-course-archive.html">🗂️ 课程归档</a>
+</nav>
+
+<header>
+  <div class="kicker">DAY 03 · 第 2 题（AGENT 方向）· 难度 ⭐+</div>
+  <h1>Agent 的记忆怎么设计？短期 vs 长期分别是什么？为什么用向量库？记忆怎么写入和读出？</h1>
+  <div class="meta">附带考点：两档架构 · 写读四步 · 向量 vs 关键词 · 记忆过时治理 ｜ 衔接 D2 窗口（短期记忆=窗口的正式化）与 D2 发散题「客服隔天失忆」</div>
+  <div class="srcbar">
+    <span class="chip src">真题源：字节/阿里 Agent 岗高频原题方向（「设计一个有记忆的客服 Agent」「为什么记忆用向量库而不是普通数据库」）</span>
+    <span class="chip proof">佐证：Lilian Weng《LLM Powered Autonomous Agents》记忆一节 · Pinecone 向量数据库教程 · LangChain Memory 演进</span>
+    <span class="chip rewrite">改写声明：检索相似度为示意值，写读机制保真</span>
+  </div>
+</header>
+
+<!-- S1 盲猜 -->
+<h2><span class="no">S1</span>🎭 开场：先盲猜一下</h2>
+<div class="card guess">
+  <p style="margin:0 0 10px;font-weight:700">昨天聊得很投缘的客服 Agent，今天新开一个会话问它「我爱吃什么」，它答不上来。缺的最关键组件是？</p>
+  <button class="opt" onclick="gGuess(this,0)">一个参数量更大的基座模型</button>
+  <button class="opt" onclick="gGuess(this,1)">跨会话的长期记忆（存取历史事实）</button>
+  <button class="opt" onclick="gGuess(this,2)">把 temperature 调得更高</button>
+  <p class="fb" id="gfb" style="min-height:24px"></p>
+  <p style="font-size:14px;color:var(--muted);margin:8px 0 0">提示：这是 D2 发散题的原班人马——今天给出正式答案。换多大的模型、调多高的 T，都改变不了"新会话里它什么都没看见"。</p>
+</div>
+
+<!-- S2 两档记忆 -->
+<h2><span class="no">S2</span>🧠 两档记忆：窗口是内存，向量库是硬盘</h2>
+<div class="card">
+  <p><b>三个结论（面试直接背）</b>：</p>
+  <ul>
+    <li><b>短期记忆 = 上下文窗口</b>：装本会话的对话原文，容量有限、<b>会话一开一关就清空</b>——D2 的窗口放到 Agent 语境下的正式名字。</li>
+    <li><b>长期记忆 = 向量库 + 结构化档案</b>：跨会话持久。类比：<b>窗口是内存，向量库是硬盘</b>——关机（换会话）只清内存，不清硬盘。</li>
+    <li><b>加分点</b>：不是所有记忆都该向量化——偏好/关键事实适合提炼成<b>结构化档案</b>（键值、表格，可改可删），原文片段才进向量库。两句都说到，就是"设计过"的答案。</li>
+  </ul>
+</div>
+
+<figure class="fig">
+<svg viewBox="0 0 720 340" width="100%" style="max-width:720px">
+  <defs><marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker>
+  <marker id="mb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#ea580c"/></marker>
+  <marker id="mc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker></defs>
+  <!-- Agent -->
+  <rect x="300" y="14" width="120" height="54" rx="12" fill="#ffedd5" stroke="#ea580c" stroke-width="2"/>
+  <text x="360" y="46" font-size="15" font-weight="800" text-anchor="middle" fill="#9a3412">🤖 Agent</text>
+  <!-- 短期 -->
+  <rect x="22" y="118" width="256" height="176" rx="16" fill="#eff6ff" stroke="#3b82f6" stroke-width="2.5"/>
+  <text x="150" y="146" font-size="14.5" font-weight="800" text-anchor="middle" fill="#1e3a8a">短期记忆 = 上下文窗口</text>
+  <text x="150" y="166" font-size="11.5" text-anchor="middle" fill="#2563eb">（内存 · 会话级）</text>
+  <g>
+    <rect x="44" y="180" width="150" height="26" rx="9" fill="#dbeafe" stroke="#93c5fd"/><text x="60" y="198" font-size="11.5" fill="#1e40af">用户：我叫小明，无辣不欢</text>
+    <rect x="86" y="214" width="150" height="26" rx="9" fill="#fff" stroke="#cbd5e1"/><text x="102" y="232" font-size="11.5" fill="#475569">Agent：记下了，小明！</text>
+  </g>
+  <rect x="44" y="252" width="212" height="30" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+  <text x="150" y="272" font-size="11.5" font-weight="700" text-anchor="middle" fill="#991b1b">会话结束 → 清空 ⌫ · 容量有限</text>
+  <!-- 长期 -->
+  <rect x="442" y="104" width="256" height="196" rx="16" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.5"/>
+  <text x="570" y="132" font-size="14.5" font-weight="800" text-anchor="middle" fill="#14532d">长期记忆 = 向量库 + 档案</text>
+  <text x="570" y="152" font-size="11.5" text-anchor="middle" fill="#16a34a">（硬盘 · 跨会话持久）</text>
+  <g>
+    <ellipse cx="500" cy="184" rx="26" ry="10" fill="#dcfce7" stroke="#4ade80"/>
+    <rect x="474" y="184" width="52" height="46" fill="#dcfce7" stroke="#4ade80"/>
+    <ellipse cx="500" cy="230" rx="26" ry="10" fill="#dcfce7" stroke="#4ade80"/>
+    <text x="500" y="212" font-size="10.5" text-anchor="middle" fill="#166534">向量库</text>
+    <rect x="516" y="172" width="86" height="24" rx="7" fill="#fff" stroke="#86efac"/><text x="559" y="189" font-size="10.5" text-anchor="middle" fill="#15803d">#2 爱吃辣 · vec[...]</text>
+    <rect x="516" y="202" width="86" height="24" rx="7" fill="#fff" stroke="#86efac"/><text x="559" y="219" font-size="10.5" text-anchor="middle" fill="#15803d">#1 叫小明 · vec[...]</text>
+    <rect x="474" y="240" width="200" height="26" rx="8" fill="#fef9c3" stroke="#fde047"/><text x="574" y="258" font-size="10.5" text-anchor="middle" fill="#854d0e">结构化档案：偏好/事实（可改可删）</text>
+  </g>
+  <rect x="462" y="270" width="216" height="26" rx="8" fill="#dcfce7" stroke="#86efac"/>
+  <text x="570" y="288" font-size="11.5" font-weight="700" text-anchor="middle" fill="#166534">跨会话持久 ♻ · 越攒越懂你</text>
+  <!-- arrows -->
+  <line x1="300" y1="66" x2="180" y2="112" stroke="#6b7280" stroke-width="2.2" marker-end="url(#ma)"/>
+  <text x="196" y="94" font-size="11" fill="#6b7280">每轮把窗口喂给模型</text>
+  <path d="M278,250 C340,300 400,300 458,262" fill="none" stroke="#ea580c" stroke-width="2.4" marker-end="url(#mb)"/>
+  <text x="360" y="316" font-size="11.5" font-weight="800" fill="#ea580c" text-anchor="middle">写入：提炼事实 → embedding → 入库</text>
+  <path d="M458,142 C400,96 346,92 300,64" fill="none" stroke="#16a34a" stroke-width="2.4" stroke-dasharray="6 4" marker-end="url(#mc)"/>
+  <text x="404" y="86" font-size="11.5" font-weight="800" fill="#16a34a" text-anchor="middle">读出：top-k → 注入上下文</text>
+  <text x="360" y="334" font-size="13" text-anchor="middle" fill="#4b5563">换会话 = 关机：只清内存（窗口），不清硬盘（向量库）</text>
+</svg>
+<figcaption>图 1｜两档记忆架构。D2 发散题「客服隔天失忆」的正式答案：左下角那条"清空"就是失忆的根源，右半边就是补丁。</figcaption>
+</figure>
+
+<!-- S3 写读 -->
+<h2><span class="no">S3</span>🔁 记忆怎么写入、怎么读出：两个四步</h2>
+<div class="card">
+  <ul>
+    <li><b>写入 4 步</b>：对话 → <b>提炼事实</b>（"我叫小明、爱吃辣"）→ <b>embedding</b>（文字变向量）→ <b>入库</b>（向量 + 原文 + 元数据）。</li>
+    <li><b>读出 4 步</b>：新问题 → <b>embedding</b> → <b>相似度 top-k 检索</b> → <b>注入 system/上下文</b>，模型照常作答——对模型来说，记忆只是"提前塞进窗口的相关片段"。</li>
+    <li><b>为什么是向量库</b>：赢在<b>语义</b>——问「我爱吃什么」字面不含「辣」，也能命中「无辣不欢」，字面零重叠照样找得到；<b>关键词（BM25）赢在精确词</b>——订单号、型号、专有名词。生产答案：两者混合 + 重排（D15 专拆）。</li>
+  </ul>
+</div>
+
+<figure class="fig">
+<svg viewBox="0 0 720 360" width="100%" style="max-width:720px">
+  <defs><marker id="wa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker>
+  <marker id="wc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#ea580c"/></marker>
+  <marker id="wg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker></defs>
+  <text x="120" y="30" font-size="14.5" font-weight="800" fill="#9a3412">✍️ 写入环（存进去）</text>
+  <g font-size="11.5" font-weight="700" text-anchor="middle">
+    <rect x="20" y="44" width="152" height="56" rx="10" fill="#eff6ff" stroke="#60a5fa"/><text x="96" y="68" fill="#1e3a8a">对话原文</text><text x="96" y="86" font-size="10.5" font-weight="500" fill="#2563eb">"我叫小明，无辣不欢"</text>
+    <rect x="196" y="44" width="152" height="56" rx="10" fill="#fff7ed" stroke="#fb923c"/><text x="272" y="68" fill="#9a3412">事实提炼</text><text x="272" y="86" font-size="10.5" font-weight="500" fill="#ea580c">「叫小明」「爱吃辣」</text>
+    <rect x="372" y="44" width="152" height="56" rx="10" fill="#fdf4ff" stroke="#c084fc"/><text x="448" y="68" fill="#6b21a8">embedding</text><text x="448" y="86" font-size="10.5" font-weight="500" fill="#9333ea">文字 → 高维向量</text>
+    <rect x="548" y="44" width="152" height="56" rx="10" fill="#f0fdf4" stroke="#4ade80"/><text x="624" y="68" fill="#14532d">入库</text><text x="624" y="86" font-size="10.5" font-weight="500" fill="#16a34a">向量+原文+元数据</text>
+  </g>
+  <line x1="172" y1="72" x2="192" y2="72" stroke="#6b7280" stroke-width="2" marker-end="url(#wa)"/>
+  <line x1="348" y1="72" x2="368" y2="72" stroke="#6b7280" stroke-width="2" marker-end="url(#wa)"/>
+  <line x1="524" y1="72" x2="544" y2="72" stroke="#6b7280" stroke-width="2" marker-end="url(#wa)"/>
+  <!-- connector -->
+  <path d="M624,100 C624,150 420,150 420,196" fill="none" stroke="#94a3b8" stroke-width="2.2" stroke-dasharray="5 4" marker-end="url(#wa)"/>
+  <text x="540" y="152" font-size="11.5" fill="#64748b" text-anchor="middle">存进去的，是为了将来取出来</text>
+  <text x="120" y="216" font-size="14.5" font-weight="800" fill="#166534">🔎 读出环（取出来）</text>
+  <g font-size="11.5" font-weight="700" text-anchor="middle">
+    <rect x="20" y="230" width="118" height="56" rx="10" fill="#eff6ff" stroke="#60a5fa"/><text x="79" y="254" fill="#1e3a8a">新问题</text><text x="79" y="272" font-size="10.5" font-weight="500" fill="#2563eb">"我爱吃什么？"</text>
+    <rect x="162" y="230" width="118" height="56" rx="10" fill="#fdf4ff" stroke="#c084fc"/><text x="221" y="254" fill="#6b21a8">embedding</text><text x="221" y="272" font-size="10.5" font-weight="500" fill="#9333ea">同一个编码器</text>
+    <rect x="304" y="230" width="138" height="56" rx="10" fill="#f0fdf4" stroke="#4ade80"/><text x="373" y="254" fill="#14532d">top-k 相似检索</text><text x="373" y="272" font-size="10.5" font-weight="500" fill="#16a34a">余弦相似度排序</text>
+    <rect x="466" y="230" width="118" height="56" rx="10" fill="#fff7ed" stroke="#fb923c"/><text x="525" y="254" fill="#9a3412">注入上下文</text><text x="525" y="272" font-size="10.5" font-weight="500" fill="#ea580c">塞进 system/窗口</text>
+    <rect x="608" y="230" width="92" height="56" rx="10" fill="#dbeafe" stroke="#3b82f6"/><text x="654" y="254" fill="#1e3a8a">模型作答</text><text x="654" y="272" font-size="10.5" font-weight="500" fill="#2563eb">照常生成</text>
+  </g>
+  <line x1="138" y1="258" x2="158" y2="258" stroke="#6b7280" stroke-width="2" marker-end="url(#wa)"/>
+  <line x1="280" y1="258" x2="300" y2="258" stroke="#6b7280" stroke-width="2" marker-end="url(#wa)"/>
+  <line x1="442" y1="258" x2="462" y2="258" stroke="#6b7280" stroke-width="2" marker-end="url(#wa)"/>
+  <line x1="584" y1="258" x2="604" y2="258" stroke="#6b7280" stroke-width="2" marker-end="url(#wa)"/>
+  <path d="M654,286 C654,330 360,330 96,306" fill="none" stroke="#94a3b8" stroke-width="2.2" stroke-dasharray="5 4" marker-end="url(#wa)"/>
+  <text x="378" y="326" font-size="11.5" fill="#64748b" text-anchor="middle">新的对话又成为明天的记忆原料——循环往复</text>
+  <rect x="150" y="336" width="420" height="20" rx="10" fill="none"/>
+  <text x="360" y="352" font-size="12.5" font-weight="700" text-anchor="middle" fill="#4b5563">写入赢在"提炼"，读出赢在"语义相似"——两环合起来才是记忆</text>
+</svg>
+<figcaption>图 2｜写读循环：存的时候提炼 + 向量化，取的时候向量化 + top-k + 注入。对模型而言记忆只是窗口里多了一段"相关片段"。</figcaption>
+</figure>
+
+<!-- S4 实验室 -->
+<h2><span class="no">S4</span>🔬 动手实验室：记忆开关演示</h2>
+<div class="lab">
+  <h3>🔀 同一个用户，两种 Agent</h3>
+  <p>三回合固定剧本：回合 1、2 在<b style="color:#e2e8f0">昨天的会话 A</b>，回合 3 是<b style="color:#e2e8f0">今天的新会话 B</b>。先保持开关<b style="color:#fca5a5">关闭</b>重播一次看结局，再<b style="color:#86efac">打开</b>重播一次对比两栏。</p>
+  <div class="row">
+    <label class="sw"><input type="checkbox" id="memtog"><span class="sl"></span></label>
+    <b id="togtext" style="font-size:14px;color:#e2e8f0">长期记忆：关（不写入、不检索）</b>
+    <button class="go" id="memplay" style="margin-left:auto">▶ 重播三回合</button>
+  </div>
+  <div class="memcols" id="memstage">
+    <div class="memcol" id="coloff">
+      <h4>🔇 无长期记忆（只靠窗口）</h4>
+      <div class="rlabel">回合 1 · 昨天 · 会话 A</div>
+      <div class="bub u rv" data-step="1">我叫小明，无辣不欢！</div>
+      <div class="bub a rv" data-step="2">你好小明！想聊点什么？</div>
+      <div class="pipe rv" data-step="2">窗口：[…「我叫小明，无辣不欢」] ✓ 还在窗内</div>
+      <div class="rlabel">回合 2 · 昨天 · 会话 A（继续）</div>
+      <div class="bub u rv" data-step="4">推荐个晚餐？</div>
+      <div class="bub a rv" data-step="5">你无辣不欢，试试湘菜或川菜？</div>
+      <div class="pipe rv" data-step="5">窗口：整段对话仍在 → 答得出（但这不是记忆，是窗口还没关）</div>
+      <div class="rlabel">回合 3 · 今天 · 新会话 B</div>
+      <div class="bub u rv" data-step="6">我爱吃什么？</div>
+      <div class="bub a rv" data-step="8">抱歉，这轮对话里没有相关信息，我答不上来……</div>
+      <div class="pipe rv" data-step="8">窗口：新会话 = 空 ⌫ ｜ 向量库：从没写过 → 无处可查</div>
+    </div>
+    <div class="memcol dim" id="colon">
+      <h4>🔊 有长期记忆（写入 + 读出）</h4>
+      <div class="rlabel">回合 1 · 昨天 · 会话 A</div>
+      <div class="bub u rv" data-step="1">我叫小明，无辣不欢！</div>
+      <div class="bub a rv" data-step="2">记下了，小明！</div>
+      <div class="pipe rv" data-step="3">✍️ 写入四步：提炼「叫小明」「爱吃辣」→ embedding → 入库 ↓</div>
+      <div class="vdb rv" data-step="3"><span class="vt">🗄️ 向量库（长期 · 跨会话）</span><br><span class="vchip">#1 叫小明 · vec[0.12,-0.40,…]</span><span class="vchip">#2 爱吃辣 · vec[0.88,0.07,…]</span></div>
+      <div class="rlabel">回合 2 · 昨天 · 会话 A（继续）</div>
+      <div class="bub u rv" data-step="4">推荐个晚餐？</div>
+      <div class="bub a rv" data-step="5">你无辣不欢，试试湘菜或川菜？</div>
+      <div class="pipe rv" data-step="5">和左栏一样靠窗口即可——长期记忆是补充，不是替代</div>
+      <div class="rlabel">回合 3 · 今天 · 新会话 B</div>
+      <div class="bub u rv" data-step="6">我爱吃什么？</div>
+      <div class="retr rv" data-step="7">🔎 读出四步：query → embedding → top-k：<b>#2 爱吃辣（余弦 0.91）✓</b>　#1 叫小明（0.44）→ 注入 system<br><span class="simtag">问题字面没有「辣」→ 语义命中，这就是向量的价值</span></div>
+      <div class="bub a rv" data-step="8">你无辣不欢啊！今天想吃湘菜还是川菜？</div>
+    </div>
+  </div>
+  <div class="verdict" id="memverdict" style="display:none"></div>
+  <div class="behav">
+    <b style="color:#7dd3fc">组件行为定义</b>：① 开关只控制一件事——回合 1 结束时是否执行「提炼 → embedding → 入库」；② 回合 2 在同一会话（窗口还在）→ 两栏都答得出；回合 3 新会话（窗口清空）→ 两栏分化；③ 重播按时间顺序放三回合，右栏的入库/检索徽章随剧情出现，非当前模式的栏位变灰。<br>
+    <b style="color:#fbbf24">观察任务</b>：回合 3 有记忆栏命中的是哪条记忆、相似度多少？为什么问题里没有「辣」字也能命中？
+  </div>
+</div>
+
+<!-- S5 追问链 -->
+<h2><span class="no">S5</span>🔁 面试官追问链（点开前先自己答）</h2>
+
+<details class="l1"><summary>L1 · 「短期记忆能不能靠无限加长窗口解决？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：窗口加到 2M，昨晚的会话还在里面吗？</summary><div class="body" style="padding:8px 4px 12px">窗口装的是"这一场对话"；昨晚那场是另一场对话。</div></details>
+    <p><b>答案要点</b>：不能。① 成本/延迟随长度上涨、注意力稀释仍在（D2 的 U 形曲线）；② 更根本的：<b>窗口解决的是"容量"，长期记忆解决的是"持久"</b>——会话一关窗口照样清空，再长也留不住昨天。"装得下 ≠ 记得住"，这句就是 L1 的满分句。</p>
+  </div>
+</details>
+
+<details class="l2"><summary>L2 · 「为什么非要向量库，关键词搜索不行吗？」（字节/阿里爱问）</summary>
+  <div class="body">
+    <details><summary>💡 提示：「爱吃辣」和「无辣不欢」有几个字相同？订单号呢？</summary><div class="body" style="padding:8px 4px 12px">一个靠意思接近，一个靠字面精确——各吃各的赛道。</div></details>
+    <p><b>答案要点</b>：各有赛道。① <b>向量赢在语义</b>：embedding 把意思编码进几何空间，"爱吃辣"≈"无辣不欢"，字面零重叠也命中；② <b>关键词（BM25）赢在精确</b>：订单号、型号、专有名词，倒排索引零成本、可解释、不跑偏；③ 生产答案：<b>混合检索（两路召回）+ rerank 重排</b>（D2 补课讲过的漏斗，D15 拼成完整链路）。只夸向量或只贬关键词，都算答半题。</p>
+  </div>
+</details>
+
+<details class="l3"><summary>L3 · 「记忆错了 / 过时了怎么办？」（区分度题）</summary>
+  <div class="body">
+    <details><summary>💡 提示：用户昨天说爱吃辣，今天说最近胃不舒服不吃辣了——库里那条旧记忆怎么办？</summary><div class="body" style="padding:8px 4px 12px">回忆一下手机通讯录：新号码是"覆盖"还是"并存"？</div></details>
+    <p><b>答案要点</b>：记忆不是只增不改的账本。① <b>写入端</b>：重要度过滤 + 去重，别把闲聊全囤进去；② <b>冲突消解</b>：记忆带<b>时间戳和来源</b>，读出时新事实覆盖旧事实（recency 优先），用户明说的优先于模型推测的；③ <b>遗忘机制</b>：TTL 过期、显式删除权（合规要求）；④ <b>读出端</b>：检索结果只是"参考资料"，让模型引用记忆作答而不是盲信。能主动说出"记忆需要生命周期管理"，就是区分度所在（D17 记忆系统设计专拆）。</p>
+  </div>
+</details>
+
+<!-- S6 导图 -->
+<h2><span class="no">S6</span>🕸️ 举一反三：这一题牵出的一整张网</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 320" width="100%" style="max-width:720px">
+  <ellipse cx="360" cy="160" rx="98" ry="48" fill="#ffedd5" stroke="#ea580c" stroke-width="2.5"/>
+  <text x="360" y="155" font-size="19" font-weight="800" text-anchor="middle" fill="#9a3412">Agent 记忆</text>
+  <text x="360" y="178" font-size="11.5" text-anchor="middle" fill="#ea580c">内存 + 硬盘两档制</text>
+  <g stroke="#9ca3af" stroke-width="1.8">
+    <line x1="300" y1="130" x2="180" y2="76"/>
+    <line x1="420" y1="130" x2="540" y2="76"/>
+    <line x1="300" y1="190" x2="180" y2="244"/>
+    <line x1="420" y1="190" x2="540" y2="244"/>
+  </g>
+  <g>
+    <rect x="52" y="26" width="212" height="72" rx="12" fill="#dbeafe" stroke="#60a5fa"/>
+    <text x="158" y="54" font-size="14.5" font-weight="800" text-anchor="middle" fill="#1e3a8a">⚡ 短期 = 窗口</text>
+    <text x="158" y="78" font-size="11.5" text-anchor="middle" fill="#2563eb">会话级 · 易失 → D2 正式化</text>
+    <rect x="456" y="26" width="212" height="72" rx="12" fill="#f0fdf4" stroke="#4ade80"/>
+    <text x="562" y="54" font-size="14.5" font-weight="800" text-anchor="middle" fill="#14532d">💾 长期 = 向量库+档案</text>
+    <text x="562" y="78" font-size="11.5" text-anchor="middle" fill="#16a34a">跨会话 · 持久 · 结构化</text>
+    <rect x="46" y="222" width="212" height="72" rx="12" fill="#fdf4ff" stroke="#c084fc"/>
+    <text x="152" y="250" font-size="14.5" font-weight="800" text-anchor="middle" fill="#6b21a8">🔁 写读四步</text>
+    <text x="152" y="274" font-size="11.5" text-anchor="middle" fill="#9333ea">embedding 是钥匙 → D8 / RAG D12</text>
+    <rect x="462" y="222" width="212" height="72" rx="12" fill="#fee2e2" stroke="#f87171"/>
+    <text x="568" y="250" font-size="14.5" font-weight="800" text-anchor="middle" fill="#991b1b">🧹 治理：过时·冲突·遗忘</text>
+    <text x="568" y="274" font-size="11.5" text-anchor="middle" fill="#b91c1c">时间戳/覆盖/TTL → D17 系统设计</text>
+  </g>
+  <text x="360" y="308" font-size="12" text-anchor="middle" fill="#9ca3af">四个分支对应四组大厂真题，全部在 28 天路线内轮到</text>
+</svg>
+<figcaption>图 3｜记忆是"两档架构、写读链路、检索选型、生命周期治理"的交汇点——Agent 岗必考的原因。</figcaption>
+</figure>
+
+<!-- S7 quiz -->
+<h2><span class="no">S7</span>✅ 自测：4 道题，点选项立即判分</h2>
+<div>
+<div class="quiz" data-quiz>
+  <p class="qq">1. Agent 的短期记忆，本质上是什么？</p>
+  <button class="opt">A. 服务端为每个用户分配的专用数据库表</button>
+  <button class="opt" data-ok data-why="短期记忆=当前上下文窗口里的会话内容：会话级、易失，窗口一关即清空——它是'内存'不是'硬盘'。">B. 当前上下文窗口里的会话内容，会话结束即失效</button>
+  <button class="opt">C. 模型权重中随对话实时更新的可训练参数</button>
+  <button class="opt">D. 保存在用户浏览器里的对话缓存文件</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">2. 把「我叫小明、爱吃辣」写进长期记忆，标准链路是？</p>
+  <button class="opt">A. 对话原文整体压缩打包，上传对象存储</button>
+  <button class="opt">B. 通过梯度更新，把事实直接写进模型权重</button>
+  <button class="opt" data-ok data-why="写入四步：对话→提炼事实→embedding 向量化→连同原文和元数据入库。梯度更新是训练，不是记忆；整存原文既贵又难检索。">C. 对话 → 提炼事实 → embedding → 连同原文入库</button>
+  <button class="opt">D. 转成 SQL 记录，写进业务订单主表</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">3. 回忆类问题用向量检索优于关键词，最准的说法是？</p>
+  <button class="opt" data-ok data-why="向量检索赢在语义：embedding 把'意思'编码进几何空间，'爱吃辣'≈'无辣不欢'，字面零重叠也能命中；但订单号/型号等精确词 BM25 更强，生产常用混合。">A. 语义相近即可能命中，即使提问与记忆字面不重叠</button>
+  <button class="opt">B. 向量检索的响应延迟在任何场景都一定更低</button>
+  <button class="opt">C. 向量库的存储成本比倒排索引低一个量级</button>
+  <button class="opt">D. 关键词检索在技术上无法支持中文分词</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">4. 用户改口「最近不吃辣了」，记忆系统最合理的处理？</p>
+  <button class="opt">A. 保持旧记忆不变，避免任何形式的写入冲突</button>
+  <button class="opt">B. 清空整库重建，把全部历史记忆一并丢弃</button>
+  <button class="opt">C. 调高 temperature，让模型自行随机取舍</button>
+  <button class="opt" data-ok data-why="记忆要生命周期管理：新事实带时间戳写入，读出时按'时间新者优先+来源可信度'消解冲突，配合去重、TTL、显式删除——记忆不是只增不改的账本。">D. 新事实带时间戳写入，读出时新者优先消解冲突</button>
+  <p class="fb"></p>
+</div>
+<p class="score">得分：<span id="score">0</span> / 4　<span id="scoremsg"></span></p>
+</div>
+
+<!-- S8 知识卡 -->
+<h2><span class="no">S8</span>📇 今日知识卡（点击翻面，复盘日要刷）</h2>
+<div class="flip" id="flip1" onclick="this.classList.toggle('on')">
+  <div class="inner">
+    <div class="face front">
+      <div class="big">「短期记忆 = 窗口（内存，会话级易失）；<br>长期记忆 = 向量库 + 档案（硬盘，跨会话）。<br>写入：提炼→向量→入库；<br>读出：向量→top-k→注入。」</div>
+      <div class="hint">📇 点击卡片翻面 → 考点 / 易错 / 出处</div>
+    </div>
+    <div class="face back">
+      <div><b>考点</b>：两档架构 · 写读各四步 · 向量（语义）vs BM25（精确词）混合 · 记忆治理（时间戳/覆盖/遗忘）<br>
+      <b>易错</b>：以为窗口能跨会话；以为所有记忆都该向量化；记忆只增不改；把长期记忆当成窗口的替代（是补充）<br>
+      <b>出处</b>：Lilian Weng《Agent》记忆一节 · Pinecone 教程 · 字节/阿里「设计有记忆的客服 Agent」原题方向</div>
+    </div>
+  </div>
+</div>
+
+<!-- S9 60秒答案 -->
+<h2><span class="no">S9</span>🎤 60 秒面试答案（把今天的理解压成一段话）</h2>
+<div class="qa" style="background:linear-gradient(135deg,#fff7ed,#fef3c7);border:1px solid #fdba74;border-radius:16px;padding:20px 24px;margin:18px 0">
+  <div class="who" style="font-size:13px;color:#c2410c;font-weight:700;letter-spacing:1px">如果你在面试里被问到这道题，可以这样答：</div>
+  <div class="say" style="font-size:17.5px;font-weight:600;margin-top:6px">「Agent 记忆分两档：短期就是上下文窗口，装本会话原文，容量有限、关掉即清空；长期是外挂的向量库加结构化档案，跨会话持久——窗口是内存，向量库是硬盘。写入四步：从对话提炼事实、embedding 向量化、连同原文和元数据入库；读出四步：新问题向量化、相似度取 top-k、把片段注入上下文、模型照常生成。用向量库是因为语义检索：问『我爱吃什么』能命中『无辣不欢』，字面不重叠也能找到；但订单号、型号这类精确词关键词更强，生产上常用混合检索加重排。最后记忆还要治理：带时间戳、新事实覆盖旧事实、支持遗忘和删除——它不是只增不改的账本。」</div>
+</div>
+
+<div class="next">
+  <b>📍 明日 Day 04 预告</b>：幻觉解剖（为什么会一本正经地胡说）× ReAct 初见（Reason + Act 循环）——今天两句伏笔明天验证：「记忆只是外挂的资料，不是真理」「检索不到时，模型会编一个答案吗」。
+</div>
+
+<div class="card refs">
+  <b>📚 今日精读（按顺序，共约 15 分钟）</b>
+  <ol style="margin:8px 0 0;padding-left:22px">
+    <li><a href="https://lilianweng.github.io/posts/2023-06-23-agent/" target="_blank">Lilian Weng《LLM Powered Autonomous Agents》· Memory 一节</a> —— 两档记忆的经典出处</li>
+    <li><a href="https://www.pinecone.io/learn/vector-database/" target="_blank">Pinecone《What is a Vector Database》</a> —— embedding/相似度/top-k 直觉</li>
+    <li><a href="https://python.langchain.com/docs/concepts/memory/" target="_blank">LangChain Memory 概念文档</a> —— 工程侧的记忆组件对照</li>
+  </ol>
+</div>
+
+<div class="askme">💬 <b>卡住了？随时回到对话里直接问我</b>：「top-k 的 k 一般设多少？」「结构化档案和向量库怎么分工？」——追问本身就是最好的学习，今天的机制层问题照单全收。</div>
+
+<nav class="pager">
+  <a href="0005-temperature-sampling.html">← 上一题：采样与温度</a>
+  <a href="../index.html">🏠 主页</a>
+  <a href="../reference/0002-knowledge-cards.html">📇 知识卡册 →</a>
+</nav>
+
+</div>
+
+<script src="../reference/lianmo-progress.js"></script>
+<script>
+LIANMO.visit('L0006');
+LIANMO.autoTrack('L0006');
+// 盲猜
+function gGuess(btn,n){
+  var fb=document.getElementById('gfb');
+  document.querySelectorAll('.guess .opt').forEach(function(b){b.classList.remove('right','wrong')});
+  if(n===1){btn.classList.add('right');fb.className='fb ok';fb.textContent='✅ 对！模型再大、T 再高，也改变不了"新会话里它什么都没看见"。今天的正式答案：给 Agent 装一块硬盘。';}
+  else{btn.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 再想想：更大的模型（A）和更高的 T（C）都不解决"新会话看不见历史"这件事。缺的是跨会话的长期记忆——往下看。';}
+}
+// 记忆开关演示
+var timer=null;
+function replay(){
+  clearInterval(timer);
+  document.querySelectorAll('#memstage .rv').forEach(function(e){e.classList.remove('show')});
+  document.getElementById('memverdict').style.display='none';
+  var arr=Array.prototype.slice.call(document.querySelectorAll('#memstage .rv'));
+  arr.sort(function(a,b){return (parseInt(a.getAttribute('data-step'),10)||0)-(parseInt(b.getAttribute('data-step'),10)||0);});
+  var k=0;
+  timer=setInterval(function(){
+    if(k>=arr.length){clearInterval(timer);document.getElementById('memverdict').style.display='block';updateVerdict();return;}
+    arr[k].classList.add('show');k++;
+  },650);
+}
+function updateVerdict(){
+  var on=document.getElementById('memtog').checked;
+  document.getElementById('memverdict').innerHTML=on
+    ?'✅ <b>有记忆的结局</b>：回合 1 的「提炼→向量→入库」在回合 3 变现——新会话里 top-1 命中「爱吃辣」（余弦 0.91），注入上下文后照常作答。注意：问题字面没有「辣」，靠语义命中——这就是向量库的存在理由。'
+    :'❌ <b>无记忆的结局</b>：回合 2 还答得出（同一会话，窗口还在）；回合 3 一开新会话，窗口清空、又从没写过库——昨天的话全部蒸发。窗口是内存，不是硬盘。';
+}
+document.getElementById('memplay').onclick=replay;
+document.getElementById('memtog').onchange=function(){
+  var on=this.checked;
+  document.getElementById('coloff').classList.toggle('dim',on);
+  document.getElementById('colon').classList.toggle('dim',!on);
+  document.getElementById('togtext').textContent=on?'长期记忆：开（写入 + 读出已启用）':'长期记忆：关（不写入、不检索）';
+  LIANMO.touch('L0006',on?'mem:toggle-on':'mem:toggle-off');
+  if(document.getElementById('memverdict').style.display==='block')updateVerdict();
+};
+// quiz 即时反馈
+var total=document.querySelectorAll('[data-quiz]').length,got=0,done=0;
+document.querySelectorAll('[data-quiz]').forEach(function(q){
+  var fb=q.querySelector('.fb'),okBtn=q.querySelector('[data-ok]');
+  q.querySelectorAll('.opt').forEach(function(b){
+    b.onclick=function(){
+      q.querySelectorAll('.opt').forEach(function(o){o.classList.remove('right','wrong')});
+      if(b.hasAttribute('data-ok')){b.classList.add('right');fb.className='fb ok';fb.textContent='✅ 正确！'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;got++;done++;}}
+      else{b.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 再想想：'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;done++;}}
+      document.getElementById('score').textContent=got;
+      var m=document.getElementById('scoremsg');
+      if(done===total){LIANMO.quiz('L0006',got,total);var _r=LIANMO.get('L0006')||{};m.textContent=(got===total?'🏆 全对！Day 03 双题通关，记得去集卡！':(got>=total-1?'👍 很稳，错的那道回看解析':'📖 建议回看 S2/S3/S5 再试（刷新重做）'))+'　📅 已自动打卡 '+(_r.doneDate||'');}
+    };
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 03 · Q1｜采样与温度：为什么同一个问题每次回答不一样？</title>
+<style>
+  :root{
+    --ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#ffffff;
+    --blue:#2563eb;--blue-bg:#dbeafe;--blue-bd:#93c5fd;
+    --green:#16a34a;--green-bg:#dcfce7;--green-bd:#86efac;
+    --amber:#b45309;--amber-bg:#fef3c7;--amber-bd:#fcd34d;
+    --purple:#7c3aed;--purple-bg:#ede9fe;--purple-bd:#c4b5fd;
+    --red:#dc2626;--red-bg:#fee2e2;--red-bd:#fca5a5;
+  }
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.85;margin:0}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 90px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#2563eb;border-color:#93c5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#60a5fa;border-color:#2f4368}
+  }
+  header{border-bottom:3px solid var(--ink);padding-bottom:16px;margin-bottom:10px}
+  .kicker{font-size:13px;letter-spacing:2px;color:var(--muted);font-weight:600}
+  h1{font-size:26px;margin:8px 0 6px;line-height:1.4}
+  .meta{font-size:14px;color:var(--muted)}
+  .srcbar{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}
+  .chip{font-size:12.5px;padding:4px 12px;border-radius:999px;border:1px solid}
+  .chip.src{background:var(--blue-bg);border-color:var(--blue-bd);color:#1e40af}
+  .chip.proof{background:var(--green-bg);border-color:var(--green-bd);color:#166534}
+  .chip.rewrite{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber)}
+  h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:5px solid var(--blue)}
+  h2 .no{color:var(--muted);font-size:14px;font-weight:600;margin-right:6px}
+  .card{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:22px 24px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .fig{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 14px 8px;margin:18px 0;text-align:center}
+  .fig figcaption{font-size:13.5px;color:var(--muted);padding:8px 10px 10px}
+  details{background:var(--card);border:1px solid #e7e5df;border-radius:14px;padding:0;margin:12px 0;overflow:hidden}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";color:var(--amber);transition:transform .2s;font-size:15px}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .body{padding:2px 20px 16px;border-top:1px dashed #e7e5df}
+  details.l1 summary{background:#fffbeb}details.l2 summary{background:#fefce8}details.l3 summary{background:#fdf4ff}
+  .lab{background:#0f172a;color:#e2e8f0;border-radius:16px;padding:22px;margin:18px 0}
+  .lab h3{margin:0 0 6px;font-size:16px;color:#7dd3fc}
+  .lab p{font-size:13.5px;color:#94a3b8;margin:4px 0 14px}
+  .lab .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .lab button.mode{background:#334155;color:#cbd5e1;border-radius:999px;padding:6px 14px;font-size:13px;cursor:pointer;border:1px solid #475569;font-family:inherit}
+  .lab button.mode:hover{border-color:#38bdf8;color:#7dd3fc}
+  .lab button.go{background:#2563eb;color:#fff;border-radius:10px;padding:9px 18px;font-size:14.5px;font-weight:700;cursor:pointer;border:none;font-family:inherit}
+  .lab button.go.ghost{background:#334155;border:1px solid #475569;color:#cbd5e1}
+  #tval{font-size:21px;color:#7dd3fc;min-width:56px;font-family:Consolas,monospace}
+  input[type=range]{flex:1;min-width:170px;accent-color:#38bdf8}
+  .drow{display:grid;grid-template-columns:112px 1fr 66px;gap:12px;align-items:center;margin:9px 0}
+  .dname{font-size:14px;color:#e2e8f0;text-align:right}
+  .dname .dorig{display:block;font-size:11px;color:#64748b}
+  .dbars{position:relative;height:34px}
+  .dghost,.dmain{position:absolute;left:0;border-radius:6px}
+  .dghost{top:0;height:11px;background:#475569;opacity:.6}
+  .dmain{bottom:0;height:16px;min-width:2px;transition:width .25s}
+  .dpct{font-size:14.5px;font-weight:800;color:#f1f5f9}
+  #tinsight{font-size:13.5px;color:#fbbf24;margin:14px 0 6px;line-height:1.8}
+  .srow{display:grid;grid-template-columns:74px 1fr 232px;gap:10px;align-items:center;margin:6px 0;font-size:13px;color:#cbd5e1}
+  .srow .sname{text-align:right}
+  .sbar{display:block;height:12px;background:#1e293b;border-radius:6px;overflow:hidden}
+  .spct{font-size:12px;color:#94a3b8}
+  .stot{font-size:12.5px;color:#7dd3fc;margin-top:8px}
+  .dr{display:inline-block;border:1.5px solid #475569;border-radius:999px;padding:1px 9px;font-size:12px;color:#e2e8f0;margin:3px 4px 0 0}
+  .behav{font-size:12.5px;color:#94a3b8;background:#1e293b;border-radius:10px;padding:10px 14px;margin:14px 0 0;line-height:1.9}
+  .quiz{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 22px;margin:14px 0}
+  .quiz .qq{font-weight:700;margin:0 0 12px}
+  .opt{display:block;width:100%;text-align:left;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:12px;padding:11px 16px;margin:8px 0;font-size:15px;cursor:pointer;font-family:inherit;transition:all .15s}
+  .opt:hover{border-color:var(--blue);background:#eff6ff}
+  .opt.right{background:var(--green-bg);border-color:var(--green);font-weight:700}
+  .opt.wrong{background:var(--red-bg);border-color:var(--red)}
+  .fb{font-size:14px;margin:10px 0 0;min-height:20px}
+  .fb.ok{color:var(--green)}.fb.no{color:var(--red)}
+  .score{font-size:14px;color:var(--muted)}
+  .flip{perspective:1000px;height:220px;cursor:pointer;margin:18px 0}
+  .inner{position:relative;width:100%;height:100%;transition:transform .55s;transform-style:preserve-3d}
+  .flip.on .inner{transform:rotateY(180deg)}
+  .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .face.front{background:linear-gradient(135deg,#dbeafe,#cffafe);border:2px solid #67e8f9}
+  .face.front .big{font-size:18.5px;font-weight:800;line-height:1.65}
+  .face.back{background:var(--card);border:2px solid var(--ink);transform:rotateY(180deg);font-size:14px;line-height:1.8;text-align:left;justify-content:flex-start;overflow:auto}
+  .face .hint{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .back b{color:var(--blue)}
+  .next{background:linear-gradient(135deg,#dcfce7,#d1fae5);border:1.5px solid var(--green-bd);border-radius:16px;padding:18px 24px;margin:26px 0}
+  .refs{font-size:14px;line-height:2}
+  .refs a{color:var(--blue);text-decoration:none;border-bottom:1px dashed var(--blue-bd)}
+  .askme{background:#fff7ed;border:1.5px dashed #fdba74;border-radius:14px;padding:14px 20px;font-size:14.5px;margin:24px 0}
+  nav.pager{display:flex;justify-content:space-between;gap:12px;margin-top:40px;font-size:15px}
+  nav.pager a{color:var(--blue);text-decoration:none;font-weight:700}
+  code{background:#f1f5f9;border-radius:6px;padding:1px 7px;font-size:.92em;color:#0f172a}
+  .guess .opt{display:inline-block;width:auto;margin:6px 8px 6px 0;font-size:16px;font-weight:800;padding:10px 22px}
+  .hand{background:var(--amber-bg);border:1px dashed var(--amber-bd);border-radius:12px;padding:12px 18px;font-size:14px;margin:14px 0}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme:dark;
+      --ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;
+      --blue:#60a5fa;--blue-bg:#1c2a44;--blue-bd:#2f4368;
+      --green:#4ade80;--green-bg:#163024;--green-bd:#24523a;
+      --amber:#fbbf24;--amber-bg:#2e2310;--amber-bd:#57411a;
+      --purple:#a78bfa;--purple-bg:#282041;--purple-bd:#3f3160;
+      --red:#f87171;--red-bg:#3a1c1c;--red-bd:#5f2a2a;
+    }
+    .card,.fig,.quiz,details{border-color:#34383e}
+    details.l1 summary{background:#2a2312}
+    details.l2 summary{background:#272415}
+    details.l3 summary{background:#241f33}
+    details .body{border-top-color:#34383e}
+    .opt{background:#22252b;border-color:#3a3f47}
+    .opt:hover{background:#1e2b42;border-color:var(--blue)}
+    .next{background:linear-gradient(135deg,#0f281b,#0e2c20)}
+    .askme{background:#2a2113;border-color:#57411a}
+    .hand{background:#2e2310;border-color:#57411a}
+    code{background:#22252b;color:#e2e8f0}
+    .chip.src{color:#93c5fd}
+    .chip.proof{color:#4ade80}
+    .chip.rewrite{color:var(--amber)}
+    .face.front{background:linear-gradient(135deg,#1c2a44,#123a3a);border-color:#1f5f5f}
+    .face.back{background:var(--card)}
+    .fig svg{background:#f6f5f0;border-radius:10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="../reference/0003-course-archive.html">🗂️ 课程归档</a>
+</nav>
+
+<header>
+  <div class="kicker">DAY 03 · 第 1 题（基座模型方向）· 难度 ⭐+</div>
+  <h1>大模型每生成一步在做什么？temperature 是什么？为什么同一个问题每次回答不一样？T=0 就完全确定了吗？</h1>
+  <div class="meta">附带考点：自回归 · 解码三件套（T / top-k / top-p）· 贪心的复现性边界 ｜ 衔接 D1 token、D2「T 影响 Agent 决策稳定性」</div>
+  <div class="srcbar">
+    <span class="chip src">真题源：基模岗通用连环炮（OpenAI 文档常引；字节/阿里变体「讲讲解码策略」「T 和 top_p 什么关系、怎么调」）</span>
+    <span class="chip proof">佐证：OpenAI API 文档（temperature 0~2 默认 1 · top_p 0~1 · 官方建议二选一调）· HuggingFace《How to generate》</span>
+    <span class="chip rewrite">改写声明：示例概率为教学玩具分布，机制保真于真实解码</span>
+  </div>
+</header>
+
+<!-- S1 盲猜 -->
+<h2><span class="no">S1</span>🎭 开场：先盲猜一下</h2>
+<div class="card guess">
+  <p style="margin:0 0 10px;font-weight:700">同一个问题问两次，模型给出了两个不同的答案。最可能的原因是？</p>
+  <button class="opt" onclick="gGuess(this,0)">模型每次回答前悄悄更新了参数</button>
+  <button class="opt" onclick="gGuess(this,1)">生成时每一步都在按概率"掷骰子"选词</button>
+  <button class="opt" onclick="gGuess(this,2)">服务端把两次请求路由给了不同版本模型</button>
+  <p class="fb" id="gfb" style="min-height:24px"></p>
+  <p style="font-size:14px;color:var(--muted);margin:8px 0 0">提示：参数训练完就冻结；路由到不同模型是运营配置问题，不是机制。</p>
+</div>
+
+<!-- S2 生成机制 -->
+<h2><span class="no">S2</span>🎲 每生成一步在做什么：逐 token 掷骰</h2>
+<div class="card">
+  <p><b>三个结论（面试直接背）</b>：</p>
+  <ul>
+    <li><b>每步只干一件事</b>：读入已生成的全部内容 → 输出「下一个 token」在整个词表上的<b>概率分布</b> → 按分布<b>采样</b>一个 → 拼回去，循环到掷出结束符。这叫<b>自回归（autoregressive）</b>。</li>
+    <li><b>模型不写整句，只造"下一词的骰子"</b>——你看到的流式输出，就是骰子一把一把掷出来的结果。</li>
+    <li><b>衔接</b>：D1 说它看不见 token 里的字母；今天补另一半——它也看不见"整句"，一次只有一个 token。D2 埋的「T 影响 Agent 决策稳定性」，根源就是这只骰子。</li>
+  </ul>
+</div>
+
+<figure class="fig">
+<svg viewBox="0 0 720 320" width="100%" style="max-width:720px">
+  <defs><marker id="pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker>
+  <marker id="pb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker></defs>
+  <!-- input tokens -->
+  <rect x="16" y="118" width="136" height="60" rx="10" fill="#f3f4f6" stroke="#9ca3af"/>
+  <g font-size="11.5" font-weight="700" text-anchor="middle">
+    <rect x="24" y="132" width="26" height="22" rx="5" fill="#fff" stroke="#d1d5db"/><text x="37" y="147" fill="#374151">今</text>
+    <rect x="54" y="132" width="26" height="22" rx="5" fill="#fff" stroke="#d1d5db"/><text x="67" y="147" fill="#374151">今天</text>
+    <rect x="84" y="132" width="26" height="22" rx="5" fill="#fff" stroke="#d1d5db"/><text x="97" y="147" fill="#374151">天气</text>
+    <rect x="114" y="132" width="26" height="22" rx="5" fill="#fff" stroke="#d1d5db"/><text x="127" y="147" fill="#374151">真</text>
+  </g>
+  <text x="84" y="170" font-size="10.5" text-anchor="middle" fill="#9ca3af">已生成内容（也是 token）</text>
+  <line x1="154" y1="148" x2="186" y2="148" stroke="#6b7280" stroke-width="2.2" marker-end="url(#pa)"/>
+  <!-- model -->
+  <rect x="188" y="112" width="128" height="72" rx="12" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/>
+  <text x="252" y="142" font-size="15" font-weight="800" text-anchor="middle" fill="#1e3a8a">🧠 模型</text>
+  <text x="252" y="164" font-size="10.5" text-anchor="middle" fill="#2563eb">读入全部已生成内容</text>
+  <line x1="318" y1="148" x2="350" y2="148" stroke="#6b7280" stroke-width="2.2" marker-end="url(#pa)"/>
+  <!-- distribution -->
+  <rect x="352" y="66" width="212" height="164" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="2"/>
+  <text x="458" y="90" font-size="13" font-weight="800" text-anchor="middle" fill="#92400e">下一个 token 的概率分布</text>
+  <g font-size="11.5" fill="#4b5563">
+    <text x="364" y="116">好</text><rect x="386" y="106" width="118" height="13" rx="6" fill="#f59e0b"/><text x="512" y="117" font-weight="800" fill="#b45309">.31</text>
+    <text x="364" y="142">不错</text><rect x="386" y="132" width="84" height="13" rx="6" fill="#fbbf24"/><text x="478" y="143" font-weight="800" fill="#b45309">.22</text>
+    <text x="364" y="168">糟</text><rect x="386" y="158" width="65" height="13" rx="6" fill="#a78bfa"/><text x="459" y="169" font-weight="800" fill="#7c3aed">.17</text>
+    <text x="364" y="194">冷</text><rect x="386" y="184" width="42" height="13" rx="6" fill="#60a5fa"/><text x="436" y="195" font-weight="800" fill="#2563eb">.11</text>
+    <text x="364" y="218" fill="#9ca3af">其余…</text><text x="424" y="218" fill="#9ca3af">共 19%（词表十几万）</text>
+  </g>
+  <line x1="566" y1="148" x2="596" y2="148" stroke="#6b7280" stroke-width="2.2" marker-end="url(#pa)"/>
+  <!-- dice -->
+  <rect x="598" y="112" width="104" height="72" rx="12" fill="#ede9fe" stroke="#a78bfa" stroke-width="2"/>
+  <text x="650" y="140" font-size="14" font-weight="800" text-anchor="middle" fill="#4c1d95">🎲 掷一次</text>
+  <text x="650" y="162" font-size="10.5" text-anchor="middle" fill="#7c3aed">采样 ≠ 取最大</text>
+  <line x1="650" y1="186" x2="650" y2="230" stroke="#6b7280" stroke-width="2.2" marker-end="url(#pa)"/>
+  <!-- output -->
+  <rect x="352" y="232" width="350" height="42" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/>
+  <text x="527" y="258" font-size="13.5" font-weight="800" text-anchor="middle" fill="#14532d">序列变长一格：今天天气真 +「好」</text>
+  <!-- loop -->
+  <path d="M352,253 H252 V188" fill="none" stroke="#dc2626" stroke-width="2.4" stroke-dasharray="6 4" marker-end="url(#pb)"/>
+  <text x="300" y="288" font-size="13" font-weight="800" fill="#dc2626" text-anchor="middle">拼回去，再前向 → 自回归循环</text>
+  <text x="300" y="308" font-size="11.5" fill="#9ca3af" text-anchor="middle">直到掷出 ⟨EOS⟩ 结束符才停</text>
+</svg>
+<figcaption>图 1｜自回归生成流水线：每一步 = 前向计算 → 得到分布 → 采样一个 token → 拼回去。模型本体一次只负责"造骰子 + 掷一次"。</figcaption>
+</figure>
+
+<!-- S3 temperature -->
+<h2><span class="no">S3</span>🌡️ temperature：骰子的偏心旋钮</h2>
+<div class="card">
+  <ul>
+    <li><b>定义</b>：采样前把每个词的原始得分 z 除以 T 再 softmax——<code>p_i ∝ exp(z_i / T)</code>。T&lt;1 拉开差距（分布变尖、稳定），T&gt;1 压平（发散），T=1 原始分布。取值 <b>0~2，默认 1</b>。</li>
+    <li><b>为什么每次回答不一样</b>：T&gt;0 时是<b>按分布采样</b>而不是取最大——骰子每把不同。这不是"模型在思考"，是随机性来源本身。</li>
+    <li><b>top_p（nucleus）</b>：0~1，先截掉长尾、只保留累计概率前 p 的候选再归一采样。官方口径：<b>与 T 二选一调</b>，不建议两个一起猛调（分布被两次扭曲，难解释难复现）。</li>
+  </ul>
+</div>
+
+<div class="hand">✍️ <b>手推 30 秒</b>（玩具分布 阳光.42 / 微风.28 / 雨.18 / 雪.12）：T=0.5 时等价于每个概率<b>平方再归一</b>→ .1764 / .0784 / .0324 / .0144 → 归一后 ≈ <b>58% / 26% / 11% / 5%</b>。低 T 的本质：概率按 1/T 次幂向头部集中——分数高的被指数级放大。</div>
+
+<figure class="fig">
+<svg viewBox="0 0 720 300" width="100%" style="max-width:720px">
+  <rect x="95" y="12" width="530" height="36" rx="18" fill="#0f172a"/>
+  <text x="360" y="35" font-size="14" font-weight="700" text-anchor="middle" fill="#e2e8f0">temperature：softmax 前，logits ÷ T　→　p_i ∝ exp(z_i / T)</text>
+  <g>
+    <rect x="30" y="66" width="200" height="192" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="260" y="66" width="200" height="192" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="490" y="66" width="200" height="192" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="130" y="90" font-size="14" font-weight="800" text-anchor="middle" fill="#b91c1c">T = 0.2（尖）</text>
+    <text x="360" y="90" font-size="14" font-weight="800" text-anchor="middle" fill="#374151">T = 1.0（原始）</text>
+    <text x="590" y="90" font-size="14" font-weight="800" text-anchor="middle" fill="#1d4ed8">T = 2.0（平）</text>
+    <line x1="44" y1="212" x2="216" y2="212" stroke="#9ca3af" stroke-width="1.5"/>
+    <line x1="274" y1="212" x2="446" y2="212" stroke="#9ca3af" stroke-width="1.5"/>
+    <line x1="504" y1="212" x2="676" y2="212" stroke="#9ca3af" stroke-width="1.5"/>
+    <!-- T=0.2 bars: 87.1 11.5 1.3 0.2 -->
+    <g>
+      <rect x="58" y="115" width="34" height="97" rx="4" fill="#f59e0b"/><rect x="102" y="199" width="34" height="13" rx="4" fill="#10b981"/><rect x="146" y="210" width="34" height="2" fill="#3b82f6"/><rect x="190" y="212" width="34" height="1" fill="#94a3b8"/>
+      <text x="75" y="108" font-size="11" font-weight="800" text-anchor="middle" fill="#b45309">87%</text><text x="119" y="193" font-size="10.5" text-anchor="middle" fill="#047857">12%</text><text x="163" y="204" font-size="10" text-anchor="middle" fill="#2563eb">1%</text>
+    </g>
+    <!-- T=1 bars: 42 28 18 12 -->
+    <g>
+      <rect x="288" y="165" width="34" height="47" rx="4" fill="#f59e0b"/><rect x="332" y="181" width="34" height="31" rx="4" fill="#10b981"/><rect x="376" y="192" width="34" height="20" rx="4" fill="#3b82f6"/><rect x="420" y="199" width="34" height="13" rx="4" fill="#94a3b8"/>
+      <text x="305" y="158" font-size="11" font-weight="800" text-anchor="middle" fill="#b45309">42%</text><text x="349" y="175" font-size="10.5" text-anchor="middle" fill="#047857">28%</text><text x="393" y="186" font-size="10.5" text-anchor="middle" fill="#2563eb">18%</text><text x="437" y="193" font-size="10.5" text-anchor="middle" fill="#64748b">12%</text>
+    </g>
+    <!-- T=2 bars: 33.3 27.2 21.8 17.8 -->
+    <g>
+      <rect x="518" y="175" width="34" height="37" rx="4" fill="#f59e0b"/><rect x="562" y="182" width="34" height="30" rx="4" fill="#10b981"/><rect x="606" y="188" width="34" height="24" rx="4" fill="#3b82f6"/><rect x="650" y="192" width="34" height="20" rx="4" fill="#94a3b8"/>
+      <text x="535" y="168" font-size="11" font-weight="800" text-anchor="middle" fill="#b45309">33%</text><text x="579" y="176" font-size="10.5" text-anchor="middle" fill="#047857">27%</text><text x="623" y="182" font-size="10.5" text-anchor="middle" fill="#2563eb">22%</text><text x="667" y="186" font-size="10.5" text-anchor="middle" fill="#64748b">18%</text>
+    </g>
+    <g font-size="10.5" fill="#6b7280" text-anchor="middle">
+      <text x="75" y="228">阳光</text><text x="119" y="228">微风</text><text x="163" y="228">雨</text><text x="207" y="228">雪</text>
+      <text x="305" y="228">阳光</text><text x="349" y="228">微风</text><text x="393" y="228">雨</text><text x="437" y="228">雪</text>
+      <text x="535" y="228">阳光</text><text x="579" y="228">微风</text><text x="623" y="228">雨</text><text x="667" y="228">雪</text>
+    </g>
+    <text x="130" y="248" font-size="11.5" font-weight="700" text-anchor="middle" fill="#b91c1c">几乎必然「阳光」· 稳定</text>
+    <text x="360" y="248" font-size="11.5" font-weight="700" text-anchor="middle" fill="#374151">原始分布 · 平衡</text>
+    <text x="590" y="248" font-size="11.5" font-weight="700" text-anchor="middle" fill="#1d4ed8">接近公平骰 · 发散</text>
+  </g>
+  <text x="360" y="284" font-size="13" text-anchor="middle" fill="#4b5563">同一只骰子，三种偏心程度——<tspan font-weight="800">T 调的是"确定性"，不调"对错"</tspan></text>
+</svg>
+<figcaption>图 2｜温度三档对比（同一玩具分布实算）。数值由 p_i<sup>1/T</sup> 归一得出，与下面模拟器同一套公式。</figcaption>
+</figure>
+
+<!-- S4 实验室 -->
+<h2><span class="no">S4</span>🔬 动手实验室：温度采样模拟器</h2>
+<div class="lab">
+  <h3>🎲 亲手掷 10 把骰子</h3>
+  <p>固定玩具分布：阳光 .42 / 微风 .28 / 雨 .18 / 雪 .12。拖动滑块改 T，实线=当前缩放后分布，灰线=T=1 原始分布；点按钮按当前分布真实采样。</p>
+  <div class="row">
+    <span style="font-size:14px;color:#94a3b8">T =</span><b id="tval">1.00</b>
+    <input type="range" id="tsl" min="0.1" max="2" step="0.05" value="1">
+    <button class="mode preset" data-t="0.1">T 0.1</button>
+    <button class="mode preset" data-t="0.7">T 0.7</button>
+    <button class="mode preset" data-t="1">T 1.0</button>
+    <button class="mode preset" data-t="1.5">T 1.5</button>
+    <button class="mode preset" data-t="2">T 2.0</button>
+  </div>
+  <div id="dist" style="margin-top:14px"></div>
+  <div id="tinsight"></div>
+  <div class="row" style="margin-top:12px">
+    <button class="go" id="sample10">🎲 采样 10 次</button>
+    <button class="go ghost" id="resetSim">♻️ 重置计数</button>
+  </div>
+  <div id="stats" style="margin-top:12px"></div>
+  <div id="draws" style="margin-top:8px"></div>
+  <div class="behav">
+    <b style="color:#7dd3fc">组件行为定义</b>：① 滑块 0.1~2.0，实时按 <code style="background:#1e293b;color:#e2e8f0">p_i^(1/T)</code> 重算并归一（与 exp(z/T) 等价）；② 「采样 10 次」严格按当前分布独立掷骰、累计计数，实测频率 vs 理论概率对照；③ T=0（贪心：永远阳光）不在滑块内——最低 0.1 已能看出趋势。<br>
+    <b style="color:#fbbf24">观察任务</b>：T=0.1 连采 3 组，「雪」什么时候出现？再看 T=2.0——10 次里四种天气是不是都来了？
+  </div>
+</div>
+
+<!-- S5 追问链 -->
+<h2><span class="no">S5</span>🔁 面试官追问链（点开前先自己答）</h2>
+
+<details class="l1"><summary>L1 · 「为什么不永远选概率最高的词（贪心）？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：一个永远说"标准答案"的人，聊天有意思吗？</summary><div class="body" style="padding:8px 4px 12px">再想想：如果每步都取最大，两个 token 循环互相强化会发生什么？</div></details>
+    <p><b>答案要点</b>：贪心稳定但呆板——容易陷入重复循环、输出千篇一律；采样带来多样性与探索空间，也是 RLHF 训练目标希望的"分布别塌缩"。工程口径：<b>代码/抽取/分类用低 T（求稳），写作/头脑风暴/给多样候选用高 T（求发散）</b>——同一个模型，靠 T 切换性格。</p>
+  </div>
+</details>
+
+<details class="l2"><summary>L2 · 「top_p 和 temperature 什么区别？同时调会怎样？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：一个是"全体重新分蛋糕"，一个是"先踢人再分蛋糕"。</summary><div class="body" style="padding:8px 4px 12px">T 动的是每个候选的分数；top_p 动的是候选名单本身。</div></details>
+    <p><b>答案要点</b>：① <b>T 是全局缩放</b>——所有候选按 1/T 次幂重新分配概率，长尾也被放大/压缩；② <b>top_p 是截断</b>——只保留累计概率前 p 的头部候选（nucleus），长尾直接出局，再在剩下的里归一采样（top_k 同理，只是按固定个数截）；③ 同时猛调 = 分布被两次扭曲，效果难解释、实验难复现——<b>OpenAI 官方建议二选一调</b>。这句"官方口径"说出来就是加分项。</p>
+  </div>
+</details>
+
+<details class="l3"><summary>L3 · 「T=0 就没有幻觉了吗？」（高频陷阱题）</summary>
+  <div class="body">
+    <details><summary>💡 提示：把"答错"和"每次答得不一样"分成两件事想。</summary><div class="body" style="padding:8px 4px 12px">一个每次都坚定说错答案的人，和一个每次换着花样说错答案的人，谁"没有错"？</div></details>
+    <p><b>答案要点</b>：① <b>不能</b>。T=0 只消灭<b>随机性</b>，不消灭<b>错误</b>——幻觉是模型把没把握的内容生成得很有把握，根源在参数里的知识与训练分布，不是采样掷出来的；T=0 时它只会"每次稳定地胡成同一个答案"。② 反向补充：T=0 也<b>不是百分百可复现</b>——浮点运算顺序、批处理分组、硬件差异可能造成微小数值差，让个别 argmax 翻转。③ 一句话收尾：<b>低 T 降低"随机"，不修复"知识性错误"——幻觉 ≠ 采样问题</b>（明天 D4 幻觉解剖专拆）。</p>
+  </div>
+</details>
+
+<!-- S6 导图 -->
+<h2><span class="no">S6</span>🕸️ 举一反三：这一题牵出的一整张网</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 320" width="100%" style="max-width:720px">
+  <ellipse cx="360" cy="160" rx="98" ry="48" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="360" y="155" font-size="19" font-weight="800" text-anchor="middle" fill="#1e3a8a">采样与温度</text>
+  <text x="360" y="178" font-size="11.5" text-anchor="middle" fill="#2563eb">每步掷一只骰</text>
+  <g stroke="#9ca3af" stroke-width="1.8">
+    <line x1="300" y1="130" x2="180" y2="76"/>
+    <line x1="420" y1="130" x2="540" y2="76"/>
+    <line x1="300" y1="190" x2="180" y2="244"/>
+    <line x1="420" y1="190" x2="540" y2="244"/>
+  </g>
+  <g>
+    <rect x="52" y="26" width="212" height="72" rx="12" fill="#dcfce7" stroke="#4ade80"/>
+    <text x="158" y="54" font-size="14.5" font-weight="800" text-anchor="middle" fill="#14532d">🎲 骰子从哪来</text>
+    <text x="158" y="78" font-size="11.5" text-anchor="middle" fill="#15803d">logits→softmax 分布 → D9 注意力同款</text>
+    <rect x="456" y="26" width="212" height="72" rx="12" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="562" y="54" font-size="14.5" font-weight="800" text-anchor="middle" fill="#92400e">🎛️ 解码三件套</text>
+    <text x="562" y="78" font-size="11.5" text-anchor="middle" fill="#b45309">T / top_k / top_p · 官方：二选一调</text>
+    <rect x="46" y="222" width="212" height="72" rx="12" fill="#fee2e2" stroke="#f87171"/>
+    <text x="152" y="250" font-size="14.5" font-weight="800" text-anchor="middle" fill="#991b1b">🧊 T=0 的边界</text>
+    <text x="152" y="274" font-size="11.5" text-anchor="middle" fill="#b91c1c">贪心仍有浮点/批间数值差 → 复现性</text>
+    <rect x="462" y="222" width="212" height="72" rx="12" fill="#ede9fe" stroke="#a78bfa"/>
+    <text x="568" y="250" font-size="14.5" font-weight="800" text-anchor="middle" fill="#4c1d95">🤖 Agent 里的 T</text>
+    <text x="568" y="274" font-size="11.5" text-anchor="middle" fill="#7c3aed">决策稳定性 → D2 FC · 低T≠无幻觉 → D4</text>
+  </g>
+  <text x="360" y="308" font-size="12" text-anchor="middle" fill="#9ca3af">四个分支对应四组大厂真题，全部在 28 天路线内轮到</text>
+</svg>
+<figcaption>图 3｜采样是"分布从哪来、怎么截、边界在哪、Agent 怎么用"四条线的交汇点——基模岗必考的原因。</figcaption>
+</figure>
+
+<!-- S7 quiz -->
+<h2><span class="no">S7</span>✅ 自测：4 道题，点选项立即判分</h2>
+<div>
+<div class="quiz" data-quiz>
+  <p class="qq">1. 模型每生成一步，实际输出的东西是？</p>
+  <button class="opt">A. 一整句符合语法的完整回答</button>
+  <button class="opt" data-ok data-why="自回归生成：每步输出词表上全部候选 token 的概率分布，然后采样出一个，拼回去循环——模型一次只负责'造骰子+掷一次'。">B. 词表上各 token 的概率分布，再采样出一个</button>
+  <button class="opt">C. 从训练语料里检索出的最相似原句</button>
+  <button class="opt">D. 一段加密后的隐藏状态向量</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">2. 把 temperature 从 1.0 调到 0.2，最符合预期的变化是？</p>
+  <button class="opt" data-ok data-why="T&lt;1 时按 1/T 次幂放大头部概率、压缩长尾，分布变尖——输出更稳定。代码/抽取任务的标准配置。">A. 头部候选概率进一步放大，输出更稳定</button>
+  <button class="opt">B. 各候选概率被拉平，输出明显更多样</button>
+  <button class="opt">C. 模型切换到参数量更大的隐藏版本作答</button>
+  <button class="opt">D. 上下文窗口容量随之缩小一个量级</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">3. T=0（贪心）时，同一提示运行两次，输出一定逐字一致吗？</p>
+  <button class="opt">A. 一定一致，贪心已消除全部不确定性</button>
+  <button class="opt">B. 是否一致只取决于提示词的 token 长度</button>
+  <button class="opt" data-ok data-why="大体更稳定，但浮点运算顺序、批处理分组、硬件差异可造成微小数值差，个别 argmax 仍可能翻转——T=0 ≠ 百分百可复现。">C. 大体稳定，但浮点/批间数值差仍可能翻转</button>
+  <button class="opt">D. 一定不一致，因为内部保留了随机种子</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">4. 「同一个问题每次回答不一样」的根本原因是？</p>
+  <button class="opt">A. 服务端每次都在用新数据微调模型权重</button>
+  <button class="opt" data-ok data-why="T>0 时按概率分布采样而非取最大——每一步掷骰结果不同，整句自然不同。参数是冻结的，与训练无关。">B. T&gt;0 时按分布采样，每步掷骰结果不同</button>
+  <button class="opt">C. 多副本部署的机器时钟不同步导致漂移</button>
+  <button class="opt">D. 位置编码随会话时长累积发生偏移</button>
+  <p class="fb"></p>
+</div>
+<p class="score">得分：<span id="score">0</span> / 4　<span id="scoremsg"></span></p>
+</div>
+
+<!-- S8 知识卡 -->
+<h2><span class="no">S8</span>📇 今日知识卡（点击翻面，复盘日要刷）</h2>
+<div class="flip" id="flip1" onclick="this.classList.toggle('on')">
+  <div class="inner">
+    <div class="face front">
+      <div class="big">「生成 = 逐 token 掷骰；<br>temperature 是骰子的偏心程度：<br>T 低偏心稳定，T 高公平发散。」</div>
+      <div class="hint">📇 点击卡片翻面 → 考点 / 易错 / 出处</div>
+    </div>
+    <div class="face back">
+      <div><b>考点</b>：自回归（分布→采样→拼回）· T 缩放 logits（p∝exp(z/T)，0~2 默认1）· top_p 截断、二选一调 · T=0 贪心仍受数值差影响 · 幻觉≠采样问题<br>
+      <b>易错</b>：把多样性当"模型在思考"；把调 T 当修复幻觉的旋钮；以为 T=0 百分百可复现；T 和 top_p 一起猛调<br>
+      <b>出处</b>：OpenAI API 文档（temperature/top_p 口径）· HF《How to generate》· 各厂解码策略连环炮</div>
+    </div>
+  </div>
+</div>
+
+<!-- S9 60秒答案 -->
+<h2><span class="no">S9</span>🎤 60 秒面试答案（把今天的理解压成一段话）</h2>
+<div class="qa" style="background:linear-gradient(135deg,#eff6ff,#cffafe);border:1px solid #67e8f9;border-radius:16px;padding:20px 24px;margin:18px 0">
+  <div class="who" style="font-size:13px;color:var(--blue);font-weight:700;letter-spacing:1px">如果你在面试里被问到这道题，可以这样答：</div>
+  <div class="say" style="font-size:17.5px;font-weight:600;margin-top:6px">「大模型是自回归的：每一步基于已生成内容算出整个词表的概率分布，采样出一个 token 拼回去，循环到结束符。temperature 是采样前的缩放——logits 除以 T 再 softmax：T 小分布变尖、输出稳定，T 大分布变平、输出多样，取值 0 到 2、默认 1。所以同一个问题每次答案不同，不是模型在思考，是骰子不同。top_p 是截断累计概率头部再采样，官方建议和 T 二选一调。最后两个边界：T=0 是贪心，消灭随机但不等于百分百可复现，浮点顺序和批间分组都可能让 argmax 翻转；更重要的是 T=0 不解决幻觉——幻觉是知识性错误，不是采样问题。」</div>
+</div>
+
+<div class="next">
+  <b>📍 明日 Day 04 预告</b>：幻觉解剖（为什么会一本正经地胡说）× ReAct 初见（Reason + Act 循环）——今天留了两句伏笔明天验证：「T=0 也有幻觉」「Agent 的稳定决策不只靠调 T」。
+</div>
+
+<div class="card refs">
+  <b>📚 今日精读（按顺序，共约 15 分钟）</b>
+  <ol style="margin:8px 0 0;padding-left:22px">
+    <li><a href="https://platform.openai.com/docs/api-reference/chat/create" target="_blank">OpenAI API 参考 · temperature / top_p 参数说明</a> —— 官方口径：0~2 默认 1；建议与 top_p 二选一调</li>
+    <li><a href="https://huggingface.co/blog/how-to-generate" target="_blank">HuggingFace《How to generate text》</a> —— 贪心/beam/采样/top-k/top-p 图解对照</li>
+    <li><a href="https://github.com/wdndev/llm_interview_note" target="_blank">wdndev/llm_interview_note · 解码与采样章节</a> —— 面试视角的系统整理</li>
+  </ol>
+</div>
+
+<div class="askme">💬 <b>卡住了？随时回到对话里直接问我</b>：「为什么 T=0 还不可复现？」「top_k 和 top_p 实际怎么选？」——追问本身就是最好的学习，今天的机制层问题照单全收。</div>
+
+<nav class="pager">
+  <a href="0004-function-calling.html">← 上一题：Function Calling</a>
+  <a href="../index.html">🏠 主页</a>
+  <a href="0006-agent-memory.html">下一题：Agent 记忆 →</a>
+</nav>
+
+</div>
+
+<script src="../reference/lianmo-progress.js"></script>
+<script>
+LIANMO.visit('L0005');
+LIANMO.autoTrack('L0005');
+// 盲猜
+function gGuess(btn,n){
+  var fb=document.getElementById('gfb');
+  document.querySelectorAll('.guess .opt').forEach(function(b){b.classList.remove('right','wrong')});
+  if(n===1){btn.classList.add('right');fb.className='fb ok';fb.textContent='✅ 对！机制就是逐步采样——参数是冻结的（A 错），路由问题不是机制（C 错）。30 分钟后你能在白板上画出这只骰子。';}
+  else{btn.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 再想想：参数训练完就冻结（A 错），路由到不同模型是运营配置不是机制（C 错）。真正原因：每步都在按概率分布采样——往下看。';}
+}
+// 温度采样模拟器
+var WORDS=[["☀️ 阳光",0.42,"#f59e0b"],["🍃 微风",0.28,"#10b981"],["🌧️ 雨",0.18,"#3b82f6"],["❄️ 雪",0.12,"#94a3b8"]];
+var counts=[0,0,0,0],draws=[];
+function scaled(T){
+  var w=[],s=0,i;
+  for(i=0;i<WORDS.length;i++){w[i]=Math.pow(WORDS[i][1],1/T);s+=w[i];}
+  var q=[];
+  for(i=0;i<w.length;i++)q[i]=w[i]/s;
+  return q;
+}
+function fmt(x){var s=(x*100).toFixed(1);if(s.slice(-2)==='.0')s=s.slice(0,-2);return s+'%';}
+function renderStats(q){
+  var N=counts[0]+counts[1]+counts[2]+counts[3],i,html='',maxc=Math.max.apply(null,counts.concat([1]));
+  for(i=0;i<WORDS.length;i++){
+    var f=N?counts[i]/N:0;
+    html+='<div class="srow"><span class="sname">'+WORDS[i][0]+'</span><span class="sbar"><span style="display:block;height:100%;width:'+(counts[i]/maxc*100)+'%;background:'+WORDS[i][2]+'"></span></span><span class="spct">'+counts[i]+' 次'+(N?'（实测 '+fmt(f)+' / 理论 '+fmt(q[i])+'）':'')+'</span></div>';
+  }
+  html+='<div class="stot">'+(N?'累计 '+N+' 次 · 理论是"期望"，10 次的波动本身就是随机性——多采几组会贴近理论':'还没采样——先掷 10 次看看')+'</div>';
+  document.getElementById('stats').innerHTML=html;
+  var d='',last=draws.slice(-12),j;
+  for(j=0;j<last.length;j++)d+='<span class="dr" style="border-color:'+WORDS[last[j]][2]+'">'+WORDS[last[j]][0]+'</span>';
+  document.getElementById('draws').innerHTML=d;
+}
+function renderDist(){
+  var T=parseFloat(document.getElementById('tsl').value);
+  document.getElementById('tval').textContent=T.toFixed(2);
+  var q=scaled(T),html='',i;
+  for(i=0;i<WORDS.length;i++){
+    html+='<div class="drow"><div class="dname">'+WORDS[i][0]+'<span class="dorig">原 '+fmt(WORDS[i][1])+'</span></div>'
+      +'<div class="dbars"><div class="dghost" style="width:'+(WORDS[i][1]*100)+'%"></div>'
+      +'<div class="dmain" style="width:'+Math.max(q[i]*100,0.4)+'%;background:'+WORDS[i][2]+'"></div></div>'
+      +'<div class="dpct">'+fmt(q[i])+'</div></div>';
+  }
+  document.getElementById('dist').innerHTML=html;
+  var ins=document.getElementById('tinsight');
+  if(T<0.35)ins.innerHTML='🧊 T 很低：分布向头部塌缩——阳光近乎必中。代码助手/抽取任务用低 T 就是这个原因（API 里 T=0 即贪心：永远阳光）。';
+  else if(T<0.8)ins.innerHTML='🎯 T 偏低：更稳定但仍留一点惊喜——很多对话产品落在这附近。';
+  else if(T<=1.25)ins.innerHTML='⚖️ T≈1：原始分布，稳定性与多样性平衡（OpenAI 默认值）。';
+  else ins.innerHTML='🔥 T 很高：骰子接近公平——雪也会频繁出现。多样性的来源，也是"跑偏"的来源。';
+  renderStats(q);
+}
+function sample10(){
+  var T=parseFloat(document.getElementById('tsl').value),q=scaled(T),i,k;
+  for(k=0;k<10;k++){
+    var r=Math.random(),c=0,pick=WORDS.length-1;
+    for(i=0;i<q.length;i++){c+=q[i];if(r<c){pick=i;break;}}
+    counts[pick]++;draws.push(pick);
+  }
+  renderStats(q);
+}
+document.getElementById('tsl').oninput=renderDist;
+document.getElementById('tsl').onchange=function(){LIANMO.touch('L0005','sim:slider:'+this.value);};
+document.getElementById('sample10').onclick=sample10;
+document.getElementById('resetSim').onclick=function(){counts=[0,0,0,0];draws=[];renderStats(scaled(parseFloat(document.getElementById('tsl').value)));};
+document.querySelectorAll('.lab .preset').forEach(function(b){b.onclick=function(){document.getElementById('tsl').value=b.getAttribute('data-t');renderDist();};});
+renderDist();
+// quiz 即时反馈
+var total=document.querySelectorAll('[data-quiz]').length,got=0,done=0;
+document.querySelectorAll('[data-quiz]').forEach(function(q){
+  var fb=q.querySelector('.fb'),okBtn=q.querySelector('[data-ok]');
+  q.querySelectorAll('.opt').forEach(function(b){
+    b.onclick=function(){
+      q.querySelectorAll('.opt').forEach(function(o){o.classList.remove('right','wrong')});
+      if(b.hasAttribute('data-ok')){b.classList.add('right');fb.className='fb ok';fb.textContent='✅ 正确！'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;got++;done++;}}
+      else{b.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 再想想：'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;done++;}}
+      document.getElementById('score').textContent=got;
+      var m=document.getElementById('scoremsg');
+      if(done===total){LIANMO.quiz('L0005',got,total);var _r=LIANMO.get('L0005')||{};m.textContent=(got===total?'🏆 全对！采样这一课稳了，去下一题！':(got>=total-1?'👍 很稳，错的那道回看解析':'📖 建议回看 S2/S3/S5 再试（刷新重做）'))+'　📅 已自动打卡 '+(_r.doneDate||'');}
+    };
+  });
+});
+</script>
+</body>
+</html>

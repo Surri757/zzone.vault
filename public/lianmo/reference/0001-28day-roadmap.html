@@ -101,7 +101,7 @@
 <div class="pdash">
   <div class="pcards">
     <div class="pc"><b id="pDone">0</b><span>已完成题数 / 56</span></div>
-    <div class="pc"><b id="pPub">0 / 4</b><span>已解锁课程完成度</span></div>
+    <div class="pc"><b id="pPub">0 / 6</b><span>已解锁课程完成度</span></div>
     <div class="pc"><b id="pStreak">0</b><span>🔥 连续打卡（天）</span></div>
     <div class="pc"><b id="pSpan">0</b><span>开炉以来（天）</span></div>
     <div class="pc"><b id="pTouch">0</b><span>🖱️ 累计互动（次）</span></div>
@@ -124,8 +124,8 @@
   <h3>第 1 周 · 认知地基 <span class="ratio">配比 7:3 ｜ 目标：建立「发动机 × 整车」双线心智</span></h3>
   <div class="grid">
     <div class="day done"><span class="dn">D1 · 已完成 ✓</span><span class="line fm" data-lm="L0001">token & strawberry 数 r</span><span class="line ag" data-lm="L0002">Agent 四模块入门</span></div>
-    <div class="day today"><span class="dn">D2 · 今天</span><span class="line fm" data-lm="L0003">上下文窗口：128k 能装几本书</span><span class="line ag" data-lm="L0004">Function Calling：伸手拿工具</span></div>
-    <div class="day"><span class="dn">D3</span><span class="line fm">采样：温度与 Top-p</span><span class="line ag">记忆：短期 vs 长期</span></div>
+    <div class="day done"><span class="dn">D2 · 已完成 ✓</span><span class="line fm" data-lm="L0003">上下文窗口：128k 能装几本书</span><span class="line ag" data-lm="L0004">Function Calling：伸手拿工具</span></div>
+    <div class="day today"><span class="dn">D3 · 今天</span><span class="line fm" data-lm="L0005">采样：温度与 Top-p</span><span class="line ag" data-lm="L0006">记忆：短期 vs 长期</span></div>
     <div class="day"><span class="dn">D4</span><span class="line fm">幻觉解剖：为什么会一本正经胡说</span><span class="line ag">ReAct 初见（论文级）</span></div>
     <div class="day"><span class="dn">D5</span><span class="line fm">训练三阶段：预训练/SFT/RLHF</span><span class="line ag">Agent 安全直觉</span></div>
     <div class="day"><span class="dn">D6</span><span class="line fm">提示工程与思维链</span><span class="line ag">自由探索日</span></div>
@@ -183,17 +183,19 @@
 </div>
 <div class="note">📝 <b>惊讶日志</b>：每天用一句话记下「今天最让我意外的事实」。28 天后回看，它就是你的兴趣曲线和成长证据。<b>盲猜双题</b>：先不看答案各猜 30 秒——猜错是最好的学习催化剂（今天 strawberry 那题你已经体会过了）。</div>
 
-<p style="font-size:14px"><a href="../index.html">← 返回学习主页</a>　｜　<a id="gotoNext" href="../lessons/0003-context-window.html">继续学习 →</a></p>
+<p style="font-size:14px"><a href="../index.html">← 返回学习主页</a>　｜　<a id="gotoNext" href="../lessons/0005-temperature-sampling.html">继续学习 →</a></p>
 </div>
 <script src="lianmo-progress.js"></script>
 <script>
 var TOTAL = 56; // 28 天 × 每天 2 题
-var PUBLISHED = ["L0001", "L0002", "L0003", "L0004"]; // 已解锁课程（每次交付后更新）
+var PUBLISHED = ["L0001", "L0002", "L0003", "L0004", "L0005", "L0006"]; // 已解锁课程（每次交付后更新）
 var LESSONS = {
   L0001: { t: "Day01·Q1 strawberry 数 r", h: "../lessons/0001-token-strawberry.html" },
   L0002: { t: "Day01·Q2 什么是 AI Agent", h: "../lessons/0002-what-is-agent.html" },
   L0003: { t: "Day02·Q1 上下文窗口 128k", h: "../lessons/0003-context-window.html" },
-  L0004: { t: "Day02·Q2 Function Calling", h: "../lessons/0004-function-calling.html" }
+  L0004: { t: "Day02·Q2 Function Calling", h: "../lessons/0004-function-calling.html" },
+  L0005: { t: "Day03·Q1 采样与温度", h: "../lessons/0005-temperature-sampling.html" },
+  L0006: { t: "Day03·Q2 Agent 记忆两档", h: "../lessons/0006-agent-memory.html" }
 };
 function render() {
   var s = LIANMO.stats();

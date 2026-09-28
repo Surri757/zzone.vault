@@ -34,3 +34,6 @@ deploy.log
 .notes-flow-last-good.json
 notes-flow-events.jsonl
 dev-server.log.old
+
+# ZCode 工具的 dev 产物
+.zcode-dev-dist/
