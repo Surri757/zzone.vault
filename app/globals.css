@@ -1061,3 +1061,1095 @@ html.laser-hall {
     transition: none;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* 子模块共用 · 返回大厅（/quant、/atlas、/blog 头部 → /modules）                        */
+
+.hall-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.hall-return {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--ink-font-sans);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(229, 221, 202, 0.55);
+  border: 1px solid rgba(229, 221, 202, 0.2);
+  padding: 0.35rem 0.75rem;
+  white-space: nowrap;
+  transition: color 0.25s ease, border-color 0.25s ease;
+}
+
+.hall-return:hover {
+  color: var(--ink-jade);
+  border-color: rgba(127, 183, 163, 0.55);
+}
+
+.hall-return svg {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* 图 · 舆图（/atlas）—— 点阵夜地球                                                   */
+
+.atlas-root {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: #0b0f16; /* 深墨蓝替代纯黑：去压抑，城市灯光层在其上更活 */
+  color: var(--ink-paper);
+  padding: clamp(1rem, 3vw, 2.25rem) clamp(1.25rem, 4vw, 3.5rem) clamp(0.75rem, 2vw, 1.25rem);
+}
+
+.atlas-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex: none;
+}
+
+.atlas-kicker {
+  font-family: var(--ink-font-sans);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.atlas-title {
+  font-family: var(--ink-font-display);
+  font-size: clamp(1.75rem, 3.2vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+  margin: 0.4rem 0 0.35rem;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.atlas-sub {
+  font-family: var(--ink-font-sans);
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  color: rgba(229, 221, 202, 0.52);
+}
+
+.atlas-clock {
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.5);
+  white-space: nowrap;
+  padding-bottom: 0.25rem;
+}
+
+.atlas-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin-top: clamp(0.5rem, 1.5vw, 1rem);
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.atlas-root.is-scrubbing .atlas-stage {
+  cursor: grabbing;
+}
+
+.atlas-gl {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.atlas-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none; /* 球体旋转/捏合归画布，页面本身不滚动 */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: grab;
+}
+
+/* 拨动假想时刻：仪器认现在——顶部倒计时与时钟退到暗处 */
+.atlas-root.is-scrubbing .atlas-counts,
+.atlas-root.is-scrubbing .atlas-clock {
+  opacity: 0.55;
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.atlas-counts,
+.atlas-clock {
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.atlas-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: rgba(229, 221, 202, 0.88);
+  background: rgba(7, 9, 6, 0.88);
+  border: 1px solid rgba(229, 221, 202, 0.14);
+  padding: 0.3rem 0.55rem;
+  opacity: 0;
+  transition: opacity 0.16s cubic-bezier(0.4, 0, 0.6, 1);
+  will-change: transform;
+}
+
+/* 灯卡 */
+.atlas-card {
+  position: absolute;
+  top: clamp(0.75rem, 2vw, 1.25rem);
+  right: clamp(0.75rem, 2vw, 1.25rem);
+  width: 15.5rem;
+  background: rgba(9, 11, 8, 0.92);
+  border: 1px solid rgba(229, 221, 202, 0.16);
+  padding: 1.1rem 1.1rem 1rem;
+  z-index: 2;
+}
+
+.atlas-card-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: none;
+  color: rgba(229, 221, 202, 0.45);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 0.2s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.atlas-card-close:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.atlas-card-city {
+  font-family: var(--ink-font-display);
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.atlas-card-city span {
+  font-family: var(--ink-font-sans);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(229, 221, 202, 0.45);
+  margin-left: 0.5rem;
+}
+
+.atlas-card-mic {
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-gold);
+  margin-top: 0.15rem;
+}
+
+.atlas-card-state {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--ink-font-sans);
+  font-size: 0.8125rem;
+  letter-spacing: 0.06em;
+  margin-top: 0.7rem;
+  color: rgba(229, 221, 202, 0.85);
+}
+
+.atlas-card-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.atlas-card-state.is-open i {
+  background: #f5d76e;
+  box-shadow: 0 0 8px rgba(245, 215, 110, 0.8);
+}
+
+.atlas-card-state.is-break i {
+  background: rgba(245, 215, 110, 0.45);
+}
+
+.atlas-card-state.is-pre i {
+  background: rgba(226, 236, 255, 0.6);
+}
+
+.atlas-card-facts {
+  margin: 0.85rem 0 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.atlas-card-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.atlas-card-facts dt {
+  font-family: var(--ink-font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  color: rgba(229, 221, 202, 0.42);
+}
+
+.atlas-card-facts dd {
+  font-family: var(--ink-font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.85);
+}
+
+.atlas-card-drill {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.95rem;
+}
+
+.atlas-card-link {
+  font-family: var(--ink-font-sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-gold);
+  border: 1px solid rgba(188, 152, 88, 0.55);
+  padding: 0.4rem 0.75rem;
+  text-decoration: none;
+  transition: background 0.24s cubic-bezier(0.4, 0, 0.6, 1), color 0.24s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.atlas-card-link:hover {
+  background: rgba(188, 152, 88, 0.16);
+  color: #f5d76e;
+}
+
+.atlas-card-cal {
+  font-family: var(--ink-font-sans);
+  font-size: 0.5625rem;
+  letter-spacing: 0.08em;
+  color: rgba(229, 221, 202, 0.32);
+  margin-top: 0.8rem;
+}
+
+/* 此面滚动信息带：正面半球交易所（旗+名+状态+涨跌），双份内容无缝循环 */
+.atlas-ticker {
+  flex: none;
+  overflow: hidden;
+  height: 30px;
+  margin-top: 0.35rem;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+}
+
+.atlas-ticker-track {
+  display: inline-flex;
+  gap: 2.75rem;
+  padding-left: 2.75rem;
+  white-space: nowrap;
+  height: 100%;
+  align-items: center;
+  animation: atlas-marquee 55s linear infinite;
+  will-change: transform;
+}
+
+.atlas-ticker:hover .atlas-ticker-track {
+  animation-play-state: paused;
+}
+
+.atlas-ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.62);
+}
+
+.atlas-ticker-item b {
+  font-weight: 500;
+  color: rgba(226, 236, 255, 0.88);
+}
+
+/* 核心正面（正对）标记：名字下金色细线——带=宽正面（此面），金线=正对 */
+.atlas-ticker-item.tk-face b {
+  border-bottom: 1px solid rgba(245, 215, 110, 0.7);
+  padding-bottom: 1px;
+}
+
+/* 空态：正对皆洋——静态占位不跑马 */
+.atlas-ticker-track.is-empty,
+.atlas-ticker.is-empty .atlas-ticker-track {
+  animation: none;
+}
+
+.atlas-ticker-item.is-empty {
+  color: rgba(229, 221, 202, 0.4);
+}
+
+/* 拨动假想时刻：滚动带与顶部时钟/倒计时一起退暗（仪器认现在） */
+.atlas-root.is-scrubbing .atlas-ticker {
+  opacity: 0.55;
+}
+
+.atlas-ticker {
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.atlas-ticker-item.tk-up b {
+  color: rgba(240, 148, 126, 0.95);
+}
+
+.atlas-ticker-item.tk-down b {
+  color: rgba(200, 214, 236, 0.9);
+}
+
+.atlas-ticker-item.tk-up::after,
+.atlas-ticker-item.tk-down::after {
+  font-size: 0.625rem;
+}
+
+.atlas-ticker-flag {
+  width: 20px;
+  height: 13px;
+  object-fit: cover;
+  border: 1px solid rgba(201, 212, 228, 0.3);
+  border-radius: 2px;
+}
+
+@keyframes atlas-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-ticker-track {
+    animation: none;
+  }
+}
+
+/* 读屏可达清单：视觉隐藏、可聚焦（画布芯片对 SR 不可达） */
+.atlas-sr-list {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.atlas-sr-list button {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* 24 小时刻度盘 */
+.atlas-dial {
+  flex: none;
+  margin-top: 0.5rem;
+  cursor: ew-resize;
+  touch-action: none;
+  outline: none;
+  padding: 0.25rem 0;
+}
+
+.atlas-dial:focus-visible {
+  outline: 1px solid rgba(226, 236, 255, 0.35);
+  outline-offset: 4px;
+}
+
+.atlas-dial-track {
+  position: relative;
+  height: 2.25rem;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(229, 221, 202, 0.22) 0,
+    rgba(229, 221, 202, 0.22) 1px,
+    transparent 1px,
+    transparent calc(100% / 24)
+  );
+  border-bottom: 1px solid rgba(229, 221, 202, 0.18);
+}
+
+.atlas-dial-tick {
+  position: absolute;
+  bottom: 0.3rem;
+  font-family: var(--ink-font-mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.05em;
+  color: rgba(229, 221, 202, 0.4);
+  transform: translateX(0.2rem);
+}
+
+.atlas-dial-tick.t6,
+.atlas-dial-tick.t12,
+.atlas-dial-tick.t18 {
+  transform: translateX(-50%);
+}
+
+.atlas-dial-tick.t24 {
+  transform: translateX(calc(-100% - 0.2rem));
+}
+
+.atlas-dial-tick.t0 { left: 0; }
+.atlas-dial-tick.t6 { left: 25%; }
+.atlas-dial-tick.t12 { left: 50%; }
+.atlas-dial-tick.t18 { left: 75%; }
+.atlas-dial-tick.t24 { right: 0; left: auto; }
+
+.atlas-dial-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(245, 215, 110, 0.9);
+  box-shadow: 0 0 10px rgba(245, 215, 110, 0.45);
+  pointer-events: none;
+}
+
+.atlas-dial-handle i {
+  position: absolute;
+  top: -1px;
+  left: -2px;
+  width: 5px;
+  height: 5px;
+  transform: rotate(45deg);
+  background: #f5d76e;
+  transition: box-shadow 0.24s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.atlas-root.is-scrubbing .atlas-dial-handle i {
+  box-shadow: 0 0 12px rgba(245, 215, 110, 0.9);
+}
+
+.atlas-dial-readwrap {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 9px;
+  margin-top: 0.45rem;
+}
+
+.atlas-dial-read {
+  display: inline;
+  margin-top: 0;
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.56);
+}
+
+/* 指针扫过读出：旗帜 + 交易所名/当地时刻（display 由引擎按拨动态切换） */
+.atlas-dial-flag {
+  display: none;
+  width: 22px;
+  height: 14.5px;
+  object-fit: cover;
+  border: 1px solid rgba(201, 212, 228, 0.35);
+  border-radius: 2px;
+}
+
+.atlas-dial-name {
+  display: none;
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(226, 236, 255, 0.85);
+}
+
+.atlas-card-flag {
+  width: 27px;
+  height: 18px;
+  object-fit: cover;
+  border: 1px solid rgba(201, 212, 228, 0.3);
+  border-radius: 3px;
+  vertical-align: -4px;
+  margin-right: 8px;
+}
+
+@media (max-width: 640px) {
+  .atlas-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  /* 窄屏隐藏滚动带：纵向预算还给球（marquee 无法 hover 暂停，信息与上下双轨芯片重复） */
+  .atlas-ticker {
+    display: none;
+  }
+
+  .atlas-card {
+    top: auto;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-tip {
+    transition: none;
+  }
+
+  .atlas-card-link,
+  .atlas-dial-handle i {
+    transition: none;
+  }
+}
+
+/* 舆图 · 信号层（温度图升级）：倒计时、图例、灯卡指数 */
+
+.atlas-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  padding-bottom: 0.25rem;
+}
+
+.atlas-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.atlas-chip {
+  font-family: var(--ink-font-sans);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  color: rgba(229, 221, 202, 0.62);
+  border: 1px solid rgba(229, 221, 202, 0.2);
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+
+.atlas-chip b {
+  font-family: var(--ink-font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.9);
+  margin-left: 0.3rem;
+}
+
+.atlas-chip.is-open {
+  border-color: rgba(245, 215, 110, 0.55);
+  color: rgba(245, 215, 110, 0.85);
+}
+
+.atlas-chip.is-open b {
+  color: #f5d76e;
+}
+
+.atlas-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-family: var(--ink-font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  color: rgba(229, 221, 202, 0.45);
+}
+
+.atlas-legend i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 0.25rem;
+  vertical-align: 1px;
+}
+
+.atlas-legend .lg-up {
+  background: #e8735c;
+  box-shadow: 0 0 6px rgba(232, 115, 92, 0.6);
+}
+
+.atlas-legend .lg-down {
+  background: rgba(226, 236, 255, 0.75);
+  box-shadow: 0 0 6px rgba(226, 236, 255, 0.4);
+}
+
+.atlas-legend .lg-gold {
+  background: rgba(245, 215, 110, 0.7);
+}
+
+.atlas-legend .lg-off {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.atlas-card-idx {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.7rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(229, 221, 202, 0.12);
+}
+
+.atlas-card-idxname {
+  font-family: var(--ink-font-sans);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  color: rgba(229, 221, 202, 0.5);
+}
+
+.atlas-card-num {
+  font-family: var(--ink-font-mono);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.9);
+}
+
+.atlas-card-num em {
+  font-style: normal;
+  font-size: 0.8125rem;
+  margin-left: 0.4rem;
+}
+
+.atlas-card-idx.is-up .atlas-card-num {
+  color: #e8735c;
+}
+
+.atlas-card-idx.is-up .atlas-card-num em {
+  color: #e8735c;
+}
+
+.atlas-card-idx.is-down .atlas-card-num {
+  color: rgba(200, 216, 240, 0.95);
+}
+
+.atlas-card-idx.is-down .atlas-card-num em {
+  color: rgba(200, 216, 240, 0.95);
+}
+
+/* ============================================================
+   手记 · 分时资金剧场（与舆图同一套版式骨架）
+   === */
+
+.notes-root {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--ink-carbon);
+  color: var(--ink-paper);
+  padding: clamp(1rem, 3vw, 2.25rem) clamp(1.25rem, 4vw, 3.5rem) clamp(0.75rem, 2vw, 1.25rem);
+}
+
+.notes-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex: none;
+}
+
+.notes-kicker {
+  font-family: var(--ink-font-sans);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.notes-title {
+  font-family: var(--ink-font-display);
+  font-size: clamp(1.75rem, 3.2vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+  margin: 0.4rem 0 0.35rem;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.notes-sub {
+  font-family: var(--ink-font-sans);
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  color: rgba(229, 221, 202, 0.52);
+}
+
+.notes-clock {
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.5);
+  white-space: nowrap;
+  padding-bottom: 0.25rem;
+}
+
+.notes-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin-top: clamp(0.5rem, 1.5vw, 1rem);
+  overflow: hidden;
+}
+
+.notes-stage:not(.is-idle) {
+  cursor: pointer;
+}
+
+.notes-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 誊写中 / 失败幕布 */
+.notes-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  text-align: center;
+  padding: 1rem;
+}
+
+.notes-veil-text {
+  font-family: var(--ink-font-display);
+  font-size: clamp(1.1rem, 2.4vw, 1.5rem);
+  letter-spacing: 0.18em;
+  color: rgba(229, 221, 202, 0.85);
+  animation: notes-breathe 2.4s ease-in-out infinite;
+}
+
+.notes-veil-sub {
+  font-family: var(--ink-font-sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  color: rgba(229, 221, 202, 0.42);
+}
+
+/* 源状态角标：断供/无服务时悬在舞台顶中，数据时刻如实标注 */
+.notes-lag {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--ink-font-sans);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: rgba(229, 221, 202, 0.66);
+  background: rgba(12, 14, 18, 0.72);
+  border: 1px solid rgba(229, 221, 202, 0.14);
+  border-radius: 999px;
+  padding: 0.3rem 0.9rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.notes-retry {
+  margin-top: 1rem;
+  font-family: var(--ink-font-sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-gold);
+  background: none;
+  border: 1px solid rgba(188, 152, 88, 0.55);
+  padding: 0.45rem 1.1rem;
+  cursor: pointer;
+  transition: background 0.24s cubic-bezier(0.4, 0, 0.6, 1), color 0.24s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.notes-retry:hover {
+  background: rgba(188, 152, 88, 0.16);
+  color: #f5d76e;
+}
+
+@keyframes notes-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 控制排 */
+.notes-controls {
+  flex: none;
+  margin-top: 0.6rem;
+}
+
+.notes-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.notes-play {
+  width: 2.3rem;
+  height: 2.3rem;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 1px solid rgba(229, 221, 202, 0.28);
+  border-radius: 50%;
+  color: rgba(229, 221, 202, 0.8);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  flex: none;
+  transition: border-color 0.24s cubic-bezier(0.4, 0, 0.6, 1), color 0.24s cubic-bezier(0.4, 0, 0.6, 1),
+    box-shadow 0.24s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.notes-play:hover:not(:disabled) {
+  border-color: rgba(245, 215, 110, 0.7);
+  color: #f5d76e;
+}
+
+.notes-play.is-playing {
+  border-color: rgba(245, 215, 110, 0.8);
+  color: #f5d76e;
+  box-shadow: 0 0 14px rgba(245, 215, 110, 0.28);
+}
+
+.notes-play:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.notes-seg {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.notes-seg-btn {
+  font-family: var(--ink-font-sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  color: rgba(229, 221, 202, 0.6);
+  background: none;
+  border: 1px solid rgba(229, 221, 202, 0.22);
+  padding: 0.42rem 0.95rem;
+  cursor: pointer;
+  transition: border-color 0.24s cubic-bezier(0.4, 0, 0.6, 1), color 0.24s cubic-bezier(0.4, 0, 0.6, 1),
+    background 0.24s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.notes-seg-btn:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(229, 221, 202, 0.45);
+}
+
+.notes-seg-btn.is-on {
+  color: #f5d76e;
+  border-color: rgba(245, 215, 110, 0.75);
+  background: rgba(245, 215, 110, 0.08);
+}
+
+.notes-seg-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.notes-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  font-family: var(--ink-font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  color: rgba(229, 221, 202, 0.45);
+  white-space: nowrap;
+}
+
+.notes-legend i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin: 0 0.3rem 0 0.7rem;
+  vertical-align: 1px;
+}
+
+.notes-legend .is-in {
+  background: #f5d76e;
+  box-shadow: 0 0 6px rgba(245, 215, 110, 0.55);
+}
+
+.notes-legend .is-out {
+  background: #7fb7a3;
+  box-shadow: 0 0 6px rgba(127, 183, 163, 0.5);
+}
+
+/* 进度条（拨杆语法与舆图刻度盘同源） */
+.notes-bar {
+  cursor: ew-resize;
+  touch-action: none;
+  outline: none;
+  padding: 0.25rem 0 0;
+  margin-top: 0.55rem;
+}
+
+.notes-bar:focus-visible {
+  outline: 1px solid rgba(226, 236, 255, 0.35);
+  outline-offset: 4px;
+}
+
+.notes-bar-track {
+  position: relative;
+  height: 2.25rem;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(229, 221, 202, 0.16) 0,
+    rgba(229, 221, 202, 0.16) 1px,
+    transparent 1px,
+    transparent calc(100% / 24)
+  );
+  border-bottom: 1px solid rgba(229, 221, 202, 0.18);
+}
+
+.notes-bar-tick {
+  position: absolute;
+  bottom: 0.3rem;
+  font-family: var(--ink-font-mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.05em;
+  color: rgba(229, 221, 202, 0.4);
+  transform: translateX(-50%);
+}
+
+.notes-bar-tick:first-child {
+  transform: translateX(0.2rem);
+}
+
+.notes-bar-tick:last-child {
+  transform: translateX(calc(-100% - 0.2rem));
+}
+
+.notes-bar-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(245, 215, 110, 0.9);
+  box-shadow: 0 0 10px rgba(245, 215, 110, 0.45);
+  pointer-events: none;
+}
+
+.notes-bar-handle i {
+  position: absolute;
+  top: -1px;
+  left: -2px;
+  width: 5px;
+  height: 5px;
+  transform: rotate(45deg);
+  background: #f5d76e;
+}
+
+.notes-read {
+  margin: 0.45rem 0 0;
+  font-family: var(--ink-font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 221, 202, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notes-read-dim {
+  color: rgba(229, 221, 202, 0.34);
+}
+
+@media (max-width: 640px) {
+  .notes-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .notes-controls-row {
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .notes-legend {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notes-veil-text {
+    animation: none;
+    opacity: 1;
+  }
+
+  .notes-play,
+  .notes-seg-btn,
+  .notes-retry {
+    transition: none;
+  }
+}

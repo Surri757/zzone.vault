@@ -1,0 +1,77 @@
+name: Flow Archive Relay
+
+# 手记数据中继（2026-09-28 定案）：东财封本机 IP 与本机不可达 workers.dev 都堵不住这条路 ——
+# GitHub runner（境外）拉 Worker 的 /api/notes/flow（Worker 出口取东财一直健康），
+# 落到孤儿分支 data/flow：latest.json 常备快照 + d/日期.json 收盘定稿档。
+# 本机经 api.github.com（实测稳定可达）读最新镜像，东财封多久页面都有数。
+
+on:
+  schedule:
+    - cron: "*/5 1-7 * * 1-5" # 北京 09:15-15:10 交易时段快照（UTC 01-07）
+    - cron: "30 7 * * 1-5" # 北京 15:30 收盘定稿
+  workflow_dispatch:
+    inputs:
+      finalize:
+        description: "强制定稿（写 d/日期.json）"
+        default: "false"
+
+concurrency:
+  group: flow-archive
+  cancel-in-progress: true # 高负载积压时折叠旧 run，被杀的只丢一个快照，下轮补上
+
+permissions:
+  contents: write
+
+jobs:
+  relay:
+    name: relay worker bundle to data/flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Fetch worker bundle
+        env:
+          WORKER_URL: https://zzone-vault.private-trade-console.workers.dev/api/notes/flow
+        run: |
+          set -e
+          curl -sS --max-time 25 --retry 1 -o /tmp/latest.json "$WORKER_URL"
+          python3 - <<'EOF'
+          import json
+          b = json.load(open('/tmp/latest.json'))
+          n = len(b.get("series") or [])
+          assert n >= 12, f"bundle incomplete: {b.get('error') or n}"
+          print(f"bundle ok: date={b['date']} state={b['state']} series={n}")
+          EOF
+
+      - name: Push snapshot (and finalize after close)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_FINALIZE: ${{ github.event.inputs.finalize }}
+        run: |
+          set -e
+          DATE=$(python3 -c "import json;print(json.load(open('/tmp/latest.json'))['date'])")
+          STATE=$(python3 -c "import json;print(json.load(open('/tmp/latest.json'))['state'])")
+          git config user.name "flow-relay-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # 孤儿分支单 commit force-push：仓库体积恒定，不碰部署触发（main）
+          if git fetch --depth 2 origin data/flow; then
+            git checkout -q -B data/flow FETCH_HEAD
+          else
+            git checkout -q --orphan data/flow
+          fi
+          git rm -rq --cached . 2>/dev/null || true
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} + 2>/dev/null || true
+          mkdir -p d
+          cp /tmp/latest.json latest.json
+
+          # 定稿规则：显式要求，或已收盘（15:30 定稿 run / 收盘后的时段快照自然满足）
+          if [ "$FORCE_FINALIZE" = "true" ] || [ "$STATE" = "收盘" ]; then
+            cp /tmp/latest.json "d/${DATE}.json"
+            ls -1t d/*.json 2>/dev/null | tail -n +41 | xargs -r rm -f # 只留最近 40 个日档
+          fi
+
+          git add latest.json d
+          git commit -q -m "flow relay ${DATE} $(date -u +%H:%M)Z"
+          git push -q --force origin data/flow
+          echo "relayed: latest.json$( [ -f "d/${DATE}.json" ] && echo " + d/${DATE}.json (finalized)" )"

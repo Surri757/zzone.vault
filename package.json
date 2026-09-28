@@ -10,7 +10,10 @@
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "typecheck": "tsc --noEmit",
-    "refresh:catalog": "node scripts/refresh-stock-catalog.mjs"
+    "refresh:atlas": "node scripts/refresh-atlas.mjs",
+    "test:atlas": "node --test lib/atlas-session.test.mjs",
+    "refresh:catalog": "node scripts/refresh-stock-catalog.mjs",
+    "sync:lianmo": "node scripts/sync-lianmo.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",
@@ -31,11 +34,14 @@
     "@types/react-dom": "^19.0.1",
     "@types/three": "^0.185.0",
     "autoprefixer": "^10.4.20",
+    "d3-geo": "^3.1.1",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.4.4",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "topojson-client": "^3.1.0",
     "typescript": "^5.7.2",
+    "world-atlas": "^2.0.2",
     "wrangler": "^4.118.0"
   }
 }

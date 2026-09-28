@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 01 · Q1｜为什么最聪明的模型数不清 strawberry 里的 r？</title>
+<style>
+  :root{
+    --ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#ffffff;
+    --blue:#2563eb;--blue-bg:#dbeafe;--blue-bd:#93c5fd;
+    --green:#16a34a;--green-bg:#dcfce7;--green-bd:#86efac;
+    --amber:#b45309;--amber-bg:#fef3c7;--amber-bd:#fcd34d;
+    --purple:#7c3aed;--purple-bg:#ede9fe;--purple-bd:#c4b5fd;
+    --red:#dc2626;--red-bg:#fee2e2;--red-bd:#fca5a5;
+  }
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.85;margin:0}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 90px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#2563eb;border-color:#93c5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#60a5fa;border-color:#2f4368}
+  }
+  header{border-bottom:3px solid var(--ink);padding-bottom:16px;margin-bottom:10px}
+  .kicker{font-size:13px;letter-spacing:2px;color:var(--muted);font-weight:600}
+  h1{font-size:27px;margin:8px 0 6px;line-height:1.4}
+  .meta{font-size:14px;color:var(--muted)}
+  .srcbar{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}
+  .chip{font-size:12.5px;padding:4px 12px;border-radius:999px;border:1px solid}
+  .chip.src{background:var(--blue-bg);border-color:var(--blue-bd);color:#1e40af}
+  .chip.proof{background:var(--green-bg);border-color:var(--green-bd);color:#166534}
+  .chip.rewrite{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber)}
+  h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:5px solid var(--blue)}
+  h2 .no{color:var(--muted);font-size:14px;font-weight:600;margin-right:6px}
+  .card{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:22px 24px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .fig{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 14px 8px;margin:18px 0;text-align:center}
+  .fig figcaption{font-size:13.5px;color:var(--muted);padding:8px 10px 10px}
+  .qa{background:linear-gradient(135deg,#eff6ff,#f5f3ff);border:1px solid var(--blue-bd);border-radius:16px;padding:20px 24px;margin:18px 0}
+  .qa .who{font-size:13px;color:var(--blue);font-weight:700;letter-spacing:1px}
+  .qa .say{font-size:18px;font-weight:600;margin-top:6px}
+  details{background:var(--card);border:1px solid #e7e5df;border-radius:14px;padding:0;margin:12px 0;overflow:hidden}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";color:var(--amber);transition:transform .2s;font-size:15px}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .body{padding:2px 20px 16px;border-top:1px dashed #e7e5df}
+  details.l1 summary{background:#fffbeb}details.l2 summary{background:#fefce8}details.l3 summary{background:#fdf4ff}
+  .lab{background:#0f172a;color:#e2e8f0;border-radius:16px;padding:22px;margin:18px 0}
+  .lab h3{margin:0 0 6px;font-size:16px;color:#7dd3fc}
+  .lab p{font-size:13.5px;color:#94a3b8;margin:4px 0 14px}
+  .lab .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .lab input{flex:1;min-width:220px;background:#1e293b;border:1px solid #334155;color:#f1f5f9;border-radius:10px;padding:10px 14px;font-size:15px;font-family:inherit}
+  .lab button{background:#2563eb;color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:14.5px;cursor:pointer;font-family:inherit}
+  .lab button:hover{background:#1d4ed8}
+  .lab .preset{background:#334155;color:#cbd5e1;border-radius:999px;padding:5px 13px;font-size:13px;cursor:pointer;border:none;font-family:inherit}
+  .lab .preset:hover{background:#475569}
+  #tout{margin-top:16px;min-height:30px}
+  .tok{display:inline-block;border-radius:8px;padding:6px 12px;margin:4px;font-weight:700;font-size:16px;border:1.5px solid}
+  .t0{background:#dbeafe;border-color:#60a5fa}.t1{background:#dcfce7;border-color:#4ade80}
+  .t2{background:#fef3c7;border-color:#fbbf24}.t3{background:#ede9fe;border-color:#a78bfa}.t4{background:#fee2e2;border-color:#f87171}
+  .stat{font-size:14.5px;margin-top:12px;color:#e2e8f0}
+  .quiz{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 22px;margin:14px 0}
+  .quiz .qq{font-weight:700;margin:0 0 12px}
+  .opt{display:block;width:100%;text-align:left;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:12px;padding:11px 16px;margin:8px 0;font-size:15px;cursor:pointer;font-family:inherit;transition:all .15s}
+  .opt:hover{border-color:var(--blue);background:#eff6ff}
+  .opt.right{background:var(--green-bg);border-color:var(--green);font-weight:700}
+  .opt.wrong{background:var(--red-bg);border-color:var(--red)}
+  .fb{font-size:14px;margin:10px 0 0;min-height:20px}
+  .fb.ok{color:var(--green)}.fb.no{color:var(--red)}
+  .score{font-size:14px;color:var(--muted)}
+  .flip{perspective:1000px;height:210px;cursor:pointer;margin:18px 0}
+  .inner{position:relative;width:100%;height:100%;transition:transform .55s;transform-style:preserve-3d}
+  .flip.on .inner{transform:rotateY(180deg)}
+  .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .face.front{background:linear-gradient(135deg,#ede9fe,#dbeafe);border:2px solid var(--purple-bd)}
+  .face.front .big{font-size:19px;font-weight:800;line-height:1.6}
+  .face.back{background:var(--card);border:2px solid var(--ink);transform:rotateY(180deg);font-size:14px;line-height:1.8;text-align:left;justify-content:flex-start;overflow:auto}
+  .face .hint{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .back b{color:var(--purple)}
+  .guess .opt{display:inline-block;width:auto;margin:6px 8px 6px 0;font-size:17px;font-weight:800;padding:10px 26px}
+  .next{background:linear-gradient(135deg,#dcfce7,#d1fae5);border:1.5px solid var(--green-bd);border-radius:16px;padding:18px 24px;margin:26px 0}
+  .refs{font-size:14px;line-height:2}
+  .refs a{color:var(--blue);text-decoration:none;border-bottom:1px dashed var(--blue-bd)}
+  .askme{background:#fff7ed;border:1.5px dashed #fdba74;border-radius:14px;padding:14px 20px;font-size:14.5px;margin:24px 0}
+  nav.pager{display:flex;justify-content:space-between;gap:12px;margin-top:40px;font-size:15px}
+  nav.pager a{color:var(--blue);text-decoration:none;font-weight:700}
+  .tag{display:inline-block;font-size:12px;font-weight:700;padding:2px 10px;border-radius:6px;vertical-align:3px;margin-left:8px}
+  .tag.co{background:var(--blue-bg);color:#1e40af}
+  code{background:#f1f5f9;border-radius:6px;padding:1px 7px;font-size:.92em;color:#0f172a}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme:dark;
+      --ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;
+      --blue:#60a5fa;--blue-bg:#1c2a44;--blue-bd:#2f4368;
+      --green:#4ade80;--green-bg:#163024;--green-bd:#24523a;
+      --amber:#fbbf24;--amber-bg:#2e2310;--amber-bd:#57411a;
+      --purple:#a78bfa;--purple-bg:#282041;--purple-bd:#3f3160;
+      --red:#f87171;--red-bg:#3a1c1c;--red-bd:#5f2a2a;
+    }
+    .card,.fig,.quiz,details{border-color:#34383e}
+    details.l1 summary{background:#2a2312}
+    details.l2 summary{background:#272415}
+    details.l3 summary{background:#241f33}
+    details .body{border-top-color:#34383e}
+    .qa{background:linear-gradient(135deg,#1a2537,#251f3c);border-color:#2f4368}
+    .qa .who{color:#93c5fd}
+    .opt{background:#22252b;border-color:#3a3f47}
+    .opt:hover{background:#1e2b42;border-color:var(--blue)}
+    .next{background:linear-gradient(135deg,#0f281b,#0e2c20)}
+    .askme{background:#2a2113;border-color:#57411a}
+    code{background:#22252b;color:#e2e8f0}
+    .chip.src{color:#93c5fd}
+    .chip.proof{color:#4ade80}
+    .chip.rewrite{color:var(--amber)}
+    .face.front{background:linear-gradient(135deg,#282041,#1c2a44);border-color:#3f3160}
+    .face.back{background:var(--card)}
+    .fig svg{background:#f6f5f0;border-radius:10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="../reference/0003-course-archive.html">🗂️ 课程归档</a>
+</nav>
+
+<header>
+  <div class="kicker">DAY 01 · 第 1 题（基座模型方向）· 难度 ⭐</div>
+  <h1>为什么全世界最聪明的模型，数不清 strawberry 里有几个 r？</h1>
+  <div class="meta">附带考点：什么是 token？BPE 是怎么切词的？为什么中文更贵？</div>
+  <div class="srcbar">
+    <span class="chip src">真题源：2024-08 全网热梗（网友实测 GPT-4o 数错 r）→ 演化为国内外大厂「tokenizer / 文本计数」类面试题</span>
+    <span class="chip proof">佐证：wdndev/llm_interview_note（15k★）Tokenizer 章 · OpenAI 官方 Tokenizer 文档</span>
+    <span class="chip rewrite">改写声明：以热梗为壳，考点保真（token / BPE / 字符盲区）</span>
+  </div>
+</header>
+
+<!-- S1 盲猜 -->
+<h2><span class="no">S1</span>🎭 开场：先别查，盲猜一下</h2>
+<div class="card guess">
+  <p style="margin:0 0 10px;font-weight:700">strawberry 这个单词里，有几个字母 r？</p>
+  <button class="opt" onclick="gGuess(this,2)">2 个</button>
+  <button class="opt" onclick="gGuess(this,3)">3 个</button>
+  <button class="opt" onclick="gGuess(this,4)">4 个</button>
+  <p class="fb" id="gfb" style="min-height:24px"></p>
+  <p style="font-size:14px;color:var(--muted);margin:8px 0 0">2024 年 8 月，无数网友在 X 上挑战各大模型这个问题，顶尖模型频繁答「2」——一夜之间成为全网热梗，随后变成面试官的最爱：<b>「你说说，它为什么数不对？」</b></p>
+</div>
+
+<!-- S2 图解 -->
+<h2><span class="no">S2</span>👀 一张图看懂：你看到的 vs 模型看到的</h2>
+<p>人类阅读时看到的是<b>一个一个字母</b>；而大模型从不直接读字母——它读的是 <b>token（词元）</b>。以 GPT 系常见分词为例，strawberry 会被切成 <code>str</code> / <code>aw</code> / <code>berry</code> 三块：</p>
+
+<figure class="fig">
+<svg viewBox="0 0 720 250" width="100%" style="max-width:720px">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9ca3af"/></marker></defs>
+  <text x="16" y="48" font-size="15" font-weight="700" fill="#374151">你看到的 👀</text>
+  <!-- letter cells -->
+  <g font-size="19" font-weight="700" text-anchor="middle">
+    <rect x="150" y="22" width="40" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="170" y="53" fill="#1e3a8a">s</text>
+    <rect x="194" y="22" width="40" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="214" y="53" fill="#1e3a8a">t</text>
+    <rect x="238" y="22" width="40" height="46" rx="8" fill="#fecaca" stroke="#ef4444" stroke-width="2"/><text x="258" y="53" fill="#991b1b">r</text>
+    <rect x="282" y="22" width="40" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="302" y="53" fill="#1e3a8a">a</text>
+    <rect x="326" y="22" width="40" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="346" y="53" fill="#1e3a8a">w</text>
+    <rect x="370" y="22" width="40" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="390" y="53" fill="#1e3a8a">b</text>
+    <rect x="414" y="22" width="40" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="434" y="53" fill="#1e3a8a">e</text>
+    <rect x="458" y="22" width="40" height="46" rx="8" fill="#fecaca" stroke="#ef4444" stroke-width="2"/><text x="478" y="53" fill="#991b1b">r</text>
+    <rect x="502" y="22" width="40" height="46" rx="8" fill="#fecaca" stroke="#ef4444" stroke-width="2"/><text x="522" y="53" fill="#991b1b">r</text>
+    <rect x="546" y="22" width="40" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="566" y="53" fill="#1e3a8a">y</text>
+  </g>
+  <rect x="610" y="26" width="92" height="38" rx="19" fill="#fee2e2" stroke="#fca5a5"/>
+  <text x="656" y="51" font-size="14" font-weight="700" text-anchor="middle" fill="#991b1b">3 个 r ✓</text>
+  <!-- divider -->
+  <line x1="30" y1="92" x2="690" y2="92" stroke="#d1d5db" stroke-dasharray="6 6"/>
+  <!-- token row -->
+  <text x="16" y="140" font-size="15" font-weight="700" fill="#374151">模型看到的 🤖</text>
+  <g font-size="19" font-weight="800" text-anchor="middle">
+    <rect x="150" y="112" width="128" height="52" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/><text x="214" y="145" fill="#14532d">str</text>
+    <rect x="286" y="112" width="84" height="52" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/><text x="328" y="145" fill="#14532d">aw</text>
+    <rect x="378" y="112" width="208" height="52" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/><text x="482" y="145" fill="#14532d">berry</text>
+  </g>
+  <rect x="142" y="104" width="452" height="68" rx="14" fill="none" stroke="#ef4444" stroke-dasharray="7 6" stroke-width="2"/>
+  <rect x="596" y="118" width="112" height="38" rx="19" fill="#f3f4f6" stroke="#d1d5db"/>
+  <text x="652" y="143" font-size="13.5" font-weight="700" text-anchor="middle" fill="#6b7280">r 不可见 ✗</text>
+  <text x="360" y="212" font-size="14.5" text-anchor="middle" fill="#4b5563">👀 人类：逐格数，3 个 r　｜　🤖 模型：只看到 3 个色块，r 被「封印」在块内部</text>
+  <text x="360" y="236" font-size="12.5" text-anchor="middle" fill="#9ca3af">（切法随分词器版本略有差异，原理一致）</text>
+</svg>
+<figcaption>图 1｜同一个单词的两种「视角」。模型的字符级盲区，就是这道题的答案核心。</figcaption>
+</figure>
+
+<!-- S3 概念 -->
+<h2><span class="no">S3</span>🧩 那么，token 到底是什么？</h2>
+<div class="card">
+  <p><b>定义（面试必背）</b>：token 是大模型读写文本的<b>最小单位</b>，介于「字符」和「单词」之间的<b>子词片段</b>。你输入的任何文字——英文、中文、代码、表情——都会先被 <b>tokenizer（分词器）</b>切成 token 序列，再转换成一串数字编号，模型从头到尾只跟这些编号打交道。</p>
+</div>
+
+<figure class="fig">
+<svg viewBox="0 0 720 175" width="100%" style="max-width:720px">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker></defs>
+  <rect x="12" y="45" width="140" height="72" rx="12" fill="#dbeafe" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="82" y="74" font-size="14.5" font-weight="700" text-anchor="middle" fill="#1e3a8a">你的文本</text>
+  <text x="82" y="97" font-size="15" font-weight="800" text-anchor="middle" fill="#1e3a8a">strawberry</text>
+  <line x1="156" y1="81" x2="196" y2="81" stroke="#6b7280" stroke-width="2.5" marker-end="url(#ar2)"/>
+  <rect x="200" y="38" width="140" height="86" rx="12" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="270" y="66" font-size="30" text-anchor="middle">⚙️</text>
+  <text x="270" y="94" font-size="14" font-weight="700" text-anchor="middle" fill="#92400e">Tokenizer</text>
+  <text x="270" y="112" font-size="11.5" text-anchor="middle" fill="#b45309">分词器（BPE）</text>
+  <line x1="344" y1="81" x2="384" y2="81" stroke="#6b7280" stroke-width="2.5" marker-end="url(#ar2)"/>
+  <rect x="388" y="45" width="168" height="72" rx="12" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="472" y="70" font-size="13.5" font-weight="700" text-anchor="middle" fill="#14532d">token 序列</text>
+  <g font-size="14" font-weight="800" text-anchor="middle">
+    <rect x="404" y="80" width="42" height="26" rx="6" fill="#bbf7d0"/><text x="425" y="98" fill="#14532d">str</text>
+    <rect x="450" y="80" width="34" height="26" rx="6" fill="#86efac"/><text x="467" y="98" fill="#14532d">aw</text>
+    <rect x="488" y="80" width="56" height="26" rx="6" fill="#bbf7d0"/><text x="516" y="98" fill="#14532d">berry</text>
+  </g>
+  <line x1="560" y1="81" x2="600" y2="81" stroke="#6b7280" stroke-width="2.5" marker-end="url(#ar2)"/>
+  <rect x="604" y="45" width="106" height="72" rx="12" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5"/>
+  <text x="657" y="74" font-size="14" font-weight="700" text-anchor="middle" fill="#374151">编号序列</text>
+  <text x="657" y="98" font-size="13" text-anchor="middle" fill="#6b7280">[496, 675, …]</text>
+  <text x="360" y="152" font-size="14" text-anchor="middle" fill="#4b5563">模型不读字母，只读编号——<tspan font-weight="700">一切文字先变 token</tspan>（编号仅为示意）</text>
+</svg>
+<figcaption>图 2｜分词流水线。LLM 的「眼睛」就是这条传送带的尽头。</figcaption>
+</figure>
+
+<div class="card">
+  <p><b>BPE 分词的直觉</b>（不用记公式）：分词器训练时从单个字符起步，在海量语料里<b>反复合并「最常一起出现的相邻片段」</b>，直到词表达到上限（几万到十几万）。于是：</p>
+  <ul>
+    <li>高频词 → <b>一整块</b>：如 <code>the</code>、<code>我</code>、<code>hello</code></li>
+    <li>低频词 → <b>拆成碎块</b>：如 <code>strawberry → str + aw + berry</code>，甚至全新词 <code>Agentverse → Agent + verse</code></li>
+    <li>妙处：<b>任何没见过的新词都能表示</b>（大不了拆碎），词表又不会爆炸——这是「字符」和「整词」之间的黄金折中</li>
+  </ul>
+  <p style="font-size:14px;color:var(--muted);margin-bottom:0">📏 换算手感：英文 1 token ≈ 0.75 个单词 ≈ 4 个字符；中文 1 个汉字 ≈ 1~2 个 token（新词表已优化，老词表更贵）。</p>
+</div>
+
+<!-- S4 动手 -->
+<h2><span class="no">S4</span>🔬 动手实验室：亲手切一切</h2>
+<div class="lab">
+  <h3>🧪 简化版分词器（浏览器里直接玩）</h3>
+  <p>输入任何中英文，看它被切成什么。预设词表很小，切法是简化演示；真实 BPE 更聪明，但「字母藏在块里」这件事完全一样。</p>
+  <div class="row">
+    <input id="tin" value="strawberry" spellcheck="false">
+    <button id="tgo">🔪 切成 token</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    预设：
+    <button class="preset" onclick="usePreset('strawberry')">strawberry</button>
+    <button class="preset" onclick="usePreset('unbelievable')">unbelievable</button>
+    <button class="preset" onclick="usePreset('我喜欢大模型')">我喜欢大模型</button>
+    <button class="preset" onclick="usePreset('AgenticWorld')">AgenticWorld</button>
+  </div>
+  <div id="tout"></div>
+</div>
+<div class="card">
+  <p style="margin:0"><b>🔭 进阶实验（强烈推荐，5 分钟）</b>：打开 <a href="https://platform.openai.com/tokenizer" target="_blank" style="color:var(--blue)">OpenAI 官方 Tokenizer Playground</a>，把你自己的名字粘进去——看看你在模型眼里是几块。再用同样内容的中文和英文各试一次，观察谁更「贵」。</p>
+</div>
+
+<!-- S5 机制 -->
+<h2><span class="no">S5</span>💡 回到真题：完整的因果链</h2>
+<div class="card">
+  <ol style="margin:0;padding-left:22px">
+    <li>模型以 token 为最小单位读写文本 → <b>没有字符级视野</b></li>
+    <li><code>berry</code> 是一个不可拆的编号，里面的两个 r 对模型是「暗物质」</li>
+    <li>它回答「几个 r」靠的是训练语料里的<b>统计印象</b>，不是真去数 → 于是自信地答错</li>
+    <li><b>工程修复</b>：别劝它「仔细数」，而是让它<b>调用工具</b>——写一行代码 <code>s.count('r')</code>，百分百正确</li>
+  </ol>
+  <p style="margin:12px 0 0;font-size:15px;background:var(--purple-bg);border-radius:10px;padding:10px 16px">🚀 <b>注意第 4 条</b>：让模型「用工具补盲区」，正是今天第 2 题 <b>AI Agent</b> 存在的全部理由。这道题是完美的引子。</p>
+</div>
+
+<!-- S6 追问链 -->
+<h2><span class="no">S6</span>🔁 面试官追问链（点开前先自己答）</h2>
+<p style="font-size:14px;color:var(--muted)">真实面试里，第一问只是入场券，连环追问才是得分差距。每层先看提示，再对照答案要点。</p>
+
+<details class="l1"><summary>L1 · 「那你说说，为什么不直接用'字'或'词'？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：想想一个没见过的新词怎么办</summary><div class="body" style="padding:8px 4px 12px">词表能装下世界上所有的词吗？装不下的话，没见过的词怎么表示？</div></details>
+    <p><b>答案要点</b>：① 按字符切：序列太长（同一句话长度翻 3~4 倍），训练与推理开销剧增，且单字符携带语义太稀薄；② 按整词切：词表爆炸（百万级），且<b>新词、错拼、生僻词直接无法表示</b>（OOV 问题）；③ 子词是折中：高频整体成块保效率，低频拆碎保覆盖，任何新词都有办法表示。这套算法叫 <b>BPE</b>（Byte-Pair Encoding，字节对编码）。</p>
+  </div>
+</details>
+
+<details class="l2"><summary>L2 · 「那中文用户用 GPT 为什么比英文用户贵？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：词表的「频率」是在谁的语料上统计的？</summary><div class="body" style="padding:8px 4px 12px">主流分词器的词表以英文语料为主统计频率，汉字在词表里覆盖得碎不碎？</div></details>
+    <p><b>答案要点</b>：① 主流词表基于英文为主的语料训练，中文字/词覆盖零散，1 个汉字常要 1~2 个 token；② 同样一句话，中文 token 数更多 → <b>API 按 token 计费更贵、上下文窗口占得更快</b>；③ 延伸得分点：国产模型（Qwen、DeepSeek 等）针对中文优化了词表，中文效率显著更高——这也解释了为什么中文场景常选国产基座。</p>
+  </div>
+</details>
+
+<details class="l3"><summary>L3 · 「如果改成逐字符分词，会发生什么？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：序列长度 ×4，代价摊到哪里？</summary><div class="body" style="padding:8px 4px 12px">想想上下文窗口、推理成本、以及——字符任务会变好还是变坏？</div></details>
+    <p><b>答案要点</b>：① 收益：数字母、拼写、字符级算术这类任务会变准（模型终于「看得见」每个字母）；② 代价：序列长度暴涨 → 注意力计算、上下文占用、推理成本全面上涨，长文本能力受损；③ 结论（面试官最想听的一句）：<b>没有完美的分词，只有设计权衡</b>——子词方案是「效率 × 覆盖」的工程最优解。顺带一提：这题答好，直接衔接 D9 的注意力复杂度话题。</p>
+  </div>
+</details>
+
+<!-- S7 举一反三 -->
+<h2><span class="no">S7</span>🕸️ 举一反三：这一题牵出的一整张网</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 330" width="100%" style="max-width:720px">
+  <ellipse cx="360" cy="165" rx="86" ry="44" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5"/>
+  <text x="360" y="160" font-size="21" font-weight="800" text-anchor="middle" fill="#4c1d95">token</text>
+  <text x="360" y="182" font-size="11.5" text-anchor="middle" fill="#7c3aed">一切考点的心脏</text>
+  <g stroke="#9ca3af" stroke-width="1.8">
+    <line x1="300" y1="135" x2="180" y2="82"/>
+    <line x1="420" y1="135" x2="540" y2="82"/>
+    <line x1="300" y1="195" x2="180" y2="248"/>
+    <line x1="420" y1="195" x2="540" y2="248"/>
+  </g>
+  <g>
+    <rect x="52" y="32" width="200" height="72" rx="12" fill="#dbeafe" stroke="#60a5fa"/>
+    <text x="152" y="60" font-size="15" font-weight="800" text-anchor="middle" fill="#1e3a8a">💰 按 token 计费</text>
+    <text x="152" y="84" font-size="11.5" text-anchor="middle" fill="#3b5bdb">API 价格表单位 $/1M tokens</text>
+    <rect x="468" y="32" width="200" height="72" rx="12" fill="#dcfce7" stroke="#4ade80"/>
+    <text x="568" y="60" font-size="15" font-weight="800" text-anchor="middle" fill="#14532d">🪟 上下文窗口</text>
+    <text x="568" y="84" font-size="11.5" text-anchor="middle" fill="#15803d">128k token ≈ 6~10 万汉字 → 明天 D2</text>
+    <rect x="52" y="228" width="200" height="72" rx="12" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="152" y="256" font-size="15" font-weight="800" text-anchor="middle" fill="#92400e">🇨🇳 中文更贵</text>
+    <text x="152" y="280" font-size="11.5" text-anchor="middle" fill="#b45309">1 汉字 ≈ 1~2 token（社区流传真题）</text>
+    <rect x="468" y="228" width="200" height="72" rx="12" fill="#fee2e2" stroke="#f87171"/>
+    <text x="568" y="256" font-size="15" font-weight="800" text-anchor="middle" fill="#991b1b">🧰 盲区交给工具</text>
+    <text x="568" y="280" font-size="11.5" text-anchor="middle" fill="#b91c1c">数 r → 写代码 → 今天第 2 题 Agent！</text>
+  </g>
+  <text x="360" y="318" font-size="12" text-anchor="middle" fill="#9ca3af">每个分支都是一道独立真题，全部会在 28 天路线中轮到</text>
+</svg>
+<figcaption>图 3｜一道热梗题 = 四道大厂真题的入口。这就是「举一反三」的地图。</figcaption>
+</figure>
+
+<!-- S8 发散 -->
+<h2><span class="no">S8</span>🌌 发散思考（没有标准答案，值钱的是你的推理）</h2>
+<details><summary>🌱 发散 1（换场景）：如果你是产品经理，怎么向老板解释「中文场景的 API 成本比英文高 40%」？</summary>
+  <div class="body">
+    <p>参考思路：用今天的机制链解释——词表以英文语料为主 → 汉字切得更碎 → 同等内容 token 数更多 → 计费与窗口占用双涨；再给方案：换中文优化词表的国产基座 / 压缩提示词 / 缓存固定 system prompt。<b>能把机制翻译成成本与方案，就是面试里的「产品直觉」加分项。</b></p>
+  </div>
+</details>
+<details><summary>🌱 发散 2（连类比）：token 之于模型，像什么之于人类——音节？偏旁？还是别的？</summary>
+  <div class="body">
+    <p>参考思路：都沾边但不全对。更像「阅读熟练单位」：母语者扫一眼「人工智能」是一个整块，看生僻字如「龘」就要拆成部件拼。模型词表 = 它的「识字量」，词表外的新词就像我们遇到生僻字——拆着猜。好的类比能让你永远记住这个概念，这就是「连类比」型发散的价值。</p>
+  </div>
+</details>
+
+<!-- S9 quiz -->
+<h2><span class="no">S9</span>✅ 自测：4 道题，点选项立即判分</h2>
+<div id="quizbox">
+<div class="quiz" data-quiz>
+  <p class="qq">1. 大模型读写文本的最小单位是什么？</p>
+  <button class="opt">A. 单个字符</button>
+  <button class="opt" data-ok data-why="token 是介于字符和单词之间的子词单元（如 berry 一整块），由 BPE 按语料频率切分而来。">B. 子词 token</button>
+  <button class="opt">C. 完整单词</button>
+  <button class="opt">D. 一整个句子</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">2. 模型为什么数不清 strawberry 里有几个 r？</p>
+  <button class="opt">A. 训练数据总量太少</button>
+  <button class="opt">B. 提问的句式不够清晰</button>
+  <button class="opt" data-ok data-why="模型看到的是 str | aw | berry 三个色块，块内字母对它不可见；它没有「逐字符阅读」的能力，只能靠统计印象猜。">C. r 被封在 token 内部</button>
+  <button class="opt">D. 模型不认识这个单词</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">3. 「我爱吃苹果」用早期 GPT 分词器切，大约是多少 token？</p>
+  <button class="opt">A. 大约 1 个</button>
+  <button class="opt">B. 大约 3 个</button>
+  <button class="opt" data-ok data-why="汉字常见 1 字 1~2 个 token，5 个汉字 ≈ 6 个上下——这就是「中文更贵」的来源。">C. 大约 6 个</button>
+  <button class="opt">D. 大约 20 个</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">4. 工程上最稳的「帮模型数对 r」的方案是？</p>
+  <button class="opt">A. 提示它「数仔细一点」</button>
+  <button class="opt">B. 换一个更大的模型</button>
+  <button class="opt" data-ok data-why="盲区交给工具：一行 s.count('r') 百分百正确。「让模型调用工具补短板」正是 AI Agent 的核心动机（第 2 题）。">C. 让它写代码 count()</button>
+  <button class="opt">D. 同题多问取多数票</button>
+  <p class="fb"></p>
+</div>
+<p class="score">得分：<span id="score">0</span> / 4　<span id="scoremsg"></span></p>
+</div>
+
+<!-- S10 知识卡 -->
+<h2><span class="no">S10</span>📇 今日知识卡（点击翻面，复盘日要刷）</h2>
+<div class="flip" id="flip1" onclick="this.classList.toggle('on')">
+  <div class="inner">
+    <div class="face front">
+      <div class="big">「模型的世界由 token 组成，<br>它看不见 token 里的字母。」</div>
+      <div class="hint">📇 点击卡片翻面 → 考点 / 易错 / 出处</div>
+    </div>
+    <div class="face back">
+      <div><b>考点</b>：token 定义 · BPE 直觉 · 中文 token 成本 · 按 token 计费 · 上下文窗口单位<br>
+      <b>易错</b>：以为模型逐字符阅读；以为「提示仔细点」能修复；把 token 等同于「字」或「词」<br>
+      <b>出处</b>：OpenAI Tokenizer 文档 · 2024 strawberry 全网热梗 · wdndev/llm_interview_note Tokenizer 章</div>
+    </div>
+  </div>
+</div>
+
+<!-- S11 答案骨架 -->
+<h2><span class="no">S11</span>🎤 60 秒面试答案（把今天的理解压成一段话）</h2>
+<div class="qa">
+  <div class="who">如果你在面试里被问到这道题，可以这样答：</div>
+  <div class="say">「token 是模型读写文本的最小子词单位，由 BPE 分词器按语料频率切分——高频词整体成块、低频词拆碎，以此在效率和覆盖之间取折中。模型只有 token 级视野、没有字符级视野：strawberry 被切成 str、aw、berry，r 封在块内部，它只能靠训练语料的统计印象回答，所以会自信地数错。工程上的修复是让模型调用代码去数，而不是指望它自己看清楚。顺带一提，计费、上下文窗口、中英文成本差异，全都是按 token 计算的。」</div>
+</div>
+
+<!-- S12 明日预告 & 资源 -->
+<div class="next">
+  <b>📍 明日 Day 02 预告</b>：基模线「上下文窗口：128k 到底能装几本书？」× Agent 线「Function Calling：模型怎么'伸手'拿工具？」——一个管模型的「记忆容量」，一个管模型的「双手」。
+</div>
+
+<div class="card refs">
+  <b>📚 今日精读（按顺序，共约 15 分钟）</b>
+  <ol style="margin:8px 0 0;padding-left:22px">
+    <li><a href="https://platform.openai.com/tokenizer" target="_blank">OpenAI Tokenizer Playground</a> —— 亲手必玩，切自己的名字</li>
+    <li><a href="https://github.com/openai/tiktoken" target="_blank">openai/tiktoken</a> —— 官方分词库 README（扫一眼概念即可）</li>
+    <li><a href="https://github.com/wdndev/llm_interview_note" target="_blank">wdndev/llm_interview_note</a> —— Tokenizer 章，对照真题自测</li>
+  </ol>
+</div>
+
+<!-- 补课笔记 -->
+<h2>📎 补课笔记 · Day 01 追问实录（2026-09-23）</h2>
+<div class="card">
+  <p><b>追问</b>：「为什么中文 1 个字要 2 个 token？」「BPE 具体怎么合并？」——下面用官方分词器实测 + 手推小剧场讲透。核心一句：<b>BPE 只认频率；没被合并的中文退到字节层兜底，而 1 个汉字 = 3 个 UTF-8 字节。</b></p>
+</div>
+<div class="card">
+  <b>🔬 实测（tiktoken 官方词表，逐 token 解码，� = 字节碎片）</b>
+<pre style="background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px;overflow:auto;font-size:13px;line-height:1.9">cl100k_base（GPT-4 时代词表）
+「我喜欢大模型」→ 8 个token : '我' | �|�|�|�|� | '大' | '模' | '型'   ← 「喜欢」碎成 5 块字节
+「今天天气很好」→ 8 个token : '今' | '天' | '天' | �|�|�|� | '好'      ← 「气」碎成 4 块
+「龘」→ 2 个token : �|�                                                ← 生僻字全碎
+「strawberry」→ 3 个token : 'str' | 'aw' | 'berry'
+
+o200k_base（GPT-4o 新词表，中文优化过）
+「我喜欢大模型」→ 4 个token : '我' | '喜欢' | '大' | '模型'            ← 高频词成整块
+「今天天气很好」→ 4 个token : '今' | '天天' | '气' | '很好'
+「龘」→ 2 个token : �|�                                                ← 生僻字照样碎
+「strawberry」→ 3 个token : 'st' | 'raw' | 'berry'                     ← 切法和老词表不同！</pre>
+</div>
+<div class="card">
+  <b>🧩 BPE 合并小剧场（手推版）</b>
+  <p style="font-size:14px">微型语料（想象每句出现很多次）：① 我 爱 人 工 智 能 ② 人 工 智 能 够 用 ③ 我 爱 人 工</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+    <tr>
+      <th style="border:1px solid #9ca3af;padding:6px 10px">轮次</th>
+      <th style="border:1px solid #9ca3af;padding:6px 10px">统计全部相邻对 → 选最高频</th>
+      <th style="border:1px solid #9ca3af;padding:6px 10px">合并出新 token</th>
+    </tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px">0（初始）</td><td style="border:1px solid #9ca3af;padding:6px 10px">词表只有单字：我 爱 人 工 智 能 够 用</td><td style="border:1px solid #9ca3af;padding:6px 10px">—</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px">1</td><td style="border:1px solid #9ca3af;padding:6px 10px">人+工 ×3 最高</td><td style="border:1px solid #9ca3af;padding:6px 10px">「人工」</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px">2</td><td style="border:1px solid #9ca3af;padding:6px 10px">我爱 / 爱人工 / 工智 / 智能 并列 ×2（并列按实现规则选）</td><td style="border:1px solid #9ca3af;padding:6px 10px">「我爱」</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px">3</td><td style="border:1px solid #9ca3af;padding:6px 10px">智+能 ×2</td><td style="border:1px solid #9ca3af;padding:6px 10px">「智能」</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px">4</td><td style="border:1px solid #9ca3af;padding:6px 10px">人工+智能 ×2</td><td style="border:1px solid #9ca3af;padding:6px 10px">「人工智能」</td></tr>
+  </table>
+  <p style="font-size:14px;margin-bottom:0">结果：「我爱人工智能」从 6 个 token 压到 2 个（<code>我爱 | 人工智能</code>）。<b>真实词表 = 把这个循环在海量语料上跑几万轮，直到词表封顶（如 10 万）</b>。所以：高频组合成整块，低频组合留碎片——这就是全部机制。</p>
+</div>
+<div class="card">
+  <b>🇨🇳 中文为什么碎：两个事实叠加</b>
+  <p style="font-size:14.5px;margin-bottom:0">① <b>BPE 只认频率</b>：GPT 老词表的统计语料以英文为主，中文片段「排不上队」，很多没轮到合并；② <b>切不开就字节兜底</b>：UTF-8 里 1 个汉字 = 3 个字节，没进词表的字退化成 2~3 个字节 token（实测里的 �）。这不是针对中文的设计，而是「频率统计 + 字节兜底」的副产物。国产模型（Qwen / DeepSeek）语料中文占比高，汉字大多 1 个 token——中文场景选国产基座更省，这是面试里可以主动说的工程判断。</p>
+</div>
+
+<div class="askme">💬 <b>卡住了？随时回到对话里直接问我</b>：「为什么中文 1 个字要 2 个 token？」「BPE 具体怎么合并？」——任何不懂的地方都可以追问，我是你的私教，追问本身就是最好的学习。</div>
+
+<nav class="pager">
+  <a href="../index.html">← 返回学习主页</a>
+  <a href="0002-what-is-agent.html">下一题：什么是 AI Agent？→</a>
+</nav>
+
+</div>
+
+<script src="../reference/lianmo-progress.js"></script>
+<script>
+LIANMO.visit('L0001');
+LIANMO.autoTrack('L0001');
+// 盲猜互动
+function gGuess(btn,n){
+  var fb=document.getElementById('gfb');
+  document.querySelectorAll('.guess .opt').forEach(function(b){b.classList.remove('right','wrong')});
+  if(n===3){btn.classList.add('right');fb.className='fb ok';fb.textContent='✅ 对，3 个 r（s-t-r-a-w-b-e-r-r-y）。你猜对了——但 2024 年 GPT-4o 频繁答 2，全网哗然。为什么？往下看。';}
+  else{btn.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 数错了也别慌——这恰恰说明此题反直觉（大模型也错）。正确答案：3 个 r。为什么模型会错？往下看。';}
+}
+// 简化分词器
+var KNOWN={strawberry:["str","aw","berry"],unbelievable:["un","bel","iev","able"],tokenizer:["token","izer"],helloworld:["hello","world"],agenticworld:["Agentic","World"],agent:["agent"],agents:["agent","s"],"我喜欢大模型":["我","喜欢","大","模型"],"人工智能":["人工","智能"]};
+function simpleSplit(s){
+  s=s.trim();if(!s)return[];
+  var k=s.toLowerCase();
+  if(KNOWN[k])return KNOWN[k];
+  var out=[],buf="";
+  for(const ch of s){
+    if(/[\u4e00-\u9fff]/.test(ch)){if(buf){out.push(buf);buf="";}out.push(ch);}
+    else{buf+=ch;if(buf.length>=3){out.push(buf);buf="";}}
+  }
+  if(buf)out.push(buf);
+  return out;
+}
+function usePreset(w){document.getElementById('tin').value=w;runTok();}
+function runTok(){
+  var s=document.getElementById('tin').value;
+  if(!s.trim()){document.getElementById('tout').innerHTML='<span style="color:#94a3b8">先输入点文字～</span>';return;}
+  var toks=simpleSplit(s),html='',colors=['t0','t1','t2','t3','t4'];
+  toks.forEach(function(t,i){html+='<span class="tok '+colors[i%5]+'">'+t.replace(/</g,'&lt;')+'</span>';});
+  var r=(s.match(/r/gi)||[]).length;
+  var stat='🤖 模型视角：<b>'+toks.length+'</b> 个 token（看不到块内字母）';
+  if(r>0)stat+='<br>👀 人类视角：<b>'+r+'</b> 个 r —— 全部藏在块里，模型自己数不到';
+  else stat+='<br>👀 这句话里没有字母 r，人和模型视角刚好一致';
+  document.getElementById('tout').innerHTML=html+'<div class="stat">'+stat+'</div>';
+}
+document.getElementById('tgo').onclick=runTok;
+runTok();
+// quiz 即时反馈
+var total=document.querySelectorAll('[data-quiz]').length,got=0,done=0;
+document.querySelectorAll('[data-quiz]').forEach(function(q){
+  var fb=q.querySelector('.fb'),okBtn=q.querySelector('[data-ok]');
+  q.querySelectorAll('.opt').forEach(function(b){
+    b.onclick=function(){
+      q.querySelectorAll('.opt').forEach(function(o){o.classList.remove('right','wrong')});
+      if(b.hasAttribute('data-ok')){b.classList.add('right');fb.className='fb ok';fb.textContent='✅ 正确！'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;got++;done++;}}
+      else{b.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 再想想：'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;done++;}}
+      document.getElementById('score').textContent=got;
+      var m=document.getElementById('scoremsg');
+      if(done===total){LIANMO.quiz('L0001',got,total);var _r=LIANMO.get('L0001')||{};m.textContent=(got===total?'🏆 全对，今天这题稳了！':(got>=total-1?'👍 很稳，错的那道回看一眼解析':'📖 建议回看 S3 与 S5 再试一次（刷新页面可重做）'))+'　📅 已自动打卡 '+(_r.doneDate||'');}
+    };
+  });
+});
+</script>
+</body>
+</html>

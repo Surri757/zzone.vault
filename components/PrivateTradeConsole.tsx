@@ -256,12 +256,15 @@ export function PrivateTradeConsole() {
             aria-label="主导航"
           >
             <Link
-              href="/"
-              className="mr-1 grid h-9 w-9 shrink-0 place-items-center rounded-[4px] border border-white/14 text-white/60 transition-colors hover:border-jade/60 hover:text-jade"
-              aria-label="返回首页 · 卡牌星阵"
-              title="返回首页"
+              href="/modules"
+              className="hall-return mr-2 shrink-0"
+              aria-label="返回主页面 · 模块大厅"
+              title="返回大厅"
             >
-              <Radar className="h-4 w-4" aria-hidden="true" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M19 12H5m0 0 6 6m-6-6 6-6" />
+              </svg>
+              返回大厅
             </Link>
 
             <button

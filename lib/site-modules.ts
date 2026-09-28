@@ -17,12 +17,12 @@ export interface SiteModule {
 
 export const siteModules: SiteModule[] = [
   { id: "quant", title: "观墨", subtitle: "VAULT OF INK", path: "/quant", status: "live" },
-  { id: "blog", title: "手记", subtitle: "FIELD NOTES", path: "/blog", status: "sealed" },
-  { id: "lab", title: "炼墨", subtitle: "INVESTIGATION LAB", path: "/lab", status: "sealed" },
+  { id: "blog", title: "手记", subtitle: "FIELD NOTES", path: "/blog", status: "live" },
+  { id: "lab", title: "炼墨", subtitle: "INVESTIGATION LAB", path: "/lab", status: "live" },
   { id: "tools", title: "器", subtitle: "TOOLKIT", path: "/tools", status: "sealed" },
   { id: "monogram", title: "铭", subtitle: "ORIGIN", path: "/about", status: "sealed" },
   { id: "data", title: "数", subtitle: "DATA LEDGER", path: "/data", status: "sealed" },
-  { id: "atlas", title: "图", subtitle: "ATLAS", path: "/atlas", status: "sealed" },
+  { id: "atlas", title: "图", subtitle: "ATLAS", path: "/atlas", status: "live" },
   { id: "signal", title: "讯", subtitle: "SIGNALS", path: "/signal", status: "sealed" },
   { id: "query", title: "问", subtitle: "QUERY", path: "/query", status: "sealed" }
 ];

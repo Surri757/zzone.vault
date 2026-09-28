@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * 激光点火封面（v8 —— 火花 · 热浪 · 相机）
+ * 激光点火封面（v10 —— 火花 · 热浪 · 相机 · 挂字猫）
  *
  * 时间轴与几何解耦，跨设备恒定 ~3.1s：
  *   0         首帧给出"未点亮蓝图"（轮廓 16% + 填充 5%），画布失焦 scale(1.02)/blur(3px)，
@@ -17,8 +17,13 @@ import { useRouter } from "next/navigation";
  *   2.16–3.11s 重音：横条 bookend + 光呼吸（300ms）+ 一道掠面高光扫过金属字面
  *   2.16s+    UI 错峰浮现（0/150/300ms，字距从宽收拢 + 去模糊）；RAF 空闲即停
  *   settle 后  每 5.5–8.5s 一道待机微光掠过字面，金属保持"活着"；光标 specular 照旧按需唤醒
+ *   3.11s+    coda·挂字猫：小猫斜抛坠落咬住句尾 "d"，咬合白闪 + 微火花 + 文字下陷回弹（重量），
+ *             阻尼单摆两三个来回收敛，异瞳点亮（近蓝远金），慢眨 → 微风接管常驻：
+ *             悬挂微摆 / 三关节尾巴欢快摇 / 随待机微光眨眼 / 四芒星眼神偶发；
+ *             Enter 给摆一个冲量（鞠躬告别）+ 右眼香槟金
+ *   荧幕感工艺：engrave–cool 期上下 letterbox 黑边 + 胶片颗粒（fx 层，reveal 后渐退归零）
  *
- * 任意 pointerdown / keydown / wheel 立即跳到终态。reduced-motion 直接终态。
+ * 任意 pointerdown / keydown / wheel 立即跳到终态（coda 则猫一步挂稳）。reduced-motion 直接终态含挂猫。
  */
 
 const EN_TEXT = "Welcome to Ninglo's World.";
@@ -36,6 +41,29 @@ const SHEEN_AT = 0.3;
 const SHEEN_LEN = 0.55;
 /** 待机微光单次时长（秒） */
 const IDLE_SHEEN_LEN = 1.6;
+
+// ===== v10：挂字猫 coda（秒；catT 自猫幕起算） =====
+const CAT_FALL_AT = 0.15;   // 坠落起跳前的静默拍
+const CAT_FALL = 0.38;      // 斜抛坠落时长（→ 咬合）
+const CAT_CATCH_T = CAT_FALL_AT + CAT_FALL;
+const CAT_SQUASH = 0.28;    // 咬合挤压回弹窗口
+const CAT_POWER_AT = CAT_CATCH_T + 0.15;  // 异瞳点亮
+const CAT_POWER_LEN = 0.26;
+const CAT_BLINK_AT = CAT_CATCH_T + 0.42;  // 落成慢眨
+const CAT_BREEZE_AT = CAT_CATCH_T + 1.55; // 物理 → 微风接管
+const CAT_BREEZE_BLEND = 0.4;
+const CAT_BREATH_PERIOD = 3.4;
+const CAT_TAIL_PERIOD = 0.85;
+/** 单摆：T≈0.75s（ωn≈8.4）、ζ≈0.24（g/L=ωn²，c=2ζωn） */
+const CAT_OMEGA_N = 8.4;
+const CAT_DAMP = 4.0;
+/** 坠落弹道：起点枢轴右上，落点恰为咬合点 */
+const CAT_FALL_VX = -420;
+const CAT_FALL_G = 4200;
+/** 异瞳稳态/点亮色（近眼蓝、远眼金绿——全片唯二彩色，只在事件时刻升温） */
+const CAT_EYE_L = { core: [157, 184, 212], edge: [78, 112, 147], hot: [207, 228, 247] } as const;
+const CAT_EYE_R = { core: [214, 201, 138], edge: [138, 124, 58], hot: [242, 227, 168] } as const;
+const CAT_GOLD = [201, 150, 47] as const;
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -170,6 +198,7 @@ interface TextLine {
   strokeLen: number;
 }
 
+
 export default function LaserCarvingCover() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fxCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -180,6 +209,8 @@ export default function LaserCarvingCover() {
   const subRef = useRef<HTMLDivElement>(null);
   const tintRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  /** v9：effect 内注册的猫目送回调（Enter 时慢眨 + 右眼金闪） */
+  const catApiRef = useRef<{ farewell?: () => void }>({});
   const [fontReady, setFontReady] = useState(false);
   const [fontError, setFontError] = useState(false);
 
@@ -257,6 +288,37 @@ export default function LaserCarvingCover() {
     let specAwake = false;
     let lastPointerAt = -1e9;
 
+    // ===== v10：挂字猫 + 荧幕感工艺 =====
+    type CatPhase = "off" | "coda" | "live";
+    let catPhase: CatPhase = "off";
+    let catT = 0;
+    let catClock = 0;        // 生命感时钟（呼吸/尾摆相位源）
+    let catBlinked = false;
+    let catBlinkT = -1;
+    let catGoldT = -1;
+    /** 单摆状态：θ（屏幕弧度，+ 为向画面中心摆）、ω；physActive=false 时走微风正弦 */
+    let catTheta = 0, catOmega = 0;
+    let catPhys = false;
+    let catCaught = false;
+    let catBreezePhase = 0;
+    let catBreezeAmp = 0.035;
+    /** 咬合冲量后的文字下陷（drawSettled 消费） */
+    let catDipK = 0;
+    /** 咬合白闪（fx 层）与冲量回摆的静息计时 */
+    let catchFlashT = 0;
+    let catSettleAcc = 0;
+    /** 四芒星闪眼 */
+    let catGlintT = -1;
+    let catGlintTimer = 0;
+    let catPupilBoost = 0;
+    /** 咬合枢轴（句尾 "d" 基线处）与猫身比例尺（局部单位→px，全身 112 单位） */
+    let catPX = 0, catPY = 0, catScale = 1, catLen = 0;
+    /** live 常驻期隔帧降耗（~30fps），事件帧恢复满帧 */
+    let frameParity = 0;
+    /** 胶片颗粒：96px 双色噪声 tile，每 90ms 换随机偏移 */
+    let grainC: HTMLCanvasElement | null = null;
+    let grainOx = 0, grainOy = 0, grainClock = 0;
+
     function makeCanvas(w: number, h: number) {
       const c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(w * DPR));
@@ -264,6 +326,26 @@ export default function LaserCarvingCover() {
       const g = c.getContext("2d")!;
       g.scale(DPR, DPR);
       return { c, g };
+    }
+
+    /** v9 胶片颗粒 tile：双色（黑/白）稀疏像素，α 直接烘焙进位图，运行时零逐像素成本 */
+    function buildGrain() {
+      const s = 96;
+      const c = document.createElement("canvas");
+      c.width = s;
+      c.height = s;
+      const g = c.getContext("2d");
+      if (!g) return;
+      const img = g.createImageData(s, s);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = Math.random() < 0.5 ? 255 : 0;
+        img.data[i] = v;
+        img.data[i + 1] = v;
+        img.data[i + 2] = v;
+        img.data[i + 3] = Math.random() < 0.22 ? Math.round(50 + Math.random() * 90) : 0;
+      }
+      g.putImageData(img, 0, 0);
+      grainC = c;
     }
 
     // ===== 离屏文字层（opentype 路径绘制，与雕刻路径完全对齐）=====
@@ -379,6 +461,21 @@ export default function LaserCarvingCover() {
       sheenC = sh.c;
       sheenCtx = sh.g;
       paintedDist = 0;
+      buildCatLayout();
+    }
+
+    /** v10 猫布局：咬合枢轴钉在句尾 "d" 的基线处（句点留在猫脸旁）；猫长按视口分档 */
+    function buildCatLayout() {
+      if (!line) return;
+      const portrait = W < 640;
+      catLen = portrait ? clamp(H * 0.13, 95, 125) : clamp(H * 0.185, 125, 175);
+      catScale = catLen / 112;
+      const advDot = font ? font.getAdvanceWidth(".", line.size) : line.size * 0.3;
+      const advD = font ? font.getAdvanceWidth("d", line.size) : line.size * 0.55;
+      const pad = Math.ceil(line.size * 0.4); // buildLine 同源的 PAD_RATIO
+      const textW = font ? font.getAdvanceWidth(EN_TEXT, line.size) : line.w - pad * 2;
+      catPX = line.x + pad + textW - advDot - advD * 0.55;
+      catPY = line.baseY + 1;
     }
 
     function resetStrokeMask() {
@@ -389,9 +486,8 @@ export default function LaserCarvingCover() {
     }
 
     // ===== 路径行走 =====
-    function posAt(dist: number): { x: number; y: number; active: boolean } {
-      const pts = line!.strokePath;
-      if (pts.length === 0) return { x: line!.w / 2, y: line!.baseY - line!.y, active: false };
+    function posAtPts(pts: { x: number; y: number; penUp: boolean }[], dist: number): { x: number; y: number; active: boolean } {
+      if (pts.length === 0) return { x: 0, y: 0, active: false };
       let remain = dist;
       let last: { x: number; y: number } | null = null;
       for (let i = 0; i < pts.length; i++) {
@@ -415,9 +511,13 @@ export default function LaserCarvingCover() {
       return { x: end.x, y: end.y, active: true };
     }
 
-    /** 把 [from,to] 区间的路径分段回调（行内局部坐标） */
-    function walk(from: number, to: number, cb: (sx: number, sy: number, ex: number, ey: number, d: number) => void) {
-      const pts = line!.strokePath;
+    /** 把 [from,to] 区间的路径分段回调（接收方坐标系） */
+    function walkPts(
+      pts: { x: number; y: number; penUp: boolean }[],
+      from: number,
+      to: number,
+      cb: (sx: number, sy: number, ex: number, ey: number, d: number) => void
+    ) {
       let r = 0;
       let last: { x: number; y: number } | null = null;
       for (let i = 0; i < pts.length; i++) {
@@ -440,6 +540,17 @@ export default function LaserCarvingCover() {
         }
         last = { x: p.x, y: p.y };
       }
+    }
+
+    function posAt(dist: number): { x: number; y: number; active: boolean } {
+      const pts = line!.strokePath;
+      if (pts.length === 0) return { x: line!.w / 2, y: line!.baseY - line!.y, active: false };
+      return posAtPts(pts, dist);
+    }
+
+    /** 把 [from,to] 区间的路径分段回调（行内局部坐标） */
+    function walk(from: number, to: number, cb: (sx: number, sy: number, ex: number, ey: number, d: number) => void) {
+      walkPts(line!.strokePath, from, to, cb);
     }
 
     /** 冷却后的刻痕：增量写入行内遮罩 */
@@ -643,7 +754,7 @@ export default function LaserCarvingCover() {
       }
     }
 
-    /** fx 层每帧重绘：火花 + 熄刀闪白（背景失焦时这里保持锐利） */
+    /** fx 层每帧重绘：火花 + 熄刀闪白 + 荧幕感工艺（背景失焦时这里保持锐利） */
     function drawFx() {
       fxCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
       fxCtx.clearRect(0, 0, W, H);
@@ -659,6 +770,53 @@ export default function LaserCarvingCover() {
         fxCtx.beginPath(); fxCtx.arc(headX, headY, fr, 0, Math.PI * 2); fxCtx.fill();
       }
       fxCtx.globalCompositeOperation = "source-over";
+      // 挂字猫咬合白闪（60ms 内衰减）
+      if (catchFlashT > 0) {
+        const k = clamp(catchFlashT / 0.06, 0, 1);
+        fxCtx.globalCompositeOperation = "lighter";
+        const fr = 18 + 26 * (1 - k);
+        const fg = fxCtx.createRadialGradient(catPX, catPY, 0, catPX, catPY, fr);
+        fg.addColorStop(0, `rgba(255,255,255,${(0.9 * k * k).toFixed(3)})`);
+        fg.addColorStop(0.5, `rgba(240,244,252,${(0.3 * k * k).toFixed(3)})`);
+        fg.addColorStop(1, "rgba(240,244,252,0)");
+        fxCtx.fillStyle = fg;
+        fxCtx.beginPath();
+        fxCtx.arc(catPX, catPY, fr, 0, Math.PI * 2);
+        fxCtx.fill();
+        fxCtx.globalCompositeOperation = "source-over";
+      }
+      drawCinema();
+    }
+
+    /** v9 荧幕感工艺：letterbox 上下黑边（settled 首 0.8s 退出）+ 胶片颗粒（暗期强、显影渐隐归零） */
+    function drawCinema() {
+      const barH = W >= 640 ? clamp(Math.min(H * 0.09, W * 0.14), 44, 110) : 0;
+      if (barH > 0) {
+        let kb = 0;
+        if (phase === "engrave" || phase === "cool" || phase === "reveal") kb = 1;
+        else if (phase === "settled" && phaseT < 0.8) {
+          const q = phaseT / 0.8;
+          const iq = 1 - q;
+          kb = 1 - iq * iq * iq * iq * iq; // quint-out：张开慢于合拢，揭示心理
+        }
+        if (kb > 0.002) {
+          const h = barH * kb;
+          fxCtx.fillStyle = "#000";
+          fxCtx.fillRect(0, 0, W, h);
+          fxCtx.fillRect(0, H - h, W, h);
+        }
+      }
+      let ga = 0;
+      if (phase === "engrave") ga = 1;
+      else if (phase === "cool") ga = 0.7;
+      else if (phase === "reveal") ga = 1 - clamp(phaseT / T_REVEAL, 0, 1);
+      if (ga > 0.01 && grainC) {
+        fxCtx.globalAlpha = 0.085 * ga;
+        for (let gx = grainOx; gx < W; gx += 96) {
+          for (let gy = grainOy; gy < H; gy += 96) fxCtx.drawImage(grainC, gx, gy);
+        }
+        fxCtx.globalAlpha = 1;
+      }
     }
 
     /** 热浪：冷却中的刻痕与熔池渲进窄带，再按行加水平正弦位移贴回（高斯加权，随温度衰减） */
@@ -796,11 +954,355 @@ export default function LaserCarvingCover() {
       ctx.restore();
     }
 
+    // ===== v10：挂字猫绘制（局部坐标：原点=咬合点，+y 沿身体下垂；单位×catScale 成像素） =====
+    function blinkK() {
+      if (catBlinkT < 0) return 0;
+      if (catBlinkT < 0.08) return catBlinkT / 0.08;
+      if (catBlinkT < 0.14) return 1;
+      return 1 - (catBlinkT - 0.14) / 0.14;
+    }
+
+    function mixC(a: readonly number[], b: readonly number[], t: number) {
+      return `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},${Math.round(a[2] + (b[2] - a[2]) * t)})`;
+    }
+
+    /** 双笔触猫线：宽柔 + 细亮，与文字刻痕同语言（局部单位线宽） */
+    function catStroke(path: (g: CanvasRenderingContext2D) => void, wScale = 1) {
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(232,232,236,0.18)";
+      ctx.lineWidth = 4.4 * wScale;
+      ctx.beginPath(); path(ctx); ctx.stroke();
+      ctx.strokeStyle = "rgba(240,240,244,0.92)";
+      ctx.lineWidth = Math.max(1.2, 1.6 * wScale);
+      ctx.beginPath(); path(ctx); ctx.stroke();
+    }
+
+    /** 挂猫躯体：头（婴儿比，咬合点在头顶）→ 胸腹下坠 → 一搭一垂的前爪 → 一伸一缩的后腿 */
+    function drawCatBody() {
+      // 极淡体积底（幽灵蓝图同族），让线稿有"身体"
+      ctx.fillStyle = "rgba(234,236,240,0.07)";
+      ctx.beginPath();
+      ctx.moveTo(-7, 3);
+      ctx.quadraticCurveTo(-20, -3, -25, 8);
+      ctx.quadraticCurveTo(-29, 19, -21, 27);
+      ctx.quadraticCurveTo(-12, 33, -1, 30);
+      ctx.quadraticCurveTo(10, 25, 11, 12);
+      ctx.quadraticCurveTo(9, 4, -7, 3);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-16, 29);
+      ctx.quadraticCurveTo(-23, 42, -22, 56);
+      ctx.quadraticCurveTo(-21, 72, -14, 84);
+      ctx.quadraticCurveTo(-8, 93, 1, 93);
+      ctx.quadraticCurveTo(10, 90, 12, 78);
+      ctx.quadraticCurveTo(16, 58, 13, 42);
+      ctx.quadraticCurveTo(11, 31, 2, 29);
+      ctx.closePath();
+      ctx.fill();
+      // 耳（先画，头线自然切过耳根）：近耳大、远耳小
+      catStroke((g) => {
+        g.moveTo(-21, 0);
+        g.quadraticCurveTo(-27, -8, -30, -17);
+        g.quadraticCurveTo(-23.5, -13, -19.5, -6);
+      });
+      catStroke((g) => {
+        g.moveTo(-9, -2);
+        g.quadraticCurveTo(-11, -12, -16, -22);
+        g.quadraticCurveTo(-16, -13, -12.5, -5);
+      });
+      // 头轮廓（嘴部卡在 y≈0 的字缘上）
+      catStroke((g) => {
+        g.moveTo(-7, 3);
+        g.quadraticCurveTo(-20, -3, -25, 8);
+        g.quadraticCurveTo(-29, 19, -21, 27);
+        g.quadraticCurveTo(-12, 33, -1, 30);
+        g.quadraticCurveTo(10, 25, 11, 12);
+        g.quadraticCurveTo(9, 4, -7, 3);
+      });
+      // 躯干（左腹饱、右背直，锥形下坠）
+      catStroke((g) => {
+        g.moveTo(-16, 29);
+        g.quadraticCurveTo(-23, 42, -22, 56);
+        g.quadraticCurveTo(-21, 72, -14, 84);
+        g.quadraticCurveTo(-8, 93, 1, 93);
+        g.quadraticCurveTo(10, 90, 12, 78);
+        g.quadraticCurveTo(16, 58, 13, 42);
+        g.quadraticCurveTo(11, 31, 2, 29);
+      });
+      // 近前爪：自然垂落
+      catStroke((g) => {
+        g.moveTo(-13, 38);
+        g.quadraticCurveTo(-17, 50, -15, 60);
+      });
+      catStroke((g) => {
+        g.ellipse(-14.5, 63, 5, 4, 0, 0, Math.PI * 2);
+      }, 0.8);
+      // 远前爪：搭在字的右下角
+      catStroke((g) => {
+        g.moveTo(8, 34);
+        g.quadraticCurveTo(15, 22, 17, 10);
+      }, 0.8);
+      catStroke((g) => {
+        g.ellipse(17.5, 7, 4.5, 3.5, 0, 0, Math.PI * 2);
+      }, 0.7);
+      // 后腿：一伸一缩
+      catStroke((g) => {
+        g.moveTo(9, 88);
+        g.quadraticCurveTo(7, 100, 2, 109);
+      }, 0.8);
+      catStroke((g) => {
+        g.ellipse(1.5, 111, 5, 4, 0, 0, Math.PI * 2);
+      }, 0.7);
+      catStroke((g) => {
+        g.moveTo(-6, 90);
+        g.quadraticCurveTo(-8, 97, -5, 103);
+      }, 0.7);
+      catStroke((g) => {
+        g.ellipse(-4.5, 105, 4.5, 3.5, 0, 0, Math.PI * 2);
+      }, 0.6);
+    }
+
+    /** 尾：右髋出发的三节链，基角成问号钩；欢快摇 = 相位滞后行波 + 身体角速度耦合 */
+    function drawCatTail() {
+      const base = [-75, -30, 15];
+      const amp = [0.17, 0.35, 0.56];
+      const ramp = catCaught ? clamp((catT - CAT_CATCH_T) / 1.0, 0, 1) : 0;
+      const sway = (i: number) =>
+        reduced ? 0 :
+        ramp * amp[i] * Math.sin((catClock * Math.PI * 2) / CAT_TAIL_PERIOD - 0.8 * i) -
+        clamp(catOmega, -6, 6) * 0.045 * (3 - i) * 0.5;
+      const pts: [number, number][] = [[11, 82]];
+      let a = 0, x = 11, y = 82;
+      for (let i = 0; i < 3; i++) {
+        a = (base[i] * Math.PI) / 180 + sway(i);
+        x += Math.cos(a) * 13;
+        y += Math.sin(a) * 13;
+        pts.push([x, y]);
+      }
+      const widths = [1.0, 0.82, 0.66];
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (let pass = 0; pass < 2; pass++) {
+        ctx.strokeStyle = pass === 0 ? "rgba(232,232,236,0.18)" : "rgba(240,240,244,0.92)";
+        for (let i = 0; i < 3; i++) {
+          ctx.lineWidth = (pass === 0 ? 4.2 : Math.max(1.2, 1.6)) * widths[i];
+          ctx.beginPath();
+          ctx.moveTo(pts[i][0], pts[i][1]);
+          ctx.lineTo(pts[i + 1][0], pts[i + 1][1]);
+          ctx.stroke();
+        }
+      }
+    }
+
+    /** 四芒星闪眼（参数化星芒：竖长芒 + 横短芒 + 柔光核，lighter） */
+    function drawCatGlint(cx: number, cy: number, R: number) {
+      if (R <= 0.2) return;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.translate(cx, cy);
+      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 1.6);
+      glow.addColorStop(0, "rgba(255,255,240,0.55)");
+      glow.addColorStop(1, "rgba(255,255,240,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(0, 0, R * 1.6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,248,0.95)";
+      for (let k = 0; k < 2; k++) {
+        const r = k === 0 ? R : R * 0.62;
+        const w = r * 0.15;
+        ctx.beginPath();
+        ctx.moveTo(0, -r);
+        ctx.quadraticCurveTo(w, -w, r, 0);
+        ctx.quadraticCurveTo(w, w, 0, r);
+        ctx.quadraticCurveTo(-w, w, -r, 0);
+        ctx.quadraticCurveTo(-w, -w, 0, -r);
+        ctx.fill();
+        ctx.rotate(Math.PI / 2);
+      }
+      ctx.restore();
+    }
+
+    /** 脸：近眼大（蓝）、远眼小（金绿）、立缝瞳 + 眼神光 + 鼻 + 短须；眨眼成笑弧 */
+    function drawCatFace() {
+      const k = blinkK();
+      const powerK = catT >= CAT_POWER_AT
+        ? Math.sin(Math.PI * clamp((catT - CAT_POWER_AT) / CAT_POWER_LEN, 0, 1))
+        : 0;
+      const goldK = catGoldT >= 0 ? Math.sin((Math.PI * catGoldT) / 0.24) : 0;
+      let bright = 0;
+      if (catBlinkT >= 0.14) bright = Math.max(bright, 0.25 * (1 - clamp((catBlinkT - 0.14) / 0.14, 0, 1)));
+      // 眼白底：杏仁轮廓（细银线）
+      const eyeLid = (cx: number, cy: number, w: number, h: number) => {
+        catStroke((g) => {
+          g.moveTo(cx - w, cy);
+          g.quadraticCurveTo(cx, cy - h, cx + w, cy);
+          g.quadraticCurveTo(cx, cy + h * 0.9, cx - w, cy);
+        }, 0.55);
+      };
+      const drawIris = (cx: number, cy: number, r: number, pal: { core: readonly number[]; edge: readonly number[]; hot: readonly number[] }, isNear: boolean) => {
+        const core = pal.core, edge = pal.edge, hot = pal.hot;
+        let cCol = mixC(core, hot, powerK);
+        let eCol = mixC(edge, hot, powerK * 0.7);
+        if (!isNear && goldK > 0) {
+          cCol = mixC(core, CAT_GOLD, goldK);
+          eCol = mixC(edge, CAT_GOLD, goldK * 0.8);
+        }
+        const iris = ctx.createRadialGradient(cx, cy - r * 0.18, r * 0.12, cx, cy, r);
+        iris.addColorStop(0, cCol);
+        iris.addColorStop(1, eCol);
+        ctx.fillStyle = iris;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+        const pb = 1 + 0.3 * catPupilBoost;
+        ctx.fillStyle = "#101216";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, (isNear ? 0.95 : 0.62) * pb, (isNear ? 1.9 : 1.35) * pb, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.beginPath(); ctx.arc(cx - r * 0.28, cy - r * 0.32, isNear ? 0.5 : 0.35, 0, Math.PI * 2); ctx.fill();
+        if (bright > 0.01) {
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = `rgba(255,255,255,${bright.toFixed(3)})`;
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+          ctx.globalCompositeOperation = "source-over";
+        }
+      };
+      if (catT >= CAT_POWER_AT - 0.12) {
+        // 近眼（蓝，大）
+        if (k > 0.75) {
+          catStroke((g) => { g.moveTo(-18, 12); g.quadraticCurveTo(-14, 15.5, -10, 12); }, 0.55);
+        } else {
+          eyeLid(-14, 12, 4, 3);
+          ctx.save();
+          ctx.translate(-14, 12);
+          ctx.scale(1, Math.max(0.08, 1 - k));
+          ctx.translate(14, -12);
+          drawIris(-14, 12, 2.8, CAT_EYE_L, true);
+          ctx.restore();
+          // 星芒：眨眼后偶发，瞳孔右上
+          if (catGlintT >= 0) {
+            const s = Math.pow(Math.sin(Math.PI * clamp(catGlintT / 0.32, 0, 1)), 0.6);
+            drawCatGlint(-11, 8.5, 5 * s);
+          }
+        }
+        // 远眼（金绿，小）
+        if (k > 0.75) {
+          catStroke((g) => { g.moveTo(-2, 10); g.quadraticCurveTo(1, 12.5, 4, 10); }, 0.5);
+        } else {
+          eyeLid(1, 10, 2.6, 2.1);
+          ctx.save();
+          ctx.translate(1, 10);
+          ctx.scale(1, Math.max(0.08, 1 - k));
+          ctx.translate(-1, -10);
+          drawIris(1, 10, 1.9, CAT_EYE_R, false);
+          ctx.restore();
+        }
+      }
+      // 鼻（小三角）
+      catStroke((g) => {
+        g.moveTo(-6, 17);
+        g.lineTo(-2.6, 17);
+        g.lineTo(-4.3, 19.2);
+        g.closePath();
+      }, 0.55);
+      // 短须（贴颊后收）
+      catStroke((g) => { g.moveTo(-27, 15); g.quadraticCurveTo(-31, 15.8, -33, 17.4); }, 0.45);
+      catStroke((g) => { g.moveTo(-26, 19); g.quadraticCurveTo(-29.6, 20.8, -31, 22.8); }, 0.45);
+      catStroke((g) => { g.moveTo(9, 17); g.quadraticCurveTo(12.6, 18.2, 14.4, 20); }, 0.45);
+    }
+
+    /** 咬合阴影：屏幕空间固定在枢轴（不随摆动旋转）——牙齿咬住字缘的可信接触 */
+    function drawBiteShadow() {
+      const x0 = catPX - 8 * catScale;
+      const x1 = catPX + 10 * catScale;
+      const y = catPY - 1;
+      ctx.save();
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "rgba(10,12,16,0.55)";
+      ctx.lineWidth = Math.max(1.5, 1.7 * catScale);
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      ctx.lineWidth = Math.max(1.2, 1.3 * catScale);
+      ctx.beginPath(); ctx.moveTo(x0 + 6 * catScale, y); ctx.lineTo(x0 + 6 * catScale, y + 2.2 * catScale); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x1 - 5 * catScale, y); ctx.lineTo(x1 - 5 * catScale, y + 2.2 * catScale); ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawCat() {
+      if (catPhase === "off" || catLen <= 0) return;
+      ctx.save();
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      if (!catCaught) {
+        // 坠落段：沿弹道 + 前倾 14° + 纵向拉伸；带一帧运动残影
+        const tau = clamp((catT - CAT_FALL_AT) / CAT_FALL, 0, 1) * CAT_FALL;
+        const pos = (t: number): [number, number] => [
+          catPX + 159.6 + CAT_FALL_VX * t,
+          catPY - 302.8 + 0.5 * CAT_FALL_G * t * t,
+        ];
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        const [gx, gy] = pos(Math.max(0, tau - 0.035));
+        ctx.translate(gx, gy);
+        ctx.rotate((14 * Math.PI) / 180);
+        ctx.scale(catScale, catScale);
+        drawCatBody();
+        ctx.restore();
+        const [fx, fy] = pos(tau);
+        ctx.translate(fx, fy);
+        ctx.rotate((14 * Math.PI) / 180);
+        ctx.scale(0.92 * catScale, 1.15 * catScale);
+        drawCatBody();
+        drawCatTail();
+        ctx.restore();
+        return;
+      }
+      // 悬挂：绕咬合点摆动 + 呼吸 + 咬合挤压回弹
+      let sx = 1, sy = 1;
+      const cq = clamp((catT - CAT_CATCH_T) / CAT_SQUASH, 0, 1);
+      if (cq < 1) {
+        const comp = cq < 0.35 ? Math.sin((cq / 0.35) * (Math.PI / 2)) : Math.cos(((cq - 0.35) / 0.65) * Math.PI);
+        sy *= 1 - 0.2 * comp;
+        sx *= 1 + 0.14 * comp;
+      }
+      if (catPhase === "live" && !reduced) {
+        sy *= 1 + 0.012 * Math.sin((catClock * Math.PI * 2) / CAT_BREATH_PERIOD);
+      }
+      ctx.translate(catPX, catPY);
+      ctx.rotate(catTheta);
+      ctx.scale(sx * catScale, sy * catScale);
+      drawCatTail();
+      drawCatBody();
+      drawCatFace();
+      ctx.restore();
+      drawBiteShadow();
+    }
+
+    /** 物理归零 → 微风正弦接管：相位对齐当前 θ/ω（幅相双连续，无跳变） */
+    function breezeHandoff() {
+      const A = Math.min(Math.max(0.035, Math.abs(catTheta)), 0.12);
+      catBreezeAmp = A;
+      catBreezePhase = Math.asin(clamp(catTheta / A, -1, 1));
+      if (Math.cos(catBreezePhase) * catOmega < 0) catBreezePhase = Math.PI - catBreezePhase;
+      catPhys = false;
+      catSettleAcc = 0;
+    }
+
     function drawSettled(withSpec: boolean) {
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       ctx.clearRect(0, 0, W, H);
       if (!line) return;
+      // 挂字猫咬合/摆动的重量：文字绕咬合点微沉微倾后回弹
+      if (catDipK > 0.001) {
+        const q = 1 - catDipK;
+        const dip = 2.2 * Math.sin(Math.PI * Math.min(1, q * 1.15)) * catDipK + 1.2 * catDipK;
+        const tilt = 0.02 * Math.sin(Math.PI * Math.min(1, q * 1.15)) * catDipK;
+        ctx.save();
+        ctx.translate(catPX, catPY);
+        ctx.rotate(tilt);
+        ctx.translate(-catPX, -catPY);
+        ctx.translate(0, dip);
+      }
       ctx.drawImage(line.fill, line.x, line.y, line.w, line.h);
+      if (catDipK > 0.001) ctx.restore();
       if (withSpec) drawSpecular();
     }
 
@@ -838,6 +1340,8 @@ export default function LaserCarvingCover() {
         if (disposed || !line) return;
         if (document.hidden) { scheduleIdleSheen(3000); return; }
         idleSheenT = 0;
+        // v9：金属掠光与猫眨眼同窗——整幅同呼吸
+        if (catPhase === "live") catBlinkT = 0;
         ensureLoop();
       }, delay ?? 5500 + Math.random() * 3000);
     }
@@ -861,7 +1365,18 @@ export default function LaserCarvingCover() {
         fxCtx.clearRect(0, 0, W, H);
       }
       revealUi();
+      // 落款永在：跳过/回退直接给出挂稳的小猫
+      if (catPhase !== "live") {
+        catPhase = "live";
+        catCaught = true;
+        catT = 3;
+        catPhys = false;
+        catTheta = 0.02;
+        catBreezeAmp = 0.035;
+        catBreezePhase = Math.PI / 6;
+      }
       drawSettled(false);
+      drawCat();
       scheduleIdleSheen(4200);
     }
 
@@ -911,6 +1426,19 @@ export default function LaserCarvingCover() {
               released = true;
               releaseScratch();
               scheduleIdleSheen();
+              // v10 coda：重音播完 RAF 不停——小猫自右上斜抛入场，咬住句尾
+              catPhase = "coda";
+              catT = 0;
+              catClock = 0;
+              catBlinked = false;
+              catCaught = false;
+              catPhys = false;
+              catTheta = 0;
+              catOmega = 0;
+              catDipK = 0;
+              catSettleAcc = 0;
+              catGlintT = -1;
+              catGlintTimer = 3 + Math.random() * 3;
             }
           }
           break;
@@ -960,6 +1488,7 @@ export default function LaserCarvingCover() {
           const p = clamp(idleSheenT / IDLE_SHEEN_LEN, 0, 1);
           drawSheen(p, 0.13 * Math.sin(p * Math.PI));
         }
+        drawCat();
       }
     }
 
@@ -967,6 +1496,8 @@ export default function LaserCarvingCover() {
       if (phase !== "settled") return true;
       if (phaseT < T_CLIMAX) return true;
       if (idleSheenT >= 0) return true;
+      // v10：挂字猫在场（坠落/摆动或常驻生命感）则帧循环不熄火
+      if (catPhase !== "off") return true;
       return specAwake;
     }
 
@@ -1006,15 +1537,99 @@ export default function LaserCarvingCover() {
         }
       }
       updateSparks(dt);
+      // ===== v10：挂字猫时钟、坠落到咬合、单摆积分与微风接管 =====
+      if (catPhase !== "off") {
+        catClock += dt;
+        catT += dt;
+        if (catBlinkT >= 0) {
+          catBlinkT += dt;
+          if (catBlinkT >= 0.28) catBlinkT = -1;
+        }
+        if (catGoldT >= 0) {
+          catGoldT += dt;
+          if (catGoldT >= 0.24) catGoldT = -1;
+        }
+        if (catGlintT >= 0) {
+          catGlintT += dt;
+          if (catGlintT >= 0.32) catGlintT = -1;
+        }
+        catPupilBoost = Math.max(0, catPupilBoost - dt / 0.5);
+        catchFlashT = Math.max(0, catchFlashT - dt);
+        catDipK = Math.max(0, catDipK - dt / 0.18);
+        if (catPhase === "coda" && !catCaught && catT >= CAT_CATCH_T) {
+          // 咬合：白闪 + 微火花 + 文字下陷 + 摆初值（掠过字面再荡出）
+          catCaught = true;
+          catPhys = true;
+          catTheta = 0.24;
+          catOmega = -8;
+          catchFlashT = 0.06;
+          catDipK = 1;
+          for (let i = 0; i < 8; i++) {
+            const a = -Math.PI * (0.15 + Math.random() * 0.7);
+            const sp = 40 + Math.random() * 110;
+            spawnSpark(catPX, catPY + 2, Math.cos(a) * sp, Math.sin(a) * sp - 30);
+          }
+        }
+        if (!catBlinked && catCaught && catT >= CAT_BLINK_AT) {
+          catBlinked = true;
+          catBlinkT = 0;
+        }
+        if (catPhase === "coda" && catT >= CAT_BREEZE_AT) {
+          catPhase = "live";
+          breezeHandoff();
+        }
+        if (catCaught && catPhys) {
+          // 半隐式欧拉 ×2 子步（辛积分，能量有界）
+          const h = Math.min(dt, 0.05) / 2;
+          for (let i = 0; i < 2; i++) {
+            catOmega += (-(CAT_OMEGA_N * CAT_OMEGA_N) * Math.sin(catTheta) - CAT_DAMP * catOmega) * h;
+            catTheta += catOmega * h;
+          }
+          catOmega = clamp(catOmega, -12, 12);
+        }
+        if (catPhase === "live") {
+          if (!catPhys) {
+            catTheta = catBreezeAmp * Math.sin((catClock * Math.PI * 2) / 5.2 + catBreezePhase);
+            catGlintTimer -= dt;
+            if (catGlintTimer <= 0) {
+              catGlintTimer = 4 + Math.random() * 5;
+              if (!reduced && Math.random() < 0.75) {
+                catGlintT = 0;
+                catPupilBoost = 1;
+              }
+            }
+          } else if (Math.abs(catTheta) < 0.044 && Math.abs(catOmega) < 0.35) {
+            // Enter 冲量摆动收敛 → 回微风
+            catSettleAcc += dt;
+            if (catSettleAcc >= 0.2) breezeHandoff();
+          } else {
+            catSettleAcc = 0;
+          }
+        }
+      }
+      // 胶片颗粒换步（~11fps 跳变，胶片感而非电视雪花）
+      grainClock += dt;
+      if (grainClock >= 0.09) {
+        grainClock = 0;
+        grainOx = -Math.floor(Math.random() * 96);
+        grainOy = -Math.floor(Math.random() * 96);
+      }
       advance(dt);
       applyCamera();
-      drawScene();
-      drawFx();
+      // live 静息期隔帧绘制（~30fps 降耗）；任何事件帧恢复满帧
+      const lazy = catPhase === "live" && phase === "settled" && phaseT >= T_CLIMAX &&
+        !specAwake && idleSheenT < 0 && catBlinkT < 0 && catGoldT < 0 && catGlintT < 0 && !catPhys;
+      frameParity ^= 1;
+      if (!(lazy && frameParity === 1)) {
+        drawScene();
+        drawFx();
+      }
       if (shouldContinue()) {
         raf = requestAnimationFrame(loop);
       } else {
         running = false;
         drawSettled(false);
+        if (catPhase !== "off") drawCat();
       }
     }
 
@@ -1049,11 +1664,29 @@ export default function LaserCarvingCover() {
       camY = 0;
       if (phase === "settled") {
         if (stage) stage.style.transform = "";
+        // 坠落/摆动中改尺寸：猫一步挂稳；已 live：θ 与几何无关，照常在场
+        if (catPhase === "coda") {
+          catPhase = "live";
+          catCaught = true;
+          catT = 3;
+          catPhys = false;
+          catTheta = clamp(catTheta, -0.05, 0.05);
+          catBreezeAmp = 0.035;
+          catBreezePhase = Math.PI / 6;
+        }
         drawSettled(false);
+        drawCat();
       } else if (phase !== "loading") {
         phase = "engrave";
         phaseT = 0;
         resetStrokeMask();
+        catPhase = "off";
+        catT = 0;
+        catCaught = false;
+        catPhys = false;
+        catBlinkT = -1;
+        catGoldT = -1;
+        catGlintT = -1;
       }
     }
 
@@ -1095,6 +1728,7 @@ export default function LaserCarvingCover() {
         clearTimeout(timeout);
       }
     }
+    buildGrain();
     loadFont();
 
     const onPointerMove = (e: PointerEvent) => {
@@ -1109,6 +1743,17 @@ export default function LaserCarvingCover() {
     };
     const onSkip = () => {
       if (phase !== "settled") finishNow();
+      else if (catPhase === "coda") {
+        // coda 同样可跳：猫一步挂稳
+        catPhase = "live";
+        catCaught = true;
+        catT = 3;
+        catPhys = false;
+        catTheta = 0.02;
+        catBreezeAmp = 0.035;
+        catBreezePhase = Math.PI / 6;
+        ensureLoop();
+      }
     };
     if (!reduced) window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("pointerdown", onSkip, { passive: true });
@@ -1122,6 +1767,45 @@ export default function LaserCarvingCover() {
     };
     window.addEventListener("resize", onResize);
 
+    // v9：切后台暂停 RAF（呼吸/尾摆不空烧电池），回前台续跑
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (running) {
+          cancelAnimationFrame(raf);
+          running = false;
+        }
+      } else if (!reduced) {
+        ensureLoop();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // Enter 目送：给摆一个冲量（向画面中心荡——鞠躬告别）+ 慢眨 + 右眼香槟金（handleEnter 在 effect 外，经 ref 桥接进来）
+    catApiRef.current.farewell = () => {
+      if (reduced || disposed) return;
+      if (catPhase === "coda") {
+        if (!catCaught) {
+          catCaught = true;
+          catchFlashT = 0.06;
+          catTheta = 0.24;
+          catOmega = -8;
+        }
+        catPhase = "live";
+        catT = Math.max(catT, 3);
+      }
+      if (catPhase === "live") {
+        if (!catPhys) {
+          // 从微风正弦取当前角速度，接进物理积分
+          catOmega = catBreezeAmp * ((Math.PI * 2) / 5.2) * Math.cos((catClock * Math.PI * 2) / 5.2 + catBreezePhase);
+          catPhys = true;
+        }
+        catOmega += -2.4;
+        catBlinkT = 0;
+        catGoldT = 0;
+      }
+      ensureLoop();
+    };
+
     return () => {
       disposed = true;
       fontController.abort();
@@ -1134,6 +1818,7 @@ export default function LaserCarvingCover() {
       window.removeEventListener("pointerdown", onSkip);
       window.removeEventListener("keydown", onSkip);
       window.removeEventListener("wheel", onSkip);
+      window.removeEventListener("visibilitychange", onVisibility);
       document.documentElement.classList.remove("laser-forge");
     };
   }, []);
@@ -1183,6 +1868,7 @@ export default function LaserCarvingCover() {
   function handleEnter() {
     if (navigatingRef.current) return;
     navigatingRef.current = true;
+    catApiRef.current.farewell?.();
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     canvasRef.current?.parentElement?.classList.add("is-exiting");
     tintRef.current?.classList.add("is-active");

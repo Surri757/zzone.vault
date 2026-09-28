@@ -1,5 +1,6 @@
 import "server-only";
 
+import { fetchEast } from "@/lib/em-transport";
 import { isMarketScheduledOpen } from "@/lib/market-session";
 import {
   getStockInstrumentsByMarket,
@@ -301,18 +302,7 @@ async function fetchEastmoneyUlistBatch(secids: string[], preferredHost?: string
       url.searchParams.set("invt", "2");
       url.searchParams.set("fields", EASTMONEY_FIELDS);
 
-      const response = await fetch(url, {
-        cache: "no-store",
-        headers: {
-          Accept: "application/json,text/plain,*/*",
-          Referer: "https://quote.eastmoney.com/",
-          "User-Agent": "Mozilla/5.0",
-        },
-        signal: AbortSignal.timeout(12_000),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const payload = (await response.json()) as {
+      const payload = (await fetchEast(url.toString(), 12_000)) as {
         data?: { diff?: EastmoneyRow[] | Record<string, EastmoneyRow> } | null;
       };
       const data = payload.data;

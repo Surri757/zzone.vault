@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📚 课程归档 · 全部真题课</title>
+<style>
+  :root{--ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#fff;--blue:#2563eb;--purple:#7c3aed;--green:#16a34a;--amber:#b45309}
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.8;margin:0}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#2563eb;border-color:#93c5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#60a5fa;border-color:#2f4368}
+  }
+  h1{font-size:26px;border-bottom:3px solid var(--ink);padding-bottom:12px}
+  .sub{color:var(--muted);font-size:14.5px}
+  .day{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:20px 22px;margin:16px 0}
+  .dayhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+  .dayhead h2{margin:0;font-size:17px}
+  .status{font-size:12px;font-weight:800;padding:2px 12px;border-radius:999px}
+  .status.done{background:#dcfce7;color:#15803d;border:1px solid #86efac}
+  .status.today{background:#fef3c7;color:#b45309;border:1px solid #fcd34d}
+  .meta{font-size:12.5px;color:var(--muted)}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+  @media(max-width:680px){.cards{grid-template-columns:1fr}}
+  .lesson{display:block;border:1.5px solid #e5e7eb;border-radius:14px;padding:16px 18px;text-decoration:none;color:inherit;transition:all .15s;background:#fafaf9}
+  .lesson:hover{border-color:var(--blue);transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.07)}
+  .lesson.ag:hover{border-color:#ea580c}
+  .tag{font-size:11.5px;font-weight:800;letter-spacing:.5px}
+  .lesson.fm .tag{color:var(--blue)}.lesson.ag .tag{color:#ea580c}
+  .lesson h3{font-size:15.5px;margin:6px 0 6px;line-height:1.55}
+  .lesson p{font-size:13px;color:var(--muted);margin:0}
+  .pill{display:inline-block;font-size:11px;border-radius:6px;padding:1px 8px;margin-top:8px;margin-right:6px;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe}
+  .pill.note{background:#fef9c3;color:#92400e;border-color:#fde68a}
+  .future{background:var(--card);border:1px dashed #d7d3cb;border-radius:16px;padding:16px 20px;font-size:14px;color:var(--muted);margin-top:16px;text-align:center}
+  a{color:var(--blue);text-decoration:none}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{color-scheme:dark;--ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;--blue:#60a5fa;--purple:#a78bfa;--green:#4ade80;--amber:#fbbf24}
+    .day,.lesson{border-color:#34383e}
+    .lesson{background:#202329}
+    .status.done{background:#163024;border-color:#24523a;color:#4ade80}
+    .status.today{background:#2e2310;border-color:#57411a;color:var(--amber)}
+    .pill{background:#1c2a44;border-color:#2f4368;color:#93c5fd}
+    .pill.note{background:#33270f;border-color:#57411a;color:#fbbf24}
+    .future{border-color:#3a3f47}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="0001-28day-roadmap.html">🗺️ 路线图</a>
+</nav>
+<h1>📚 课程归档</h1>
+<p class="sub">每一天的课程都是独立文件，<b>只新增、从不覆盖</b>——这里按天收录全部已开课程，随时翻阅复习。含「📎 补课笔记」标记的课，文末附有你的追问实录。</p>
+
+<div class="day">
+  <div class="dayhead">
+    <h2>Day 01 · 认知地基</h2>
+    <span class="status done">已完成 ✓</span>
+  </div>
+  <p class="meta">2026-09-22 开炉 · 2026-09-23 通关（quiz 4/4 + 4/4）· 追问 4 问已收录补课笔记</p>
+  <div class="cards">
+    <a class="lesson fm" href="../lessons/0001-token-strawberry.html">
+      <span class="tag">第 1 题 · 基座模型 · ⭐</span>
+      <h3>为什么最聪明的模型，数不清 strawberry 里有几个 r？</h3>
+      <p>token · BPE · 字符盲区 · 中文 token 成本</p>
+      <span class="pill">🔪 分词器实验</span><span class="pill note">📎 补课笔记 ×4 问</span>
+    </a>
+    <a class="lesson ag" href="../lessons/0002-what-is-agent.html">
+      <span class="tag">第 2 题 · AGENT · ⭐</span>
+      <h3>什么是 AI Agent？它和 ChatGPT 有何区别？</h3>
+      <p>四模块 · ReAct 循环 · 自主性光谱 · 停止条件</p>
+      <span class="pill">🎬 ReAct 演示器</span><span class="pill note">📎 补课笔记 ×2 问</span>
+    </a>
+  </div>
+</div>
+
+<div class="day">
+  <div class="dayhead">
+    <h2>Day 02 · 认知地基</h2>
+    <span class="status today">今天</span>
+  </div>
+  <p class="meta">2026-09-23 交付 · 难度 ⭐+（满分通关 Day 01 后上调半档）</p>
+  <div class="cards">
+    <a class="lesson fm" href="../lessons/0003-context-window.html">
+      <span class="tag">第 1 题 · 基座模型 · ⭐+</span>
+      <h3>上下文窗口：128k 到底能装几本书？</h3>
+      <p>窗口 vs 参数量 · Lost in the Middle · 超窗三策略 · 长上下文 vs RAG</p>
+      <span class="pill">📚 装书计算器</span>
+    </a>
+    <a class="lesson ag" href="../lessons/0004-function-calling.html">
+      <span class="tag">第 2 题 · AGENT · ⭐+</span>
+      <h3>Function Calling：模型怎么"伸手"拿工具？</h3>
+      <p>五步闭环 · 意图/执行分离 · schema 设计 · 错误回喂自纠</p>
+      <span class="pill">🎬 FC JSON 步进器</span>
+    </a>
+  </div>
+</div>
+
+<div class="future">🗓️ Day 03 ~ Day 28 将逐日点亮（明日：采样与温度 × 记忆两档），排期见 <a href="0001-28day-roadmap.html">28 天路线图</a>；已完成的课程会第一时间收进本归档。</div>
+
+<p style="font-size:14px;margin-top:26px"><a href="../index.html">← 返回学习主页</a>　｜　<a href="0001-28day-roadmap.html">🗺️ 路线图</a>　｜　<a href="0002-knowledge-cards.html">📇 知识卡册</a></p>
+</div>
+</body>
+</html>

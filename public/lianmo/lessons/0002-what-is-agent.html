@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 01 · Q2｜什么是 AI Agent？它和 ChatGPT 有何区别？</title>
+<style>
+  :root{
+    --ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#ffffff;
+    --blue:#2563eb;--blue-bg:#dbeafe;--blue-bd:#93c5fd;
+    --green:#16a34a;--green-bg:#dcfce7;--green-bd:#86efac;
+    --amber:#b45309;--amber-bg:#fef3c7;--amber-bd:#fcd34d;
+    --purple:#7c3aed;--purple-bg:#ede9fe;--purple-bd:#c4b5fd;
+    --red:#dc2626;--red-bg:#fee2e2;--red-bd:#fca5a5;
+  }
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.85;margin:0}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 90px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#7c3aed;border-color:#c4b5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#a78bfa;border-color:#3f3160}
+  }
+  header{border-bottom:3px solid var(--ink);padding-bottom:16px;margin-bottom:10px}
+  .kicker{font-size:13px;letter-spacing:2px;color:var(--muted);font-weight:600}
+  h1{font-size:27px;margin:8px 0 6px;line-height:1.4}
+  .meta{font-size:14px;color:var(--muted)}
+  .srcbar{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}
+  .chip{font-size:12.5px;padding:4px 12px;border-radius:999px;border:1px solid}
+  .chip.src{background:var(--blue-bg);border-color:var(--blue-bd);color:#1e40af}
+  .chip.proof{background:var(--green-bg);border-color:var(--green-bd);color:#166534}
+  .chip.rewrite{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber)}
+  h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:5px solid var(--purple)}
+  h2 .no{color:var(--muted);font-size:14px;font-weight:600;margin-right:6px}
+  .card{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:22px 24px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .fig{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 14px 8px;margin:18px 0;text-align:center}
+  .fig figcaption{font-size:13.5px;color:var(--muted);padding:8px 10px 10px}
+  .qa{background:linear-gradient(135deg,#eff6ff,#f5f3ff);border:1px solid var(--blue-bd);border-radius:16px;padding:20px 24px;margin:18px 0}
+  .qa .who{font-size:13px;color:var(--blue);font-weight:700;letter-spacing:1px}
+  .qa .say{font-size:18px;font-weight:600;margin-top:6px}
+  details{background:var(--card);border:1px solid #e7e5df;border-radius:14px;padding:0;margin:12px 0;overflow:hidden}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";color:var(--amber);transition:transform .2s;font-size:15px}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .body{padding:2px 20px 16px;border-top:1px dashed #e7e5df}
+  details.l1 summary{background:#fffbeb}details.l2 summary{background:#fefce8}details.l3 summary{background:#fdf4ff}
+  .duel{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+  @media(max-width:680px){.duel{grid-template-columns:1fr}}
+  .side{border-radius:16px;padding:18px;font-size:14.5px}
+  .side h3{margin:0 0 10px;font-size:16px}
+  .side .bubble{border-radius:12px;padding:9px 13px;margin:7px 0;font-size:14px;line-height:1.6}
+  .side .u{background:#ffffff;border:1px solid #e5e7eb;align-self:flex-end}
+  .side .a{color:#fff}
+  .duel .chat{background:#eef2ff;border:1px solid #c7d2fe}
+  .duel .chat .a{background:#6366f1}
+  .duel .ag{background:#fff7ed;border:1px solid #fed7aa}
+  .duel .ag .a{background:#ea580c}
+  .flow{background:#0f172a;color:#e2e8f0;border-radius:16px;padding:22px;margin:18px 0}
+  .flow h3{margin:0 0 4px;font-size:16px;color:#7dd3fc}
+  .flow p.sub{font-size:13.5px;color:#94a3b8;margin:4px 0 14px}
+  .frow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .frow button{background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:10px 20px;font-size:14.5px;cursor:pointer;font-family:inherit}
+  .frow button:hover{background:#6d28d9}
+  .frow button:disabled{background:#475569;cursor:default}
+  .fstep{border-radius:12px;padding:10px 15px;margin:9px 0;font-size:14.5px;line-height:1.65;animation:pop .25s}
+  @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .fs-goal{background:#312e81;border:1px solid #6366f1}
+  .fs-think{background:#1e3a5f;border:1px solid #38bdf8}
+  .fs-act{background:#78350f;border:1px solid #fbbf24}
+  .fs-obs{background:#14532d;border:1px solid #4ade80}
+  .fs-done{background:linear-gradient(90deg,#166534,#15803d);border:1px solid #4ade80;font-weight:700}
+  .fstep .role{font-size:11.5px;font-weight:800;letter-spacing:1px;opacity:.85;display:block}
+  .mods{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:14px 0}
+  @media(max-width:680px){.mods{grid-template-columns:1fr}}
+  .mod{border-radius:14px;padding:16px 18px;border:1.5px solid}
+  .mod b{font-size:15.5px}
+  .mod p{font-size:13.5px;margin:6px 0 0;line-height:1.7}
+  .quiz{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 22px;margin:14px 0}
+  .quiz .qq{font-weight:700;margin:0 0 12px}
+  .opt{display:block;width:100%;text-align:left;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:12px;padding:11px 16px;margin:8px 0;font-size:15px;cursor:pointer;font-family:inherit;transition:all .15s}
+  .opt:hover{border-color:var(--purple);background:#faf5ff}
+  .opt.right{background:var(--green-bg);border-color:var(--green);font-weight:700}
+  .opt.wrong{background:var(--red-bg);border-color:var(--red)}
+  .fb{font-size:14px;margin:10px 0 0;min-height:20px}
+  .fb.ok{color:var(--green)}.fb.no{color:var(--red)}
+  .score{font-size:14px;color:var(--muted)}
+  .flip{perspective:1000px;height:210px;cursor:pointer;margin:18px 0}
+  .inner{position:relative;width:100%;height:100%;transition:transform .55s;transform-style:preserve-3d}
+  .flip.on .inner{transform:rotateY(180deg)}
+  .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .face.front{background:linear-gradient(135deg,#fef3c7,#fee2e2);border:2px solid #fdba74}
+  .face.front .big{font-size:20px;font-weight:800;line-height:1.6}
+  .face .hint{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .face.back{background:var(--card);border:2px solid var(--ink);transform:rotateY(180deg);font-size:14px;line-height:1.8;text-align:left;justify-content:flex-start;overflow:auto}
+  .back b{color:#c2410c}
+  .next{background:linear-gradient(135deg,#dcfce7,#d1fae5);border:1.5px solid var(--green-bd);border-radius:16px;padding:18px 24px;margin:26px 0}
+  .linkbox{background:linear-gradient(135deg,#fef9c3,#fef3c7);border:1.5px solid var(--amber-bd);border-radius:16px;padding:18px 24px;margin:18px 0;font-size:15px}
+  .refs{font-size:14px;line-height:2}
+  .refs a{color:var(--purple);text-decoration:none;border-bottom:1px dashed var(--purple-bd)}
+  .askme{background:#fff7ed;border:1.5px dashed #fdba74;border-radius:14px;padding:14px 20px;font-size:14.5px;margin:24px 0}
+  nav.pager{display:flex;justify-content:space-between;gap:12px;margin-top:40px;font-size:15px;flex-wrap:wrap}
+  nav.pager a{color:var(--purple);text-decoration:none;font-weight:700}
+  code{background:#f1f5f9;border-radius:6px;padding:1px 7px;font-size:.92em;color:#0f172a}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme:dark;
+      --ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;
+      --blue:#60a5fa;--blue-bg:#1c2a44;--blue-bd:#2f4368;
+      --green:#4ade80;--green-bg:#163024;--green-bd:#24523a;
+      --amber:#fbbf24;--amber-bg:#2e2310;--amber-bd:#57411a;
+      --purple:#a78bfa;--purple-bg:#282041;--purple-bd:#3f3160;
+      --red:#f87171;--red-bg:#3a1c1c;--red-bd:#5f2a2a;
+    }
+    .card,.fig,.quiz,details{border-color:#34383e}
+    details.l1 summary{background:#2a2312}
+    details.l2 summary{background:#272415}
+    details.l3 summary{background:#241f33}
+    details .body{border-top-color:#34383e}
+    .qa{background:linear-gradient(135deg,#1a2537,#251f3c);border-color:#2f4368}
+    .qa .who{color:#93c5fd}
+    .opt{background:#22252b;border-color:#3a3f47}
+    .opt:hover{background:#1e2b42;border-color:var(--blue)}
+    .next{background:linear-gradient(135deg,#0f281b,#0e2c20)}
+    .askme{background:#2a2113;border-color:#57411a}
+    code{background:#22252b;color:#e2e8f0}
+    .chip.src{color:#93c5fd}
+    .chip.proof{color:#4ade80}
+    .chip.rewrite{color:var(--amber)}
+    .duel .chat{background:#1a2036;border-color:#2f3a5e}
+    .duel .ag{background:#2a2010;border-color:#5a4522}
+    .side .u{background:#22252b;border-color:#3a3f47}
+    .linkbox{background:linear-gradient(135deg,#2e2510,#29220e)}
+    .mod[style*="#eff6ff"]{background:#16233a !important;border-color:#2f4368 !important}
+    .mod[style*="#faf5ff"]{background:#241d38 !important;border-color:#3f3160 !important}
+    .mod[style*="#f0fdf4"]{background:#12291c !important;border-color:#24523a !important}
+    .mod[style*="#fffbeb"]{background:#2b220f !important;border-color:#57411a !important}
+    .face.front{background:linear-gradient(135deg,#2e2510,#3a1c1c);border-color:#57411a}
+    .face.back{background:var(--card)}
+    .fig svg{background:#f6f5f0;border-radius:10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="../reference/0003-course-archive.html">🗂️ 课程归档</a>
+</nav>
+
+<header>
+  <div class="kicker">DAY 01 · 第 2 题（AGENT 方向）· 难度 ⭐</div>
+  <h1>什么是 AI Agent？它和 ChatGPT、普通 LLM 应用有什么区别？</h1>
+  <div class="meta">附带考点：Agent 四模块 · ReAct 循环 · Workflow vs Agent · 停止条件与护栏</div>
+  <div class="srcbar">
+    <span class="chip src">真题源：2025-26 各厂 Agent 岗通用开场首题（字节豆包 / 腾讯 / 阿里；海外 Agent 岗同源）</span>
+    <span class="chip proof">佐证：Lilian Weng《LLM Powered Autonomous Agents》· Anthropic《Building Effective Agents》· ReAct 论文</span>
+    <span class="chip rewrite">改写声明：概念框架题，考点保真（四模块 / 自主性 / ReAct）</span>
+  </div>
+</header>
+
+<!-- S1 情境 -->
+<h2><span class="no">S1</span>🎭 开场：同一句话的两种命运</h2>
+<p>你对 ChatGPT 和对一个 Agent 说同一句话：<b>「帮我订周五去上海的最便宜机票，别太晚到。」</b>看看各自会发生什么——</p>
+
+<div class="duel">
+  <div class="side chat">
+    <h3>💬 ChatGPT：一问一答</h3>
+    <div class="bubble u">帮我订周五去上海的最便宜机票，别太晚到</div>
+    <div class="bubble a">好的，建议你打开购票 App，筛选周五航班按价格排序，注意取舍到达时间……（一段贴心的建议）</div>
+    <div class="bubble u">那 19:30 到的那种大概多少钱？</div>
+    <div class="bubble a">抱歉，我无法获取实时价格，建议以 App 显示为准～</div>
+    <p style="font-size:13px;color:#6b7280;margin:8px 0 0">📌 你推一步，它动一步。<b>动手的永远是你</b>。</p>
+  </div>
+  <div class="side ag">
+    <h3>🤖 Agent：自主循环</h3>
+    <div class="bubble u">帮我订周五去上海的最便宜机票，别太晚到</div>
+    <div class="bubble a">收到目标 → 自己拆解：先查航班比价，再查周五上海天气，权衡后下单（下面的 S3 演示器可以亲手点一遍）</div>
+    <div class="bubble a">✅ 已订好周五 15:00 出发 ¥720 的航班；上海当晚有小雨，已提醒你留足接驳时间。</div>
+    <p style="font-size:13px;color:#9a3412;margin:8px 0 0">📌 给一个目标，<b>它自己跑完全程</b>。</p>
+  </div>
+</div>
+<div class="card" style="font-size:14.5px">⚖️ <b>公平起见</b>：如今的 ChatGPT 网页版其实内置了联网、代码解释器等能力（它自己就在「Agent 化」）；我们这里对比的是<b>裸 LLM API</b> 和 <b>Agent 系统</b>的本质差异——<b>下一步由谁决定</b>。这个判据贯穿全题。</div>
+
+<!-- S2 图解 -->
+<h2><span class="no">S2</span>👀 一张图看懂：一问一答 vs 自主循环</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 350" width="100%" style="max-width:720px">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9ca3af"/></marker>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#ea580c"/></marker>
+  </defs>
+  <rect x="8" y="16" width="330" height="322" rx="16" fill="#eef2ff" stroke="#c7d2fe"/>
+  <text x="173" y="46" font-size="16" font-weight="800" text-anchor="middle" fill="#3730a3">ChatGPT：一问一答</text>
+  <g font-size="13" font-weight="700" text-anchor="middle">
+    <rect x="34" y="76" width="86" height="42" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="77" y="102" fill="#3730a3">🧑 你</text>
+    <rect x="148" y="76" width="96" height="42" rx="10" fill="#c7d2fe" stroke="#818cf8"/><text x="196" y="102" fill="#1e1b4b">🧠 LLM</text>
+    <rect x="272" y="76" width="52" height="42" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="298" y="95" fill="#3730a3">💬</text><text x="298" y="110" font-size="10.5" fill="#4c1d95">回答</text>
+    <line x1="122" y1="97" x2="146" y2="97" stroke="#9ca3af" stroke-width="2" marker-end="url(#a1)"/>
+    <line x1="246" y1="97" x2="270" y2="97" stroke="#9ca3af" stroke-width="2" marker-end="url(#a1)"/>
+    <rect x="34" y="152" width="86" height="42" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="77" y="178" fill="#3730a3">🧑 你又推</text>
+    <rect x="148" y="152" width="96" height="42" rx="10" fill="#c7d2fe" stroke="#818cf8"/><text x="196" y="178" fill="#1e1b4b">🧠 LLM</text>
+    <rect x="272" y="152" width="52" height="42" rx="10" fill="#fff" stroke="#a5b4fc"/><text x="298" y="171" fill="#3730a3">💬</text><text x="298" y="186" font-size="10.5" fill="#4c1d95">回答</text>
+    <line x1="122" y1="173" x2="146" y2="173" stroke="#9ca3af" stroke-width="2" marker-end="url(#a1)"/>
+    <line x1="246" y1="173" x2="270" y2="173" stroke="#9ca3af" stroke-width="2" marker-end="url(#a1)"/>
+  </g>
+  <text x="173" y="238" font-size="12.5" text-anchor="middle" fill="#4c1d95">每一轮都要你重新推</text>
+  <g font-size="12" text-anchor="middle" fill="#6366f1">
+    <rect x="63" y="262" width="220" height="52" rx="12" fill="#e0e7ff" stroke="#a5b4fc"/>
+    <text x="173" y="283">无记忆延续 · 无双手 · 被动响应</text>
+    <text x="173" y="302">（作为「大脑」单兵作战）</text>
+  </g>
+
+  <rect x="362" y="16" width="350" height="322" rx="16" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="537" y="46" font-size="16" font-weight="800" text-anchor="middle" fill="#9a3412">Agent：自主循环</text>
+  <rect x="472" y="62" width="130" height="36" rx="18" fill="#ede9fe" stroke="#a78bfa"/>
+  <text x="537" y="85" font-size="13" font-weight="800" text-anchor="middle" fill="#4c1d95">🎯 一个目标</text>
+  <line x1="537" y1="100" x2="500" y2="126" stroke="#ea580c" stroke-width="2" marker-end="url(#a2)"/>
+  <g font-size="13" font-weight="800" text-anchor="middle">
+    <rect x="428" y="130" width="118" height="42" rx="10" fill="#dbeafe" stroke="#60a5fa"/><text x="487" y="156" fill="#1e3a8a">💭 思考</text>
+    <rect x="588" y="188" width="112" height="42" rx="10" fill="#fef3c7" stroke="#f59e0b"/><text x="644" y="207" fill="#92400e">🔧 行动</text><text x="644" y="222" font-size="10" font-weight="600" fill="#b45309">调用工具</text>
+    <rect x="428" y="246" width="118" height="42" rx="10" fill="#dcfce7" stroke="#22c55e"/><text x="487" y="266" fill="#14532d">👁 观察</text><text x="487" y="281" font-size="10" font-weight="600" fill="#15803d">拿到结果</text>
+  </g>
+  <ellipse cx="548" cy="200" rx="52" ry="30" fill="#ffedd5" stroke="#ea580c" stroke-width="2"/>
+  <text x="548" y="196" font-size="13.5" font-weight="800" text-anchor="middle" fill="#9a3412">LLM 大脑</text>
+  <text x="548" y="212" font-size="10" text-anchor="middle" fill="#c2410c">决定下一步</text>
+  <g stroke="#ea580c" stroke-width="2" fill="none">
+    <path d="M 546 150 Q 590 158 610 186" marker-end="url(#a2)"/>
+    <path d="M 612 230 Q 600 252 548 260" marker-end="url(#a2)"/>
+    <path d="M 428 262 Q 400 220 450 160" marker-end="url(#a2)"/>
+  </g>
+  <g font-size="11.5" text-anchor="middle" fill="#9a3412" font-weight="700">
+    <rect x="626" y="120" width="76" height="30" rx="9" fill="#fef9c3" stroke="#facc15" stroke-dasharray="4 3"/><text x="664" y="139">🧰 工具库</text>
+    <rect x="368" y="188" width="76" height="30" rx="9" fill="#dcfce7" stroke="#4ade80" stroke-dasharray="4 3"/><text x="406" y="207">📚 记忆库</text>
+  </g>
+  <line x1="630" y1="135" x2="648" y2="186" stroke="#f59e0b" stroke-width="1.6" stroke-dasharray="4 3"/>
+  <line x1="444" y1="205" x2="428" y2="203" stroke="#22c55e" stroke-width="1.6" stroke-dasharray="4 3"/>
+  <rect x="588" y="292" width="112" height="34" rx="17" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="644" y="314" font-size="12.5" font-weight="800" text-anchor="middle" fill="#14532d">✅ 达成，停机</text>
+  <line x1="644" y1="232" x2="644" y2="290" stroke="#16a34a" stroke-width="2" marker-end="url(#a2)"/>
+</svg>
+<figcaption>图 1｜左：大脑单兵作战，每步靠你推。右：思考→行动→观察的循环（即 ReAct 范式），外挂工具与记忆，直到目标达成才停。</figcaption>
+</figure>
+
+<!-- S3 ReAct 演示 -->
+<h2><span class="no">S3</span>🎬 亲手点一遍：ReAct 循环步进演示</h2>
+<div class="flow">
+  <h3>🧪 订票 Agent 的内部黑盒（点「下一步」逐帧播放）</h3>
+  <p class="sub">Thought=思考 · Action=行动（调用工具） · Observation=观察（工具返回）。这个「思考-行动-观察」交替的范式叫 <b style="color:#c4b5fd">ReAct</b>（Reason + Act，Yao et al. 2022，几乎所有 Agent 的心跳）。</p>
+  <div class="frow">
+    <button id="fnext">▶ 下一步</button>
+    <button id="freset" style="background:#475569">↺ 重来</button>
+    <span id="fprog" style="font-size:13px;color:#94a3b8">第 0 / 11 步</span>
+  </div>
+  <div id="fsteps"></div>
+</div>
+
+<!-- S4 四模块 -->
+<h2><span class="no">S4</span>🚗 面试标准答案骨架：Agent 四模块（整车比喻）</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 265" width="100%" style="max-width:720px">
+  <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9ca3af"/></marker></defs>
+  <!-- car body -->
+  <rect x="210" y="92" width="310" height="66" rx="22" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="266" y="52" width="176" height="52" rx="18" fill="#cbd5e1" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="316" y="58" width="60" height="30" rx="6" fill="#ede9fe" stroke="#a78bfa"/>
+  <rect x="406" y="58" width="34" height="30" rx="6" fill="#dcfce7" stroke="#4ade80"/>
+  <circle cx="278" cy="172" r="33" fill="#1f2937"/><circle cx="278" cy="172" r="13" fill="#9ca3af"/>
+  <circle cx="458" cy="172" r="33" fill="#1f2937"/><circle cx="458" cy="172" r="13" fill="#9ca3af"/>
+  <rect x="218" y="106" width="42" height="32" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <rect x="316" y="156" width="104" height="13" rx="6" fill="#94a3b8"/>
+  <!-- callouts -->
+  <g font-size="12.5" font-weight="800">
+    <text x="52" y="118" fill="#1e3a8a" text-anchor="start">🧑 你 = 说出目的地</text>
+    <line x1="176" y1="122" x2="262" y2="92" stroke="#9ca3af" stroke-width="1.6" marker-end="url(#a3)"/>
+    <text x="60" y="52" fill="#1e3a8a">🧠 LLM 大脑 = 发动机</text>
+    <line x1="196" y1="58" x2="236" y2="104" stroke="#9ca3af" stroke-width="1.6" marker-end="url(#a3)"/>
+    <text x="354" y="34" fill="#5b21b6" text-anchor="middle">🗺️ 规划 = 导航仪</text>
+    <line x1="348" y1="40" x2="342" y2="56" stroke="#9ca3af" stroke-width="1.6" marker-end="url(#a3)"/>
+    <text x="588" y="52" fill="#166534">📼 记忆 = 油箱+行车记录仪</text>
+    <line x1="580" y1="58" x2="424" y2="70" stroke="#9ca3af" stroke-width="1.6" marker-end="url(#a3)"/>
+    <text x="624" y="196" fill="#92400e">🔧 工具 = 四个轮子</text>
+    <line x1="618" y1="188" x2="493" y2="170" stroke="#9ca3af" stroke-width="1.6" marker-end="url(#a3)"/>
+    <text x="368" y="236" fill="#374151" text-anchor="middle">🔁 Agent 循环 = 传动轴（把动力变成前进）</text>
+    <line x1="368" y1="222" x2="368" y2="176" stroke="#9ca3af" stroke-width="1.6" marker-end="url(#a3)"/>
+  </g>
+  <text x="360" y="258" font-size="12" text-anchor="middle" fill="#9ca3af">发动机再强也只提供动力；能自己跑到目的地的，是整车</text>
+</svg>
+<figcaption>图 2｜四模块框架出自 Lilian Weng《LLM Powered Autonomous Agents》——基模是发动机，Agent 是整车。</figcaption>
+</figure>
+
+<div class="mods">
+  <div class="mod" style="background:#eff6ff;border-color:#93c5fd"><b>🧠 大脑（LLM）</b><p>理解目标、推理决策的发动机。第 1 题说过：它有 token 级盲区、会一本正经胡说——所以需要下面三个模块补短板。</p></div>
+  <div class="mod" style="background:#faf5ff;border-color:#d8b4fe"><b>🗺️ 规划（Planning）</b><p>把大目标拆成步骤、决定下一步做什么、边走边调整路线（上面演示器里的 Thought 就是它在工作）。</p></div>
+  <div class="mod" style="background:#f0fdf4;border-color:#86efac"><b>📼 记忆（Memory）</b><p>短期=本次对话的上下文（工作台）；长期=存进向量库的偏好与经验（油箱+行车记录仪）。D3 专题。</p></div>
+  <div class="mod" style="background:#fffbeb;border-color:#fcd34d"><b>🔧 工具（Tools）</b><p>搜索、代码、API、数据库——模型的双手。Function Calling 是「伸手」的动作，MCP 是「标准插座」（D2 / D10 专题）。</p></div>
+</div>
+
+<!-- S5 光谱 -->
+<h2><span class="no">S5</span>📊 判别神器：自主性光谱</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 160" width="100%" style="max-width:720px">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#cbd5e1"/><stop offset="0.5" stop-color="#fdba74"/><stop offset="1" stop-color="#ea580c"/>
+    </linearGradient>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#ea580c"/></marker>
+  </defs>
+  <rect x="46" y="64" width="600" height="26" rx="13" fill="url(#g1)"/>
+  <line x1="46" y1="77" x2="672" y2="77" stroke="none"/>
+  <line x1="660" y1="34" x2="700" y2="34" stroke="#ea580c" stroke-width="2.5" marker-end="url(#a4)"/>
+  <text x="536" y="28" font-size="12.5" font-weight="700" fill="#c2410c">自主性 / 成本 / 风险 ↑</text>
+  <g text-anchor="middle">
+    <circle cx="130" cy="77" r="8" fill="#fff" stroke="#475569" stroke-width="3"/>
+    <text x="130" y="50" font-size="14.5" font-weight="800" fill="#334155">ChatGPT</text>
+    <text x="130" y="116" font-size="12" fill="#64748b">人推一步动一步</text>
+    <circle cx="350" cy="77" r="8" fill="#fff" stroke="#d97706" stroke-width="3"/>
+    <text x="350" y="50" font-size="14.5" font-weight="800" fill="#b45309">Workflow</text>
+    <text x="350" y="116" font-size="12" fill="#b45309">流程人写死，模型填空</text>
+    <circle cx="570" cy="77" r="8" fill="#fff" stroke="#dc2626" stroke-width="3"/>
+    <text x="570" y="50" font-size="14.5" font-weight="800" fill="#b91c1c">Agent</text>
+    <text x="570" y="116" font-size="12" fill="#b91c1c">模型自己决定下一步</text>
+  </g>
+  <text x="360" y="148" font-size="12" text-anchor="middle" fill="#9ca3af">判据只有一个：下一步由谁决定（Anthropic《Building Effective Agents》的权威区分）</text>
+</svg>
+<figcaption>图 3｜面试被追问「Workflow 和 Agent 到底差在哪」时，画这条轴就赢了。</figcaption>
+</figure>
+
+<!-- S6 追问链 -->
+<h2><span class="no">S6</span>🔁 面试官追问链（点开前先自己答）</h2>
+
+<details class="l1"><summary>L1 · 「用你自己的话说，什么是 AI Agent？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：回想第 1 题「数 r」的修复方案</summary><div class="body" style="padding:8px 4px 12px">让模型调用工具去数——那如果不止数数，而是订票、写报告、做研究呢？把「调工具」变成一个循环会怎样？</div></details>
+    <p><b>答案要点</b>：以 LLM 为大脑的自主系统——接收目标后，自己<b>规划</b>步骤、<b>调用工具</b>行动、<b>观察</b>结果、循环迭代直到完成。四模块：大脑 / 规划 / 记忆 / 工具。一句话判据：<b>下一步做什么由模型决定</b>。</p>
+  </div>
+</details>
+
+<details class="l2"><summary>L2 · 「为什么要循环？让模型一次生成完不好吗？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：十步任务，每步 95% 正确率，整体正确率是多少？</summary><div class="body" style="padding:8px 4px 12px">0.95 的 10 次方 ≈ 0.6——六成。复杂任务一步到位有多脆弱？</div></details>
+    <p><b>答案要点</b>：一步全对的概率是各步正确率的<b>连乘</b>，任务越复杂衰减越快；拆步 + 每步观察反馈，模型可以<b>中途发现并纠正错误</b>（就像演示器里查完天气改订航班）。代价是更慢更贵——这正是 Agent 的 trade-off，也是「什么时候不该用 Agent」的答案种子。</p>
+  </div>
+</details>
+
+<details class="l3"><summary>L3 · 「如果 Agent 不设停止条件、不限工具权限，会发生什么？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：一个永不满足、又有你支付密码的循环</summary><div class="body" style="padding:8px 4px 12px">想想死循环烧 token、误删数据、错误下单——谁来踩刹车？</div></details>
+    <p><b>答案要点</b>：① 无限循环烧钱（每圈都在耗 token）；② 高危动作不可逆（删库、转账、发邮件）。工程护栏：<b>最大步数、预算上限、高危动作人工确认、沙箱隔离、权限最小化</b>。这一问直接通向 D20 的 Agent 安全与评测——面试官在试探你的工程风险意识。</p>
+  </div>
+</details>
+
+<!-- S7 举一反三 -->
+<h2><span class="no">S7</span>🕸️ 举一反三：这一题是整个 Agent 知识地图的目录</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 340" width="100%" style="max-width:720px">
+  <ellipse cx="360" cy="170" rx="78" ry="42" fill="#fef3c7" stroke="#ea580c" stroke-width="2.5"/>
+  <text x="360" y="165" font-size="21" font-weight="800" text-anchor="middle" fill="#7c2d12">Agent</text>
+  <text x="360" y="187" font-size="11.5" text-anchor="middle" fill="#c2410c">今天只学了 1/6</text>
+  <g stroke="#d6d3d1" stroke-width="1.8">
+    <line x1="305" y1="140" x2="185" y2="86"/>
+    <line x1="415" y1="140" x2="535" y2="86"/>
+    <line x1="300" y1="185" x2="180" y2="230"/>
+    <line x1="420" y1="185" x2="540" y2="230"/>
+    <line x1="360" y1="212" x2="360" y2="262"/>
+  </g>
+  <g>
+    <rect x="52" y="34" width="212" height="70" rx="12" fill="#dbeafe" stroke="#60a5fa"/>
+    <text x="158" y="62" font-size="14.5" font-weight="800" text-anchor="middle" fill="#1e3a8a">ReAct 范式（D4 深入）</text>
+    <text x="158" y="86" font-size="11.5" text-anchor="middle" fill="#3b5bdb">思考-行动-观察 · 阿里/美团考</text>
+    <rect x="456" y="34" width="212" height="70" rx="12" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="562" y="62" font-size="14.5" font-weight="800" text-anchor="middle" fill="#92400e">Function Calling（D2）</text>
+    <text x="562" y="86" font-size="11.5" text-anchor="middle" fill="#b45309">模型怎么伸手拿工具 · 腾讯/字节考</text>
+    <rect x="46" y="212" width="212" height="70" rx="12" fill="#dcfce7" stroke="#4ade80"/>
+    <text x="152" y="240" font-size="14.5" font-weight="800" text-anchor="middle" fill="#14532d">MCP 协议（D10）</text>
+    <text x="152" y="264" font-size="11.5" text-anchor="middle" fill="#15803d">工具的 USB-C · 腾讯后端真题</text>
+    <rect x="462" y="212" width="212" height="70" rx="12" fill="#ede9fe" stroke="#a78bfa"/>
+    <text x="568" y="240" font-size="14.5" font-weight="800" text-anchor="middle" fill="#4c1d95">多 Agent 协作（D16）</text>
+    <text x="568" y="264" font-size="11.5" text-anchor="middle" fill="#7c3aed">团队分工 · 海外热门</text>
+    <rect x="264" y="262" width="192" height="62" rx="12" fill="#fee2e2" stroke="#f87171"/>
+    <text x="360" y="288" font-size="14.5" font-weight="800" text-anchor="middle" fill="#991b1b">评测与安全（D20）</text>
+    <text x="360" y="310" font-size="11.5" text-anchor="middle" fill="#b91c1c">怎么证明它靠谱 · 高频收尾问</text>
+  </g>
+</svg>
+<figcaption>图 4｜今天这题答完，面试官的后续 5 个方向你都已经有了路标——这就是「开场首题」的价值。</figcaption>
+</figure>
+
+<!-- S8 发散 -->
+<h2><span class="no">S8</span>🌌 发散思考（没有标准答案，值钱的是你的推理）</h2>
+<details><summary>🌱 发散 1（找反例）：找一个「不该用 Agent」的场景，并说明为什么</summary>
+  <div class="body">
+    <p>参考思路：高频率、强确定性的流程（退款审批流水线、每日报表生成）——路径固定就不需要模型自决，用 <b>Workflow</b> 更稳、更便宜、更好排查；Agent 的自主性在开放路径任务里才是资产，在固定路径里是风险。「该不该用 Agent」这个判断本身，就是 Anthropic 那篇文章的考点，也是产品经理和工程师天天吵的话题。</p>
+  </div>
+</details>
+<details><summary>🌱 发散 2（换场景）：给「点外卖」设计一个 Agent——列出 3 个工具、2 类记忆、1 条护栏</summary>
+  <div class="body">
+    <p>参考设计：工具 = 查菜单/比价 API、下单 API、支付接口；记忆 = 长期（口味偏好、常点店铺）+ 短期（本次对话：今天几个人吃、预算）；护栏 = <b>支付前必须人工确认</b>（对应 L3 的不可逆动作）。对照检查你自己的设计——少了记忆还是少了护栏？<b>多数人第一版都漏护栏，这就是产品直觉的训练点。</b></p>
+  </div>
+</details>
+
+<!-- S9 quiz -->
+<h2><span class="no">S9</span>✅ 自测：4 道题，点选项立即判分</h2>
+<div>
+<div class="quiz" data-quiz>
+  <p class="qq">1. Agent 与 ChatGPT 最本质的区别是什么？</p>
+  <button class="opt">A. 参数量更大</button>
+  <button class="opt">B. 能接入互联网</button>
+  <button class="opt" data-ok data-why="Agent 的定义特征是自主性：模型自己决定下一步做什么、何时停止。联网、大小都是可加可不加的配置，不是本质。">C. 自主循环决定下一步</button>
+  <button class="opt">D. 回答内容更长</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">2. Agent 四大模块中不包含哪一个？</p>
+  <button class="opt">A. 规划</button>
+  <button class="opt">B. 记忆</button>
+  <button class="opt">C. 工具</button>
+  <button class="opt" data-ok data-why="四模块 = LLM 大脑 + 规划 + 记忆 + 工具（Lilian Weng 框架）；知识蒸馏是模型压缩训练技术，与 Agent 架构无关。">D. 知识蒸馏</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">3. Agent 调用航班查询 API，属于哪个模块的动作？</p>
+  <button class="opt">A. 规划模块</button>
+  <button class="opt" data-ok data-why="调 API 是「行动 = 使用工具」：规划是决定接下来做什么，动作是真正去做——ReAct 里的 Act。">B. 工具模块的行动</button>
+  <button class="opt">C. 记忆模块</button>
+  <button class="opt">D. 大脑的推理</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">4. ReAct 这个词的本意是哪两个词的组合？</p>
+  <button class="opt">A. Reading + Acting</button>
+  <button class="opt" data-ok data-why="ReAct = Reason + Act，思考与行动交替（Yao et al., arXiv:2210.03629）——上面订票演示器放的就是它的心跳。">B. Reasoning + Acting</button>
+  <button class="opt">C. React 前端框架</button>
+  <button class="opt">D. Recall + Accept</button>
+  <p class="fb"></p>
+</div>
+<p class="score">得分：<span id="score">0</span> / 4　<span id="scoremsg"></span></p>
+</div>
+
+<!-- S10 知识卡 -->
+<h2><span class="no">S10</span>📇 今日知识卡（点击翻面，复盘日要刷）</h2>
+<div class="flip" id="flip1" onclick="this.classList.toggle('on')">
+  <div class="inner">
+    <div class="face front">
+      <div class="big">「Agent = 会自己决定<br>下一步的 LLM 循环。」</div>
+      <div class="hint">📇 点击卡片翻面 → 考点 / 易错 / 出处</div>
+    </div>
+    <div class="face back">
+      <div><b>考点</b>：四模块（大脑/规划/记忆/工具）· 与 Chatbot、Workflow 的区别 · ReAct 循环 · 停止条件与护栏<br>
+      <b>易错</b>：把「带联网按钮的 ChatGPT」就叫 Agent（缺自主规划）；把 Workflow 当 Agent（看流程谁写死）<br>
+      <b>出处</b>：Lilian Weng 2023 · Anthropic《Building Effective Agents》· ReAct（arXiv:2210.03629）</div>
+    </div>
+  </div>
+</div>
+
+<!-- S11 答案骨架 -->
+<h2><span class="no">S11</span>🎤 60 秒面试答案（把今天的理解压成一段话）</h2>
+<div class="qa">
+  <div class="who">如果你在面试里被问到这道题，可以这样答：</div>
+  <div class="say">「Agent 是以 LLM 为大脑的自主系统：接收目标后自己规划步骤、调用工具、观察反馈、循环迭代直到完成，四个模块是大脑、规划、记忆、工具。它和 ChatGPT 的区别在自主性——chatbot 是人推一步动一步，Agent 是目标驱动自己跑完全程；和 Workflow 的区别在流程由谁决定——workflow 是人写死的代码路径，agent 是模型自决。典型范式是 ReAct：思考-行动-观察交替。工程上必须配最大步数、预算、高危动作人工确认这类护栏。」</div>
+</div>
+
+<!-- S12 串联 -->
+<div class="linkbox">
+  🔗 <b>今天两道题其实是一道题</b>：第 1 题证明模型有「看不见块内字母」的盲区，修复方案是交给工具；第 2 题给「模型 + 工具 + 循环」起了名字——Agent。<b>基模是发动机，烧的是 token；Agent 是整车，靠的是工具。</b>接下来 27 天，我们两条线并行把它拆透。
+</div>
+
+<div class="next">
+  <b>📍 明日 Day 02 预告</b>：基模线「上下文窗口：128k 到底能装几本书？」× Agent 线「Function Calling：模型怎么'伸手'拿工具？」——记忆容量 × 双手，两个方向各进一步。
+</div>
+
+<div class="card refs">
+  <b>📚 今日精读（按顺序，共约 20 分钟）</b>
+  <ol style="margin:8px 0 0;padding-left:22px">
+    <li><a href="https://lilianweng.github.io/posts/2023-06-23-agent/" target="_blank">Lilian Weng: LLM Powered Autonomous Agents</a> —— 四模块框架出处，精读开头图即可</li>
+    <li><a href="https://www.anthropic.com/research/building-effective-agents" target="_blank">Anthropic: Building Effective Agents</a> —— Workflow vs Agent 的权威区分</li>
+    <li><a href="https://arxiv.org/abs/2210.03629" target="_blank">ReAct 论文</a> —— 只看摘要和图 1，感受「心跳」</li>
+    <li><a href="https://github.com/microsoft/ai-agents-for-beginners" target="_blank">microsoft/ai-agents-for-beginners</a> —— 第 1 课（有官方中文翻译）对照今天内容</li>
+  </ol>
+</div>
+
+<!-- 补课笔记 -->
+<h2>📎 补课笔记 · Day 01 追问实录（2026-09-23）</h2>
+<div class="card">
+  <p><b>追问</b>：「为什么循环要比一步生成好？」「MCP 和 Function Calling 什么关系？」——一句话版：循环好，一半因为<b>概率连乘塌方</b>（观察纠错把单步正确率拉高），一半因为 <b>Observation 带回新信息</b>（实时票价这类事实，一步生成编不出来）；FC 与 MCP 不竞争——<b>FC 是模型侧的「伸手能力」，MCP 是工具侧的「USB-C 插座标准」</b>。</p>
+</div>
+<div class="card">
+  <b>🔬 实测：一步生成 vs 循环+观察（解析式 + 10 万次蒙特卡洛模拟）</b>
+<pre style="background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px;overflow:auto;font-size:13px;line-height:1.9">假设：每步正确率 p=95%；出错时 90% 能被观察发现，重试一次
+步数  |  一步生成 p^N  |  循环+观察 q^N
+   1  |      95.0%     |      99.3%
+   5  |      77.4%     |      96.4%
+  10  |      59.9%     |      93.0%     ← 十步任务，成功率差 33 个百分点
+  20  |      35.8%     |      86.5%     ← 任务越长，塌方越惨
+
+蒙特卡洛模拟（10 步任务 × 100,000 次）：
+  一步生成 成功率 ≈ 59.8%    循环+观察 成功率 ≈ 93.0%</pre>
+  <p style="font-size:14px;margin-bottom:0">读法：一步生成的成功率是各步正确率的<b>连乘</b>，步数一多就塌方；循环每步「走完睁眼看一眼」，把单步正确率从 95% 拉到 99.3%，连乘的底数变了，整条曲线就被抬起来了。<b>代价</b>：更慢更贵、可能死循环——所以需要最大步数/预算/高危确认这些护栏（呼应 L3 追问）。</p>
+</div>
+<div class="card">
+  <b>💡 循环好的第二个原因：Observation 是「新信息」，不只是纠错</b>
+  <p style="font-size:14.5px;margin-bottom:0">回看 S3 演示器第 6 步：模型查出「周五上海小雨」——这个事实它<b>不可能一步生成出来</b>（不在参数里），只能通过调工具拿回来。所以循环的本质是：每圈把一个「模型盲区」变成「已知事实」，再基于全部事实做下一步决策。这正是第 1 题「数 r 交给代码」的放大版：<b>盲区交给工具，工具靠循环反复使用</b>。</p>
+</div>
+<div class="card">
+  <b>🔌 Function Calling vs MCP：不同层，是配合不是竞争</b>
+  <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+    <tr>
+      <th style="border:1px solid #9ca3af;padding:6px 10px"></th>
+      <th style="border:1px solid #9ca3af;padding:6px 10px">Function Calling</th>
+      <th style="border:1px solid #9ca3af;padding:6px 10px">MCP（Model Context Protocol）</th>
+    </tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px"><b>是什么</b></td><td style="border:1px solid #9ca3af;padding:6px 10px">模型的<b>能力</b>：决定「伸手」并发出结构化调用（工具名+参数 JSON）</td><td style="border:1px solid #9ca3af;padding:6px 10px">开放的<b>协议</b>：工具统一接入标准——「AI 工具的 USB-C」</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px"><b>谁定的</b></td><td style="border:1px solid #9ca3af;padding:6px 10px">各家模型厂商，随 API 提供</td><td style="border:1px solid #9ca3af;padding:6px 10px">Anthropic 2024-11 开源，行业共建</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px"><b>解决什么</b></td><td style="border:1px solid #9ca3af;padding:6px 10px">模型怎么选工具、怎么传参数、程序怎么可靠接住</td><td style="border:1px solid #9ca3af;padding:6px 10px">工具怎么被发布/发现/复用：N 个应用 × M 个工具的 N×M 对接 → 写一次 MCP Server 处处可用（N+M）</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px"><b>没有它</b></td><td style="border:1px solid #9ca3af;padding:6px 10px">模型只能输出自然语言，代码无法可靠解析执行</td><td style="border:1px solid #9ca3af;padding:6px 10px">每个应用为每个工具手写胶水代码，工具成孤岛</td></tr>
+    <tr><td style="border:1px solid #9ca3af;padding:6px 10px"><b>一句话</b></td><td style="border:1px solid #9ca3af;padding:6px 10px">手的动作</td><td style="border:1px solid #9ca3af;padding:6px 10px">插座的标准</td></tr>
+  </table>
+  <p style="font-size:14px;margin-bottom:0">两者在同一趟调用里接力：<b>MCP 把工具接入并列给模型看 → 模型用 FC 机制选择工具、发出参数 → MCP Server 执行 → 结果作为 Observation 回给模型</b>。D10 会专门拆 MCP 的内部结构。</p>
+</div>
+
+<div class="askme">💬 <b>卡住了？随时回到对话里直接问我</b>：「为什么循环要比一步生成好？」「MCP 和 Function Calling 什么关系？」——任何不懂的地方都可以追问，追问本身就是最好的学习。</div>
+
+<nav class="pager">
+  <a href="0001-token-strawberry.html">← 上一题：strawberry 数 r</a>
+  <a href="../index.html">🏠 主页</a>
+  <a href="../reference/0001-28day-roadmap.html">28 天路线图 →</a>
+</nav>
+
+</div>
+
+<script src="../reference/lianmo-progress.js"></script>
+<script>
+LIANMO.visit('L0002');
+LIANMO.autoTrack('L0002');
+// ReAct 步进演示
+var STEPS=[
+ ["goal","🎯 目标","用户：「帮我订周五去上海的最便宜机票，别太晚到。」"],
+ ["think","💭 Thought 思考","需要先知道有哪些航班和价格——我没有实时数据，应该先调用查航班工具。"],
+ ["act","🔧 Action 行动","调用工具：查航班(周五, 北京→上海)"],
+ ["obs","👁 Observation 观察","返回 3 个航班：19:30 到达 ¥680（最便宜）｜15:00 到达 ¥720｜12:00 到达 ¥890。"],
+ ["think","💭 Thought 思考","¥680 最便宜但 19:30 才到，用户说「别太晚到」。先查一下周五上海天气，看看晚上航班有没有延误风险再定。"],
+ ["act","🔧 Action 行动","调用工具：查天气(上海, 周五)"],
+ ["obs","👁 Observation 观察","周五上海小雨，夜间航班延误概率偏高。"],
+ ["think","💭 Thought 思考","权衡：便宜 ¥40 但大概率延误到很晚，不符合「别太晚到」；改订 15:00 的 ¥720 更稳妥。"],
+ ["act","🔧 Action 行动","调用工具：下单订票(15:00 航班, ¥720)"],
+ ["obs","👁 Observation 观察","出票成功，已发送行程短信。"],
+ ["done","✅ Final Answer","已订好周五 15:00 出发、¥720 的航班。注意：上海当天有小雨，我提醒你留足地面接驳时间。——目标达成，循环停止。"]
+];
+var cur=0;
+function renderProg(){document.getElementById('fprog').textContent='第 '+cur+' / '+STEPS.length+' 步';}
+document.getElementById('fnext').onclick=function(){
+  if(cur>=STEPS.length)return;
+  var s=STEPS[cur];cur++;
+  var d=document.createElement('div');
+  d.className='fstep fs-'+s[0];
+  d.innerHTML='<span class="role">'+s[1]+'</span>'+s[2];
+  document.getElementById('fsteps').appendChild(d);
+  renderProg();
+  if(cur===STEPS.length){
+    this.disabled=true;this.textContent='🎉 播放完毕';
+    var t=document.createElement('div');t.className='fstep fs-done';
+    t.innerHTML='<span class="role">🎓 你刚亲眼看完一次 ReAct 循环</span>Reason（思考）+ Act（行动）交替，观察结果反馈回下一轮思考——注意第 5 步：它因为「别太晚到」这个约束主动多查了一次天气并改了决策。这就是「自主」。';
+    document.getElementById('fsteps').appendChild(t);
+  }
+};
+document.getElementById('freset').onclick=function(){
+  cur=0;document.getElementById('fsteps').innerHTML='';
+  var b=document.getElementById('fnext');b.disabled=false;b.textContent='▶ 下一步';
+  renderProg();
+};
+renderProg();
+// quiz 即时反馈
+var total=document.querySelectorAll('[data-quiz]').length,got=0,done=0;
+document.querySelectorAll('[data-quiz]').forEach(function(q){
+  var fb=q.querySelector('.fb'),okBtn=q.querySelector('[data-ok]');
+  q.querySelectorAll('.opt').forEach(function(b){
+    b.onclick=function(){
+      q.querySelectorAll('.opt').forEach(function(o){o.classList.remove('right','wrong')});
+      if(b.hasAttribute('data-ok')){b.classList.add('right');fb.className='fb ok';fb.textContent='✅ 正确！'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;got++;done++;}}
+      else{b.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 再想想：'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;done++;}}
+      document.getElementById('score').textContent=got;
+      var m=document.getElementById('scoremsg');
+      if(done===total){LIANMO.quiz('L0002',got,total);var _r=LIANMO.get('L0002')||{};m.textContent=(got===total?'🏆 全对，Agent 第一课稳了！':(got>=total-1?'👍 很稳，错的那道回看一眼解析':'📖 建议回看 S2 与 S5 再试一次（刷新页面可重做）'))+'　📅 已自动打卡 '+(_r.doneDate||'');}
+    };
+  });
+});
+</script>
+</body>
+</html>

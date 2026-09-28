@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📇 知识卡册（集卡进度）</title>
+<style>
+  :root{--ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#fff;--blue:#2563eb;--purple:#7c3aed}
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.7;margin:0}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#2563eb;border-color:#93c5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#60a5fa;border-color:#2f4368}
+  }
+  h1{font-size:26px;border-bottom:3px solid var(--ink);padding-bottom:12px}
+  .sub{color:var(--muted);font-size:14.5px}
+  .bar{background:#e5e7eb;border-radius:999px;height:22px;overflow:hidden;margin:14px 0 6px}
+  .bar>div{height:100%;background:linear-gradient(90deg,#f59e0b,#ef4444);border-radius:999px;width:8%;transition:width .5s}
+  .barlabel{font-size:13px;color:var(--muted)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px;margin-top:22px}
+  .flip{perspective:1000px;height:230px;cursor:pointer}
+  .inner{position:relative;width:100%;height:100%;transition:transform .55s;transform-style:preserve-3d}
+  .flip.on .inner{transform:rotateY(180deg)}
+  .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:18px;padding:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .front{background:linear-gradient(135deg,#ede9fe,#dbeafe);border:2px solid #c4b5fd}
+  .front.blue{background:linear-gradient(135deg,#fef3c7,#ffedd5);border-color:#fdba74}
+  .front .big{font-size:18.5px;font-weight:800;line-height:1.65}
+  .face .hint{font-size:12px;color:var(--muted);margin-top:12px}
+  .back{background:#fff;border:2px solid var(--ink);transform:rotateY(180deg);font-size:13.5px;line-height:1.8;text-align:left;justify-content:flex-start;overflow:auto}
+  .back b{color:var(--purple)}
+  .front.blue ~ .inner .back b{color:#c2410c}
+  .tag{font-size:11.5px;font-weight:700;background:rgba(255,255,255,.7);border-radius:6px;padding:2px 10px;margin-bottom:10px}
+  .rule{background:#fff;border:1px solid #e7e5df;border-radius:14px;padding:16px 20px;font-size:14px;margin:18px 0}
+  a{color:var(--blue);text-decoration:none}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{color-scheme:dark;--ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;--blue:#60a5fa;--purple:#a78bfa}
+    .bar{background:#34383e}
+    .front{background:linear-gradient(135deg,#282041,#1c2a44);border-color:#3f3160}
+    .front.blue{background:linear-gradient(135deg,#2e2510,#3a1c1c);border-color:#57411a}
+    .tag{background:rgba(0,0,0,.35)}
+    .back{background:var(--card)}
+    .rule{border-color:#34383e}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="0003-course-archive.html">🗂️ 课程归档</a>
+</nav>
+<h1>📇 知识卡册</h1>
+<p class="sub">每做完一题集一张卡。复盘日（D7/D14/D21/D28）只刷卡不做新题——点击卡片翻面，先看正面回忆，再翻面对答案。集齐约 50 张即完成知识地图。</p>
+
+<div class="bar"><div id="pbar"></div></div>
+<p class="barlabel" id="plabel">集卡进度：4 / 50（Day 02）</p>
+
+<div class="cards">
+  <div class="flip" onclick="this.classList.toggle('on')">
+    <div class="inner">
+      <div class="face front">
+        <div class="tag">CARD #1 · 基模 · Day 01</div>
+        <div class="big">「模型的世界由 token 组成，<br>它看不见 token 里的字母。」</div>
+        <div class="hint">📇 点击翻面 → 考点 / 易错 / 出处</div>
+      </div>
+      <div class="face back">
+        <div><b>考点</b>：token 定义 · BPE 直觉 · 中文 token 成本 · 按 token 计费 · 上下文窗口单位<br><br>
+        <b>易错</b>：以为模型逐字符阅读；以为「提示仔细点」能修复；把 token 等同于「字」或「词」<br><br>
+        <b>出处</b>：OpenAI Tokenizer 文档 · 2024 strawberry 热梗 · wdndev/llm_interview_note</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flip" onclick="this.classList.toggle('on')">
+    <div class="inner">
+      <div class="face front blue">
+        <div class="tag">CARD #2 · AGENT · Day 01</div>
+        <div class="big">「Agent = 会自己决定<br>下一步的 LLM 循环。」</div>
+        <div class="hint">📇 点击翻面 → 考点 / 易错 / 出处</div>
+      </div>
+      <div class="face back">
+        <div><b>考点</b>：四模块（大脑/规划/记忆/工具）· 与 Chatbot、Workflow 的区别 · ReAct 循环 · 停止条件与护栏<br><br>
+        <b>易错</b>：把「带联网按钮的 ChatGPT」就叫 Agent；把 Workflow 当 Agent（判据：流程谁写死）<br><br>
+        <b>出处</b>：Lilian Weng 2023 · Anthropic《Building Effective Agents》· ReAct arXiv:2210.03629</div>
+      </div>
+    </div>
+  </div>
+  <div class="flip" onclick="this.classList.toggle('on')">
+    <div class="inner">
+      <div class="face front">
+        <div class="tag">CARD #3 · 基模 · Day 02</div>
+        <div class="big">「上下文窗口 = 一次性工作记忆：<br>装 token、挤输入输出、<br>擦掉就没了。」</div>
+        <div class="hint">📇 点击翻面 → 考点 / 易错 / 出处</div>
+      </div>
+      <div class="face back">
+        <div><b>考点</b>：定义（输入+输出共用）· 128k ≈ 6~10 万汉字 · ≠参数量 · Lost in the Middle（U 形）· 超窗三策略 · 长上下文 vs RAG 互补<br><br>
+        <b>易错</b>：当永久记忆（跨对话靠产品层）；当参数量；以为窗口越大越好（成本/延迟/稀释）<br><br>
+        <b>出处</b>：各厂通用题 · 阿里「200 万 token 了 RAG 还有何意义」· arXiv:2307.03172</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flip" onclick="this.classList.toggle('on')">
+    <div class="inner">
+      <div class="face front blue">
+        <div class="tag">CARD #4 · AGENT · Day 02</div>
+        <div class="big">「模型点菜（输出调用 JSON），<br>你的厨房做菜（执行），<br>端回来它再尝一口说话。」</div>
+        <div class="hint">📇 点击翻面 → 考点 / 易错 / 出处</div>
+      </div>
+      <div class="face back">
+        <div><b>考点</b>：五步闭环 · 意图/执行分离（模型从不执行）· schema 三件套 · 参数幻觉三防（枚举/必填/二次校验）· 错误回喂自纠 · FC 靠 SFT 轨迹数据训出<br><br>
+        <b>易错</b>：以为模型自己执行了函数；description 随便写；失败就盲目重试不回喂<br><br>
+        <b>出处</b>：OpenAI FC Guide（2023-06）· 美团「FC 三连炮」· 小林笔记 16 题 · Anthropic Tool Use</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="rule">🎮 <b>刷卡规则</b>：看正面 → 出声复述考点 → 翻面核对。三条都能说清 = 通过；说不清的那条，回到对应课程重看对应小节。卡牌会在每天的学习中自动加入本册。</div>
+
+<p style="font-size:14px"><a href="../index.html">← 返回学习主页</a>　｜　<a href="0001-28day-roadmap.html">查看 28 天路线图 →</a></p>
+</div>
+</body>
+</html>

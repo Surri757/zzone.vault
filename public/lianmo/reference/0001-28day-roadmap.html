@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>28 天真题路线图</title>
+<style>
+  :root{--ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#fff;--blue:#2563eb;--blue-bg:#dbeafe;--green:#16a34a;--green-bg:#dcfce7;--amber:#b45309;--amber-bg:#fef3c7;--purple:#7c3aed;--purple-bg:#ede9fe}
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.7;margin:0}
+  .wrap{max-width:980px;margin:0 auto;padding:36px 22px 80px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#2563eb;border-color:#93c5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#60a5fa;border-color:#2f4368}
+  }
+  h1{font-size:26px;border-bottom:3px solid var(--ink);padding-bottom:12px}
+  .sub{color:var(--muted);font-size:14.5px}
+  h2{font-size:18px;margin:34px 0 12px}
+  .week{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 20px;margin:14px 0}
+  .week h3{margin:0 0 4px;font-size:16.5px}
+  .week .ratio{font-size:12.5px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px;margin-top:14px}
+  .day{border:1.5px solid #e5e7eb;border-radius:12px;padding:10px 10px 12px;background:#fafaf9;min-height:108px}
+  .day .dn{font-size:12px;font-weight:800;color:var(--muted);letter-spacing:1px}
+  .day.today{border:2.5px solid var(--amber);background:var(--amber-bg);box-shadow:0 2px 10px rgba(245,158,11,.25)}
+  .day.done{border:2.5px solid #4ade80;background:#f0fdf4;box-shadow:0 2px 10px rgba(74,222,128,.2)}
+  /* ===== 进度仪表盘 ===== */
+  .pdash{background:#fff;border:1.5px solid #e7e5df;border-radius:16px;padding:18px 20px;margin:16px 0}
+  .pcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+  .pc{border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;text-align:center;background:#fafaf9}
+  .pc b{display:block;font-size:22px;line-height:1.3;color:#15803d}
+  .pc span{font-size:11.5px;color:var(--muted)}
+  .pbarwrap{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+  .pbar{flex:1;min-width:180px;height:18px;background:#e5e7eb;border-radius:999px;overflow:hidden}
+  .pbar>div{height:100%;width:0;background:linear-gradient(90deg,#f59e0b,#ef4444);border-radius:999px;transition:width .5s}
+  #pPct{font-size:14px;font-weight:800;color:#b45309}
+  .psince{font-size:12px;color:var(--muted)}
+  .pnext{font-size:14.5px;font-weight:700;margin:12px 0 6px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:8px 14px}
+  .pnext a{color:#b45309;text-decoration:underline}
+  .ptip{font-size:12px;color:var(--muted);margin:4px 0 10px}
+  .ptools{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+  .ptools button{font-family:inherit;font-size:12.5px;font-weight:700;background:#fff;border:1px solid #d1d5db;border-radius:999px;padding:5px 14px;cursor:pointer;color:#374151}
+  .ptools button:hover{border-color:#2563eb;color:#2563eb}
+  .ptools textarea{flex:1;min-width:220px;font-family:Consolas,monospace;font-size:11.5px;border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;resize:vertical;background:#fafaf9;color:#374151}
+  .line .lm-mark{font-weight:800}
+  .line.lm-done{outline:2px solid #4ade80;outline-offset:1px}
+  .line.lm-see{outline:2px dashed #fbbf24;outline-offset:1px}
+  .line .lm-date{font-size:10px;opacity:.85;margin-left:3px}
+  @media (prefers-color-scheme: dark){
+    .pdash{background:var(--card);border-color:#34383e}
+    .pc{background:#202329;border-color:#3a3f47}
+    .pc b{color:#4ade80}
+    .pbar{background:#34383e}
+    .ptools button{background:#22252b;border-color:#3a3f47;color:#cbd5e1}
+    .ptools textarea{background:#22252b;border-color:#3a3f47;color:#e2e8f0}
+    .pnext{background:#2e2310;border-color:#57411a}
+    .pnext a{color:#fbbf24}
+    #pPct{color:#fbbf24}
+  }
+  .day.review{border-style:dashed;border-color:#a78bfa;background:var(--purple-bg)}
+  .line{display:block;font-size:11.8px;border-radius:7px;padding:3px 7px;margin-top:5px;line-height:1.45}
+  .line.fm{background:var(--blue-bg);color:#1e40af}
+  .line.ag{background:#ffedd5;color:#9a3412}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin:12px 0;color:var(--muted)}
+  .flowbar{display:flex;border-radius:12px;overflow:hidden;font-size:12.5px;color:#fff;text-align:center;margin:10px 0}
+  .flowbar div{padding:10px 4px}
+  .note{background:#fffbeb;border:1.5px dashed #fcd34d;border-radius:12px;padding:12px 18px;font-size:14px;margin:16px 0}
+  a{color:var(--blue);text-decoration:none}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{color-scheme:dark;--ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;--blue:#60a5fa;--blue-bg:#1c2a44;--green:#4ade80;--amber:#fbbf24;--amber-bg:#2e2310;--purple:#a78bfa;--purple-bg:#282041}
+    .week{border-color:#34383e}
+    .day{background:#202329;border-color:#3a3f47}
+    .day.done{background:#122a1d;border-color:#24523a}
+    .line.fm{color:#93c5fd}
+    .line.ag{background:#33270f;color:#fdba74}
+    .note{background:#2a2212;border-color:#57411a}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="0003-course-archive.html">🗂️ 课程归档</a>
+</nav>
+<h1>🗺️ 28 天真题路线图</h1>
+<p class="sub">每天 2 题（1 道基座模型 × 1 道 Agent），基模:Agent 配比从 7:3 渐变到 3:7——先懂发动机，再懂整车。⭐ 为复盘日（只刷知识卡，不做新题）。路线会随你的学习状态动态微调。</p>
+
+<div class="legend">
+  <span><span class="line fm" style="display:inline-block">基座模型方向</span></span>
+  <span><span class="line ag" style="display:inline-block">Agent 方向</span></span>
+  <span>🟠 金框 = 今天</span><span>🟢 绿框 = 已完成</span><span>🟣 虚线框 = 复盘日</span><span>✓ 绿描边 = 已打卡（附日期）</span><span>👀 黄虚线 = 看过未打卡</span>
+</div>
+
+<div class="pdash">
+  <div class="pcards">
+    <div class="pc"><b id="pDone">0</b><span>已完成题数 / 56</span></div>
+    <div class="pc"><b id="pPub">0 / 4</b><span>已解锁课程完成度</span></div>
+    <div class="pc"><b id="pStreak">0</b><span>🔥 连续打卡（天）</span></div>
+    <div class="pc"><b id="pSpan">0</b><span>开炉以来（天）</span></div>
+    <div class="pc"><b id="pTouch">0</b><span>🖱️ 累计互动（次）</span></div>
+  </div>
+  <div class="pbarwrap">
+    <div class="pbar"><div id="pBar"></div></div>
+    <span id="pPct">0%</span>
+    <span class="psince" id="pSince"></span>
+  </div>
+  <p class="pnext" id="pNext">👉 下一步从这里继续：…</p>
+  <p class="ptip">记录规则：课程内<b>每次点击和展开</b>（盲猜、追问链、提示、步进器、计算器、选项、翻卡、链接）都计入「累计互动」；答完一课全部自测题 = 完成打卡（✓ + 日期）。进度保存在本设备浏览器，换设备时用下面的进度码搬运。</p>
+  <div class="ptools">
+    <button onclick="expP()">📤 导出进度码</button>
+    <button onclick="impP()">📥 导入进度码</button>
+    <textarea id="pio" rows="2" placeholder="导出：点按钮生成进度码 → 全选复制；导入：粘贴进度码 → 点导入（换设备同步用）"></textarea>
+  </div>
+</div>
+
+<div class="week">
+  <h3>第 1 周 · 认知地基 <span class="ratio">配比 7:3 ｜ 目标：建立「发动机 × 整车」双线心智</span></h3>
+  <div class="grid">
+    <div class="day done"><span class="dn">D1 · 已完成 ✓</span><span class="line fm" data-lm="L0001">token & strawberry 数 r</span><span class="line ag" data-lm="L0002">Agent 四模块入门</span></div>
+    <div class="day today"><span class="dn">D2 · 今天</span><span class="line fm" data-lm="L0003">上下文窗口：128k 能装几本书</span><span class="line ag" data-lm="L0004">Function Calling：伸手拿工具</span></div>
+    <div class="day"><span class="dn">D3</span><span class="line fm">采样：温度与 Top-p</span><span class="line ag">记忆：短期 vs 长期</span></div>
+    <div class="day"><span class="dn">D4</span><span class="line fm">幻觉解剖：为什么会一本正经胡说</span><span class="line ag">ReAct 初见（论文级）</span></div>
+    <div class="day"><span class="dn">D5</span><span class="line fm">训练三阶段：预训练/SFT/RLHF</span><span class="line ag">Agent 安全直觉</span></div>
+    <div class="day"><span class="dn">D6</span><span class="line fm">提示工程与思维链</span><span class="line ag">自由探索日</span></div>
+    <div class="day review"><span class="dn">D7 ⭐</span><span class="line fm">复盘：刷本周知识卡</span><span class="line ag">补画思维导图</span></div>
+  </div>
+</div>
+
+<div class="week">
+  <h3>第 2 周 · 模型直觉 <span class="ratio">配比 6:4 ｜ 目标：看得懂模型的「内脏」</span></h3>
+  <div class="grid">
+    <div class="day"><span class="dn">D8</span><span class="line fm">Embedding：文字变向量</span><span class="line ag">ReAct 深入 + 规划</span></div>
+    <div class="day"><span class="dn">D9</span><span class="line fm">手撕 Self-Attention（直觉版→代码版）</span><span class="line ag">Function Calling 实战</span></div>
+    <div class="day"><span class="dn">D10</span><span class="line fm">KV Cache：推理为什么快</span><span class="line ag">MCP：工具的 USB-C</span></div>
+    <div class="day"><span class="dn">D11</span><span class="line fm">长上下文与注意力瓶颈</span><span class="line ag">多 Agent 初见</span></div>
+    <div class="day"><span class="dn">D12</span><span class="line fm">RAG 全链路 + chunk 切分</span><span class="line ag">反思与自我纠错</span></div>
+    <div class="day"><span class="dn">D13</span><span class="line fm">LoRA：低成本微调</span><span class="line ag">自由探索日</span></div>
+    <div class="day review"><span class="dn">D14 ⭐</span><span class="line fm">复盘：刷知识卡</span><span class="line ag">RAG vs 微调辩论练习</span></div>
+  </div>
+</div>
+
+<div class="week">
+  <h3>第 3 周 · 深水区 <span class="ratio">配比 3:7 ｜ 目标：Agent 系统级视野</span></h3>
+  <div class="grid">
+    <div class="day"><span class="dn">D15</span><span class="line fm">混合检索与 rerank</span><span class="line ag">上下文工程</span></div>
+    <div class="day"><span class="dn">D16</span><span class="line fm">解码策略与投机解码</span><span class="line ag">多 Agent 协作</span></div>
+    <div class="day"><span class="dn">D17</span><span class="line fm">量化与 vLLM</span><span class="line ag">记忆系统设计</span></div>
+    <div class="day"><span class="dn">D18</span><span class="line fm">幻觉治理工程化</span><span class="line ag">安全护栏</span></div>
+    <div class="day"><span class="dn">D19</span><span class="line fm">评测指标</span><span class="line ag">明星 Agent 拆解</span></div>
+    <div class="day"><span class="dn">D20</span><span class="line fm">面试考古：高频题串讲</span><span class="line ag">模拟面试 ①</span></div>
+    <div class="day review"><span class="dn">D21 ⭐</span><span class="line fm">复盘：刷知识卡</span><span class="line ag">多 Agent 系统设计练习</span></div>
+  </div>
+</div>
+
+<div class="week">
+  <h3>第 4 周 · 工程与面试模拟 <span class="ratio">配比 3:7 ｜ 目标：能输出、能对答</span></h3>
+  <div class="grid">
+    <div class="day"><span class="dn">D22</span><span class="line fm">Transformer 全景串讲</span><span class="line ag">成本与延迟工程</span></div>
+    <div class="day"><span class="dn">D23</span><span class="line fm">查漏补缺</span><span class="line ag">大小模型选型</span></div>
+    <div class="day"><span class="dn">D24</span><span class="line fm">模拟面试 · 基模向</span><span class="line ag">模拟面试 · Agent 向</span></div>
+    <div class="day"><span class="dn">D25</span><span class="line fm">错题重做</span><span class="line ag">推理模型（o1 式）直觉</span></div>
+    <div class="day"><span class="dn">D26</span><span class="line fm">RLHF / DPO 串讲</span><span class="line ag">综合设计：客服 Agent</span></div>
+    <div class="day"><span class="dn">D27</span><span class="line fm">模拟面试 ×2</span><span class="line ag">知识地图总集</span></div>
+    <div class="day review"><span class="dn">D28 ⭐</span><span class="line fm">总复盘：50 卡集齐</span><span class="line ag">全图串讲 + 口述模拟</span></div>
+  </div>
+</div>
+
+<h2>⏱️ 每天 90 分钟怎么花</h2>
+<div class="flowbar">
+  <div style="flex:8;background:#6366f1">8′ 盲猜双题</div>
+  <div style="flex:30;background:#2563eb">30′ 课程 ①（基模题）</div>
+  <div style="flex:7;background:#0891b2">7′ 动手实验</div>
+  <div style="flex:30;background:#ea580c">30′ 课程 ②（Agent 题）</div>
+  <div style="flex:10;background:#7c3aed">10′ 集卡+发散</div>
+  <div style="flex:5;background:#16a34a">5′ 惊讶日志</div>
+</div>
+<div class="note">📝 <b>惊讶日志</b>：每天用一句话记下「今天最让我意外的事实」。28 天后回看，它就是你的兴趣曲线和成长证据。<b>盲猜双题</b>：先不看答案各猜 30 秒——猜错是最好的学习催化剂（今天 strawberry 那题你已经体会过了）。</div>
+
+<p style="font-size:14px"><a href="../index.html">← 返回学习主页</a>　｜　<a id="gotoNext" href="../lessons/0003-context-window.html">继续学习 →</a></p>
+</div>
+<script src="lianmo-progress.js"></script>
+<script>
+var TOTAL = 56; // 28 天 × 每天 2 题
+var PUBLISHED = ["L0001", "L0002", "L0003", "L0004"]; // 已解锁课程（每次交付后更新）
+var LESSONS = {
+  L0001: { t: "Day01·Q1 strawberry 数 r", h: "../lessons/0001-token-strawberry.html" },
+  L0002: { t: "Day01·Q2 什么是 AI Agent", h: "../lessons/0002-what-is-agent.html" },
+  L0003: { t: "Day02·Q1 上下文窗口 128k", h: "../lessons/0003-context-window.html" },
+  L0004: { t: "Day02·Q2 Function Calling", h: "../lessons/0004-function-calling.html" }
+};
+function render() {
+  var s = LIANMO.stats();
+  var pubDone = PUBLISHED.filter(function (id) { var r = LIANMO.get(id); return r && r.done; }).length;
+  document.getElementById("pDone").textContent = s.done;
+  document.getElementById("pPub").textContent = pubDone + " / " + PUBLISHED.length;
+  document.getElementById("pStreak").textContent = s.streak;
+  document.getElementById("pSpan").textContent = s.spanDays;
+  document.getElementById("pTouch").textContent = s.totalTouches;
+  var pct = Math.round((s.done / TOTAL) * 100);
+  document.getElementById("pBar").style.width = Math.max(pct, 1) + "%";
+  document.getElementById("pPct").textContent = pct + "%（" + s.done + "/" + TOTAL + " 题）";
+  document.getElementById("pSince").textContent = s.since ? "自 " + s.since : "";
+  document.querySelectorAll("[data-lm]").forEach(function (el) {
+    el.classList.remove("lm-done", "lm-see");
+    var m = el.querySelector(".lm-mark"), d = el.querySelector(".lm-date");
+    if (m) m.remove(); if (d) d.remove();
+    var r = LIANMO.get(el.getAttribute("data-lm"));
+    if (r && r.done) {
+      el.classList.add("lm-done");
+      el.insertAdjacentHTML("beforeend", ' <span class="lm-mark">✓</span><span class="lm-date">' + (r.doneDate || "").slice(5) + "</span>");
+    } else if (r && (r.visits || r.touchTotal)) {
+      el.classList.add("lm-see");
+      el.insertAdjacentHTML("beforeend", ' <span class="lm-mark">👀 ' + (r.touchTotal || 0) + " 互动</span>");
+    }
+  });
+  var next = null;
+  for (var i = 0; i < PUBLISHED.length; i++) { var r = LIANMO.get(PUBLISHED[i]); if (!r || !r.done) { next = PUBLISHED[i]; break; } }
+  var nx = document.getElementById("pNext"), g = document.getElementById("gotoNext");
+  if (next) {
+    nx.innerHTML = "👉 下一步从这里继续：<a href=\"" + LESSONS[next].h + "\">" + LESSONS[next].t + "</a>";
+    g.href = LESSONS[next].h; g.textContent = "继续：" + LESSONS[next].t + " →";
+  } else {
+    nx.innerHTML = "🎉 已解锁课程全部完成，明天见！坚持就是碾压。";
+    g.href = "0003-course-archive.html"; g.textContent = "翻翻课程归档 →";
+  }
+}
+function utoa(s) { return btoa(unescape(encodeURIComponent(s))); }
+function atou(s) { return decodeURIComponent(escape(atob(s.replace(/\s+/g, "")))); }
+function expP() {
+  var pio = document.getElementById("pio");
+  pio.value = utoa(LIANMO.exportData()); pio.select();
+  document.getElementById("pNext").innerHTML = "✅ 进度码已生成，全选复制（Ctrl+C / 长按复制），到另一台设备的本页粘贴后点「导入」即可同步。";
+}
+function impP() {
+  var v = document.getElementById("pio").value.trim();
+  if (!v) { alert("请先把进度码粘贴到文本框里"); return; }
+  try { LIANMO.importData(atou(v)); location.reload(); }
+  catch (e) { alert("进度码无法识别，请确认已完整粘贴"); }
+}
+render();
+window.addEventListener("storage", render);
+</script>
+</body>
+</html>

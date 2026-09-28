@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 02 · Q2｜Function Calling：模型怎么"伸手"拿工具？</title>
+<style>
+  :root{
+    --ink:#1f2937;--muted:#6b7280;--bg:#f8f7f4;--card:#ffffff;
+    --blue:#2563eb;--blue-bg:#dbeafe;--blue-bd:#93c5fd;
+    --green:#16a34a;--green-bg:#dcfce7;--green-bd:#86efac;
+    --amber:#b45309;--amber-bg:#fef3c7;--amber-bd:#fcd34d;
+    --purple:#7c3aed;--purple-bg:#ede9fe;--purple-bd:#c4b5fd;
+    --red:#dc2626;--red-bg:#fee2e2;--red-bd:#fca5a5;
+  }
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.85;margin:0}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 90px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:9px 0 7px;margin:0 0 10px;background:rgba(248,247,244,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(31,41,55,.08)}
+  .topbar a{font-size:13px;font-weight:700;color:#6b7280;text-decoration:none;background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:4px 14px;transition:all .15s}
+  .topbar a:hover{color:#7c3aed;border-color:#c4b5fd}
+  @media (prefers-color-scheme: dark){
+    .topbar{background:rgba(16,18,22,.92);border-bottom-color:rgba(229,231,235,.08)}
+    .topbar a{background:#1a1d23;border-color:#34383e;color:#9ca3af}
+    .topbar a:hover{color:#a78bfa;border-color:#3f3160}
+  }
+  header{border-bottom:3px solid var(--ink);padding-bottom:16px;margin-bottom:10px}
+  .kicker{font-size:13px;letter-spacing:2px;color:var(--muted);font-weight:600}
+  h1{font-size:27px;margin:8px 0 6px;line-height:1.4}
+  .meta{font-size:14px;color:var(--muted)}
+  .srcbar{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}
+  .chip{font-size:12.5px;padding:4px 12px;border-radius:999px;border:1px solid}
+  .chip.src{background:var(--blue-bg);border-color:var(--blue-bd);color:#1e40af}
+  .chip.proof{background:var(--green-bg);border-color:var(--green-bd);color:#166534}
+  .chip.rewrite{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber)}
+  h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:5px solid var(--purple)}
+  h2 .no{color:var(--muted);font-size:14px;font-weight:600;margin-right:6px}
+  .card{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:22px 24px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .fig{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 14px 8px;margin:18px 0;text-align:center}
+  .fig figcaption{font-size:13.5px;color:var(--muted);padding:8px 10px 10px}
+  details{background:var(--card);border:1px solid #e7e5df;border-radius:14px;padding:0;margin:12px 0;overflow:hidden}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";color:var(--amber);transition:transform .2s;font-size:15px}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .body{padding:2px 20px 16px;border-top:1px dashed #e7e5df}
+  details.l1 summary{background:#fffbeb}details.l2 summary{background:#fefce8}details.l3 summary{background:#fdf4ff}
+  .flow{background:#0f172a;color:#e2e8f0;border-radius:16px;padding:22px;margin:18px 0}
+  .flow h3{margin:0 0 4px;font-size:16px;color:#c4b5fd}
+  .flow p.sub{font-size:13.5px;color:#94a3b8;margin:4px 0 14px}
+  .frow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .frow button{background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:10px 20px;font-size:14.5px;cursor:pointer;font-family:inherit}
+  .frow button:hover{background:#6d28d9}
+  .frow button:disabled{background:#475569;cursor:default}
+  .fstep{border-radius:12px;padding:12px 16px;margin:10px 0;animation:pop .25s}
+  @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .fs-user{background:#1e293b;border:1px solid #475569}
+  .fs-model{background:#1e3a5f;border:1px solid #38bdf8}
+  .fs-app{background:#3b2f0f;border:1px solid #fbbf24}
+  .fs-feed{background:#14532d;border:1px solid #4ade80}
+  .fs-done{background:linear-gradient(90deg,#166534,#15803d);border:1px solid #4ade80;font-weight:700}
+  .fstep .role{font-size:11.5px;font-weight:800;letter-spacing:1px;opacity:.9;display:block;margin-bottom:6px}
+  .fstep pre{margin:0;background:#0b1220;border:1px solid #334155;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.7;overflow:auto;color:#cbd5e1;font-family:Consolas,"JetBrains Mono",monospace}
+  .badge{display:inline-block;font-size:11.5px;font-weight:800;background:#fbbf24;color:#422006;border-radius:6px;padding:2px 10px;margin-left:8px;vertical-align:1px}
+  .quiz{background:var(--card);border:1px solid #e7e5df;border-radius:16px;padding:18px 22px;margin:14px 0}
+  .quiz .qq{font-weight:700;margin:0 0 12px}
+  .opt{display:block;width:100%;text-align:left;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:12px;padding:11px 16px;margin:8px 0;font-size:15px;cursor:pointer;font-family:inherit;transition:all .15s}
+  .opt:hover{border-color:var(--purple);background:#faf5ff}
+  .opt.right{background:var(--green-bg);border-color:var(--green);font-weight:700}
+  .opt.wrong{background:var(--red-bg);border-color:var(--red)}
+  .fb{font-size:14px;margin:10px 0 0;min-height:20px}
+  .fb.ok{color:var(--green)}.fb.no{color:var(--red)}
+  .score{font-size:14px;color:var(--muted)}
+  .flip{perspective:1000px;height:210px;cursor:pointer;margin:18px 0}
+  .inner{position:relative;width:100%;height:100%;transition:transform .55s;transform-style:preserve-3d}
+  .flip.on .inner{transform:rotateY(180deg)}
+  .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .face.front{background:linear-gradient(135deg,#fef3c7,#ffedd5);border:2px solid #fdba74}
+  .face.front .big{font-size:19px;font-weight:800;line-height:1.65}
+  .face .hint{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .face.back{background:var(--card);border:2px solid var(--ink);transform:rotateY(180deg);font-size:14px;line-height:1.8;text-align:left;justify-content:flex-start;overflow:auto}
+  .back b{color:#c2410c}
+  .next{background:linear-gradient(135deg,#dcfce7,#d1fae5);border:1.5px solid var(--green-bd);border-radius:16px;padding:18px 24px;margin:26px 0}
+  .refs{font-size:14px;line-height:2}
+  .refs a{color:var(--purple);text-decoration:none;border-bottom:1px dashed var(--purple-bd)}
+  .askme{background:#fff7ed;border:1.5px dashed #fdba74;border-radius:14px;padding:14px 20px;font-size:14.5px;margin:24px 0}
+  nav.pager{display:flex;justify-content:space-between;gap:12px;margin-top:40px;font-size:15px;flex-wrap:wrap}
+  nav.pager a{color:var(--purple);text-decoration:none;font-weight:700}
+  code{background:#f1f5f9;border-radius:6px;padding:1px 7px;font-size:.92em;color:#0f172a}
+  /* ===== 深色模式：自动跟随系统 ===== */
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme:dark;
+      --ink:#e5e7eb;--muted:#9ca3af;--bg:#101216;--card:#1a1d23;
+      --blue:#60a5fa;--blue-bg:#1c2a44;--blue-bd:#2f4368;
+      --green:#4ade80;--green-bg:#163024;--green-bd:#24523a;
+      --amber:#fbbf24;--amber-bg:#2e2310;--amber-bd:#57411a;
+      --purple:#a78bfa;--purple-bg:#282041;--purple-bd:#3f3160;
+      --red:#f87171;--red-bg:#3a1c1c;--red-bd:#5f2a2a;
+    }
+    .card,.fig,.quiz,details{border-color:#34383e}
+    details.l1 summary{background:#2a2312}
+    details.l2 summary{background:#272415}
+    details.l3 summary{background:#241f33}
+    details .body{border-top-color:#34383e}
+    .opt{background:#22252b;border-color:#3a3f47}
+    .opt:hover{background:#241d38;border-color:var(--purple)}
+    .next{background:linear-gradient(135deg,#0f281b,#0e2c20)}
+    .askme{background:#2a2113;border-color:#57411a}
+    code{background:#22252b;color:#e2e8f0}
+    .chip.src{color:#93c5fd}
+    .chip.proof{color:#4ade80}
+    .chip.rewrite{color:var(--amber)}
+    .face.front{background:linear-gradient(135deg,#2e2510,#3a1c1c);border-color:#57411a}
+    .face.back{background:var(--card)}
+    .fig svg{background:#f6f5f0;border-radius:10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topbar">
+  <a href="https://ninglo.me/lab">🏠 炼墨门面</a>
+  <a href="../index.html">📚 学习首页</a>
+  <a href="../reference/0003-course-archive.html">🗂️ 课程归档</a>
+</nav>
+
+<header>
+  <div class="kicker">DAY 02 · 第 2 题（AGENT 方向）· 难度 ⭐+</div>
+  <h1>Function Calling 完整流程——模型自己执行函数吗？工具描述怎么写？失败了怎么办？</h1>
+  <div class="meta">附带考点：意图与执行分离 · 工具 schema 设计 · 参数幻觉防护 · 错误回喂自纠</div>
+  <div class="srcbar">
+    <span class="chip src">真题源：腾讯/字节/海外 GenAI 岗通用（美团「FC 三连炮」面经；OpenAI 官方文档即标准答案）</span>
+    <span class="chip proof">佐证：OpenAI Function Calling Guide（2023-06 推出）· Anthropic Tool Use 文档 · 微软 AI Agents 第 4 课</span>
+    <span class="chip rewrite">改写声明：JSON 为简化示意，字段随 API 版本略有差异</span>
+  </div>
+</header>
+
+<!-- S1 情境 -->
+<h2><span class="no">S1</span>🎭 开场：昨天它够不着 r，今天教它正式伸手</h2>
+<div class="card">
+  <p>昨天第 1 题的结论是：模型的盲区要<b>交给工具</b>。你问「北京现在多少度？」——裸模型只能抱歉：「我无法获取实时天气」。而配了 <b>Function Calling</b> 的模型会做一件完全不同的事：<b>向你声明过的工具发出一张结构化的"点菜单"</b>，让你写的程序去执行，拿到结果再回答。</p>
+  <p style="margin-bottom:0">一句话：<b>FC 是模型"伸手拿工具"的正式机制——模型点菜，你的厨房做菜。</b>它由 OpenAI 在 2023 年 6 月正式推出，如今是所有 Agent 的地基动作（ReAct 里的 Act、昨天演示器里的"调用工具"，底层都是它）。</p>
+</div>
+
+<!-- S2 流程 -->
+<h2><span class="no">S2</span>👀 一张图看懂：五步闭环</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 300" width="100%" style="max-width:720px">
+  <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7c3aed"/></marker></defs>
+  <g font-size="12.5" font-weight="700">
+    <rect x="24" y="26" width="130" height="40" rx="10" fill="#f3f4f6" stroke="#d1d5db"/><text x="89" y="51" text-anchor="middle" fill="#374151">🧑 用户提问</text>
+    <rect x="200" y="26" width="320" height="40" rx="10" fill="#ede9fe" stroke="#a78bfa"/><text x="360" y="51" text-anchor="middle" fill="#4c1d95">🧠 模型：只输出"调用意图 + 参数"（JSON）</text>
+    <rect x="566" y="26" width="130" height="40" rx="10" fill="#fef3c7" stroke="#f59e0b"/><text x="631" y="51" text-anchor="middle" fill="#92400e">💻 你的程序</text>
+    <rect x="566" y="106" width="130" height="40" rx="10" fill="#fef3c7" stroke="#f59e0b"/><text x="631" y="131" text-anchor="middle" fill="#92400e">🔧 执行函数</text>
+    <rect x="200" y="106" width="320" height="40" rx="10" fill="#dcfce7" stroke="#22c55e"/><text x="360" y="131" text-anchor="middle" fill="#14532d">📋 结果以 tool 消息回喂给模型（Observation）</text>
+    <rect x="200" y="186" width="320" height="40" rx="10" fill="#dbeafe" stroke="#60a5fa"/><text x="360" y="211" text-anchor="middle" fill="#1e3a8a">💬 模型基于真实结果生成最终回答</text>
+  </g>
+  <g stroke="#7c3aed" stroke-width="2.2" fill="none">
+    <line x1="156" y1="46" x2="196" y2="46" marker-end="url(#a1)"/>
+    <line x1="522" y1="46" x2="562" y2="46" marker-end="url(#a1)"/>
+    <line x1="631" y1="68" x2="631" y2="102" marker-end="url(#a1)"/>
+    <line x1="562" y1="126" x2="524" y2="126" marker-end="url(#a1)"/>
+    <line x1="360" y1="148" x2="360" y2="182" marker-end="url(#a1)"/>
+  </g>
+  <rect x="24" y="106" width="140" height="120" rx="14" fill="#fee2e2" stroke="#ef4444" stroke-width="2"/>
+  <text x="94" y="140" font-size="13.5" font-weight="800" text-anchor="middle" fill="#991b1b">模型从不</text>
+  <text x="94" y="162" font-size="13.5" font-weight="800" text-anchor="middle" fill="#991b1b">执行函数</text>
+  <text x="94" y="188" font-size="11.5" text-anchor="middle" fill="#b91c1c">它只"点菜"</text>
+  <text x="94" y="206" font-size="11.5" text-anchor="middle" fill="#b91c1c">安全边界所在</text>
+  <text x="360" y="272" font-size="13.5" text-anchor="middle" fill="#4b5563">① 问 → ② 模型出调用 JSON → <tspan font-weight="800">③ 你的程序执行</tspan> → ④ 结果回喂 → ⑤ 模型总结</text>
+</svg>
+<figcaption>图 1｜五步闭环。面试第一得分点就是图中间那个红框：<b>意图与执行分离</b>——模型永远只产生"调用意图"，真正执行的是调用方程序。</figcaption>
+</figure>
+
+<!-- S3 schema -->
+<h2><span class="no">S3</span>🔧 工具声明怎么写：description 是写给谁看的？</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 280" width="100%" style="max-width:720px">
+  <rect x="60" y="20" width="600" height="240" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <text x="360" y="48" font-size="14.5" font-weight="800" text-anchor="middle" fill="#334155">tools: [ { ... } ] —— 一份工具声明（简化示意）</text>
+  <g font-size="13" font-weight="700">
+    <rect x="90" y="64" width="150" height="34" rx="8" fill="#dbeafe" stroke="#60a5fa"/><text x="165" y="86" text-anchor="middle" fill="#1e3a8a">name: get_weather</text>
+    <rect x="90" y="112" width="420" height="60" rx="8" fill="#fef9c3" stroke="#f59e0b" stroke-width="2.5"/>
+    <text x="120" y="136" fill="#92400e">description: "查询指定城市当前天气。</text>
+    <text x="120" y="158" fill="#92400e">仅当用户询问实时天气时使用；闲聊不用。"</text>
+    <rect x="90" y="186" width="540" height="56" rx="8" fill="#dcfce7" stroke="#4ade80"/>
+    <text x="120" y="210" fill="#14532d">parameters: { city: string（必填，中文城市名）,</text>
+    <text x="120" y="230" fill="#14532d">unit: enum ["celsius","fahrenheit"]（默认 celsius）}</text>
+  </g>
+  <line x1="540" y1="120" x2="600" y2="96" stroke="#f59e0b" stroke-width="2"/>
+  <rect x="470" y="60" width="216" height="0" fill="none"/>
+  <text x="612" y="84" font-size="12.5" font-weight="800" fill="#b45309" text-anchor="end">这段是给模型看的</text>
+  <text x="612" y="100" font-size="12.5" font-weight="800" fill="#b45309" text-anchor="end">「提示词」！</text>
+  <text x="360" y="272" font-size="12.5" text-anchor="middle" fill="#9ca3af">模型选工具、填参数，全靠读这份声明——写得含糊，它就乱点菜</text>
+</svg>
+<figcaption>图 2｜工具声明解剖：name（叫什么）+ description（何时用/何时不用——本质是提示词）+ parameters（JSON Schema：类型、必填、枚举）。</figcaption>
+</figure>
+
+<div class="card">
+  <p><b>三个防"参数幻觉"的硬手段</b>（面试 L2 的得分点）：</p>
+  <ul style="margin-bottom:0">
+    <li><b>枚举约束</b>：只接受 <code>"celsius"/"fahrenheit"</code>，模型编出 <code>"warm"</code> 当场被 schema 拦截</li>
+    <li><b>必填 + 默认值</b>：<code>city</code> 必填、<code>unit</code> 可默认——减少模型自由发挥的空间</li>
+    <li><b>服务端二次校验</b>：程序执行前再验一遍（模型输出的是"意图"，不可无条件信任）</li>
+  </ul>
+</div>
+
+<!-- S4 步进器 -->
+<h2><span class="no">S4</span>🎬 亲手点一遍：FC 步进器（真实 JSON 往返）</h2>
+<div class="flow">
+  <h3>🧪 「北京现在多少度？」的完整 FC 之旅（点「下一步」逐帧播放）</h3>
+  <p class="sub">注意每一帧是谁在动手：蓝色=模型侧，黄色=你的程序侧。模型全程没碰任何代码。</p>
+  <div class="frow">
+    <button id="fnext">▶ 下一步</button>
+    <button id="freset" style="background:#475569">↺ 重来</button>
+    <span id="fprog" style="font-size:13px;color:#94a3b8">第 0 / 5 步</span>
+  </div>
+  <div id="fsteps"></div>
+</div>
+
+<!-- S5 失败 -->
+<h2><span class="no">S5</span>🔁 失败了怎么办：错误回喂，让模型自纠</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 240" width="100%" style="max-width:720px">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker></defs>
+  <g font-size="12.5" font-weight="700">
+    <rect x="30" y="80" width="170" height="56" rx="10" fill="#fee2e2" stroke="#f87171"/>
+    <text x="115" y="104" text-anchor="middle" fill="#991b1b">模型填参出错</text>
+    <text x="115" y="124" font-size="11.5" font-weight="500" text-anchor="middle" fill="#b91c1c">city: "旧金山"</text>
+    <rect x="250" y="80" width="180" height="56" rx="10" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="340" y="104" text-anchor="middle" fill="#92400e">工具执行报错</text>
+    <text x="340" y="124" font-size="11.5" font-weight="500" text-anchor="middle" fill="#b45309">error: 仅支持中国城市</text>
+    <rect x="480" y="80" width="210" height="56" rx="10" fill="#dcfce7" stroke="#4ade80"/>
+    <text x="585" y="104" text-anchor="middle" fill="#14532d">错误信息回喂模型</text>
+    <text x="585" y="124" font-size="11.5" font-weight="500" text-anchor="middle" fill="#15803d">模型改填 "北京" → 成功 ✓</text>
+  </g>
+  <g stroke="#dc2626" stroke-width="2.2" fill="none">
+    <line x1="202" y1="108" x2="246" y2="108" marker-end="url(#a2)"/>
+    <line x1="432" y1="108" x2="476" y2="108" marker-end="url(#a2)"/>
+    <path d="M 585 138 Q 585 190 340 190 Q 95 190 95 140" marker-end="url(#a2)" stroke-dasharray="6 5"/>
+  </g>
+  <text x="340" y="212" font-size="12" text-anchor="middle" fill="#6b7280">错误也是 Observation——回喂后模型多数情况能自纠；连错再熔断/人工兜底（限次重试）</text>
+  <text x="360" y="40" font-size="14" font-weight="800" text-anchor="middle" fill="#374151">三大典型失败：选错工具（描述含糊）· 参数幻觉（编造值）· 幻觉工具（调用不存在的）</text>
+  <text x="360" y="62" font-size="12.5" text-anchor="middle" fill="#92400e">工具挂到几十个怎么办？按需检索 top-k 注入——MCP 标准化，D10 专拆</text>
+</svg>
+<figcaption>图 3｜失败处理第一原则：<b>把错误当信息回喂</b>，而不是盲目重试或直接放弃。</figcaption>
+</figure>
+
+<!-- S6 追问链 -->
+<h2><span class="no">S6</span>🔁 面试官追问链（点开前先自己答）</h2>
+
+<details class="l1"><summary>L1 · 「模型自己执行函数吗？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：如果模型能直接执行代码，谁为误删数据库负责？</summary><div class="body" style="padding:8px 4px 12px">想想"点菜的人"和"做菜的厨房"为什么必须是两方。</div></details>
+    <p><b>答案要点</b>：① <b>从不执行</b>——模型只输出结构化的调用意图（工具名+参数 JSON），真正执行的是调用方程序；② 这是刻意设计的<b>安全边界</b>：权限、鉴权、沙箱都掌握在程序侧；③ ChatGPT 里的"代码解释器"是官方产品预置的执行环境，本质仍是这个分工。</p>
+  </div>
+</details>
+
+<details class="l2"><summary>L2 · 「工具描述写差了会怎样？参数幻觉怎么防？」</summary>
+  <div class="body">
+    <details><summary>💡 提示：模型挑工具时能看见什么？</summary><div class="body" style="padding:8px 4px 12px">只有 name/description/parameters——除此之外它一无所知。</div></details>
+    <p><b>答案要点</b>：① 模型选工具全靠读 schema，<b>description 本质是给模型看的提示词</b>——写清"何时用/何时不用/参数含义"，它就点得准；写得含糊 → 选错工具、漏调、甚至调用不存在的工具；② 防参数幻觉：枚举约束、必填+默认值、服务端二次校验；③ 出错后把错误信息回喂（限次重试），模型多数能自纠——错误也是 Observation。</p>
+  </div>
+</details>
+
+<details class="l3"><summary>L3 · 「Function Calling 是怎么训出来的？模型天生就会吗？」（美团三连炮）</summary>
+  <div class="body">
+    <details><summary>💡 提示：昨天讲过训练三阶段里的 SFT——猜猜 FC 靠什么数据？</summary><div class="body" style="padding:8px 4px 12px">如果给你几万条"用户问题 → 正确的工具调用 JSON"样本，你拿它们做什么？</div></details>
+    <p><b>答案要点</b>：① 不是天生——厂商用<b>工具调用轨迹数据做 SFT</b>：样本包括"该调时调对工具、正确填参、不该调时忍住不调、调错后纠错"等各类情形；② 深水区：训练数据要覆盖业务逻辑——<b>"会调"与"按业务逻辑正确地调"是两回事</b>（美团原话方向的考点）；③ 延伸：新工具无需重训也能用（模型按 schema 泛化），但复杂工具组合仍受益于微调。这一问直接衔接 D5「训练三阶段」。</p>
+  </div>
+</details>
+
+<!-- S7 导图 -->
+<h2><span class="no">S7</span>🕸️ 举一反三：FC 在知识地图上的位置</h2>
+<figure class="fig">
+<svg viewBox="0 0 720 330" width="100%" style="max-width:720px">
+  <ellipse cx="360" cy="165" rx="92" ry="44" fill="#fef3c7" stroke="#ea580c" stroke-width="2.5"/>
+  <text x="360" y="160" font-size="18" font-weight="800" text-anchor="middle" fill="#7c2d12">Function Calling</text>
+  <text x="360" y="182" font-size="11.5" text-anchor="middle" fill="#c2410c">Agent 的地基动作</text>
+  <g stroke="#d6d3d1" stroke-width="1.8">
+    <line x1="305" y1="135" x2="185" y2="82"/>
+    <line x1="415" y1="135" x2="535" y2="82"/>
+    <line x1="300" y1="185" x2="180" y2="235"/>
+    <line x1="420" y1="185" x2="540" y2="235"/>
+    <line x1="360" y1="209" x2="360" y2="258"/>
+  </g>
+  <g>
+    <rect x="52" y="30" width="212" height="70" rx="12" fill="#fee2e2" stroke="#f87171"/>
+    <text x="158" y="58" font-size="14" font-weight="800" text-anchor="middle" fill="#991b1b">🧱 意图/执行分离</text>
+    <text x="158" y="82" font-size="11.5" text-anchor="middle" fill="#b91c1c">安全边界 · 通用首问</text>
+    <rect x="456" y="30" width="212" height="70" rx="12" fill="#fef9c3" stroke="#facc15"/>
+    <text x="562" y="58" font-size="14" font-weight="800" text-anchor="middle" fill="#92400e">📜 描述=提示词</text>
+    <text x="562" y="82" font-size="11.5" text-anchor="middle" fill="#b45309">schema 设计 · 小林笔记 16 题</text>
+    <rect x="46" y="212" width="212" height="70" rx="12" fill="#dcfce7" stroke="#4ade80"/>
+    <text x="152" y="240" font-size="14" font-weight="800" text-anchor="middle" fill="#14532d">🔁 错误回喂自纠</text>
+    <text x="152" y="264" font-size="11.5" text-anchor="middle" fill="#15803d">失败处理 · 牛客 23 问</text>
+    <rect x="462" y="212" width="212" height="70" rx="12" fill="#dbeafe" stroke="#60a5fa"/>
+    <text x="568" y="240" font-size="14" font-weight="800" text-anchor="middle" fill="#1e3a8a">🎓 怎么训出来的</text>
+    <text x="568" y="264" font-size="11.5" text-anchor="middle" fill="#3b5bdb">SFT 轨迹数据 → D5 训练三阶段</text>
+    <rect x="266" y="258" width="188" height="62" rx="12" fill="#ede9fe" stroke="#a78bfa"/>
+    <text x="360" y="284" font-size="14" font-weight="800" text-anchor="middle" fill="#4c1d95">🔌 MCP 标准化</text>
+    <text x="360" y="306" font-size="11.5" text-anchor="middle" fill="#7c3aed">工具太多→检索注入 → D10</text>
+  </g>
+</svg>
+<figcaption>图 4｜FC 向下接安全设计，向上接训练与生态——一张图就是 Agent 岗的面试地图。</figcaption>
+</figure>
+
+<!-- S8 发散 -->
+<h2><span class="no">S8</span>🌌 发散思考（没有标准答案，值钱的是你的推理）</h2>
+<details><summary>🌱 发散 1（换场景）：订机票的 Agent，怎么防模型编造日期和城市？</summary>
+  <div class="body">
+    <p>参考思路：把"可选项"变成 schema 的一部分——城市用<b>枚举</b>（仅航线覆盖的城市）、日期用<b>格式校验 + 必填</b>（ISO 日期）、舱位用枚举+默认值；程序侧执行前二次校验，出错把错误信息回喂让它自纠；高危动作（支付）加人工确认。你会发现这题就是今天 L2 + 昨天 L3（护栏）的组合拳——真题往往就是两天的知识拼在一起。</p>
+  </div>
+</details>
+<details><summary>🌱 发散 2（找反例）：什么任务反而<b>不该</b>给模型配工具？</summary>
+  <div class="body">
+    <p>参考思路：① 模型本就掌握的常识问答/写作/翻译——给工具只会增加误调用和延迟（每次"该不该调"都是一次判断）；② 高频确定性流程——直接写代码调用，不需要模型居中决策；③ 对确定性要求极高且模型无法验证结果的场景。<b>工具是给"模型盲区"补的，不是给所有事情加的</b>——能说出这条边界，说明你真的理解 FC 的定位。</p>
+  </div>
+</details>
+
+<!-- S9 quiz -->
+<h2><span class="no">S9</span>✅ 自测：4 道题，点选项立即判分</h2>
+<div>
+<div class="quiz" data-quiz>
+  <p class="qq">1. Function Calling 中，函数最终由谁执行？</p>
+  <button class="opt">A. 模型自己执行</button>
+  <button class="opt" data-ok data-why="模型只输出调用意图（工具名+参数 JSON），真正执行的是调用方程序——意图与执行分离，是安全边界。">B. 调用方的程序代码</button>
+  <button class="opt">C. 模型厂商的服务器</button>
+  <button class="opt">D. 工具的发明者</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">2. 工具的 description 写得含糊，最直接的后果是？</p>
+  <button class="opt">A. 完全没有影响</button>
+  <button class="opt">B. 只是语法上报错</button>
+  <button class="opt" data-ok data-why="模型选工具、填参数全靠读 description——它本质是给模型看的提示词，写得差就会选错工具、漏调或调不存在的东西。">C. 模型选错或漏调工具</button>
+  <button class="opt">D. 模型直接拒绝回答</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">3. 工具执行报错后，第一步应该做什么？</p>
+  <button class="opt">A. 盲目重试三次再说</button>
+  <button class="opt" data-ok data-why="错误也是 Observation：把报错信息回喂，模型多数能自纠（比如改对城市名）；连错再考虑限次重试/熔断/人工。">B. 把错误信息回喂模型</button>
+  <button class="opt">C. 立刻换更大的模型</button>
+  <button class="opt">D. 直接熔断放弃任务</button>
+  <p class="fb"></p>
+</div>
+<div class="quiz" data-quiz>
+  <p class="qq">4. 给模型挂了几十个工具之后，最可能出现什么？</p>
+  <button class="opt">A. 响应反而更快了</button>
+  <button class="opt">B. 工具会自动合并</button>
+  <button class="opt" data-ok data-why="选项一多模型挑花眼，误选率上升。工程解法：按需检索 top-k 个相关工具动态注入；生态解法是 MCP 标准化（D10）。">C. 误选率明显上升</button>
+  <button class="opt">D. 必须删到只剩 3 个</button>
+  <p class="fb"></p>
+</div>
+<p class="score">得分：<span id="score">0</span> / 4　<span id="scoremsg"></span></p>
+</div>
+
+<!-- S10 知识卡 -->
+<h2><span class="no">S10</span>📇 今日知识卡（点击翻面，复盘日要刷）</h2>
+<div class="flip" id="flip1" onclick="this.classList.toggle('on')">
+  <div class="inner">
+    <div class="face front">
+      <div class="big">「模型开口点菜（输出调用 JSON），<br>你的厨房做菜（程序执行），<br>端回来它再尝一口说话。」</div>
+      <div class="hint">📇 点击卡片翻面 → 考点 / 易错 / 出处</div>
+    </div>
+    <div class="face back">
+      <div><b>考点</b>：五步闭环 · 意图/执行分离（模型从不执行）· schema 三件套（name/description/parameters）· 参数幻觉三防（枚举/必填/二次校验）· 错误回喂自纠 · FC 靠 SFT 轨迹数据训出<br>
+      <b>易错</b>：以为模型自己执行了函数；description 随便写；失败就盲目重试而不回喂错误<br>
+      <b>出处</b>：OpenAI FC Guide（2023-06）· 美团「FC 三连炮」面经 · 小林笔记 16 题 · Anthropic Tool Use 文档</div>
+    </div>
+  </div>
+</div>
+
+<!-- S11 答案骨架 -->
+<h2><span class="no">S11</span>🎤 60 秒面试答案（把今天的理解压成一段话）</h2>
+<div style="background:linear-gradient(135deg,#eff6ff,#faf5ff);border:1px solid #c4b5fd;border-radius:16px;padding:20px 24px;margin:18px 0">
+  <div style="font-size:13px;color:var(--purple);font-weight:700;letter-spacing:1px">如果你在面试里被问到这道题，可以这样答：</div>
+  <div style="font-size:18px;font-weight:600;margin-top:6px">「Function Calling 是模型使用工具的标准机制，五步闭环：开发者声明工具的 name、description 和参数 schema；模型判断需要时输出结构化的调用请求；由调用方程序真正执行；结果作为 tool 消息回喂；模型再基于真实结果生成回答。最关键的设计是意图与执行分离——模型只决策、从不执行，权限始终在程序侧。工具描述本质是给模型看的提示词，写得差会导致选错工具和参数幻觉，防御靠枚举约束、必填校验和服务端二次验证。执行失败时优先把错误信息回喂让模型自纠，连错才熔断。这个能力本身是通过工具调用轨迹数据 SFT 训出来的。」</div>
+</div>
+
+<div class="next">
+  <b>📍 明日 Day 03 预告</b>：基模线「采样与温度：为什么同一个问题每次回答不一样？」× Agent 线「记忆的两档：短期上下文 vs 长期向量库」——FC 已让模型有了双手，明天给它配记忆和性格。
+</div>
+
+<div class="card refs">
+  <b>📚 今日精读（按顺序，共约 25 分钟）</b>
+  <ol style="margin:8px 0 0;padding-left:22px">
+    <li><a href="https://platform.openai.com/docs/guides/function-calling" target="_blank">OpenAI Function Calling 官方指南</a> —— 主精读，标准答案即出自这里</li>
+    <li><a href="https://github.com/microsoft/ai-agents-for-beginners/tree/main/04-tool-use" target="_blank">微软 AI Agents 第 4 课 · Tool Use</a> —— 主精读，配视频和中文翻译</li>
+    <li><a href="https://platform.claude.com/docs/zh-CN/agents-and-tools/tool-use/overview" target="_blank">Anthropic Tool Use 文档（中文版）</a> —— 工具书，与 OpenAI 对照</li>
+    <li><a href="https://huggingface.co/learn/agents-course/unit2/smolagents/tools" target="_blank">HuggingFace Agents Course · Unit 2</a> —— 动手延伸</li>
+  </ol>
+</div>
+
+<div class="askme">💬 <b>卡住了？随时回到对话里直接问我</b>：「parallel function calling 是什么？」「reAct 里的 Act 和 FC 是一回事吗？」——追问本身就是最好的学习。</div>
+
+<nav class="pager">
+  <a href="0003-context-window.html">← 上一题：上下文窗口</a>
+  <a href="../index.html">🏠 主页</a>
+  <a href="../reference/0002-knowledge-cards.html">知识卡册 →</a>
+</nav>
+
+</div>
+
+<script src="../reference/lianmo-progress.js"></script>
+<script>
+LIANMO.visit('L0004');
+LIANMO.autoTrack('L0004');
+// FC 步进器
+var STEPS=[
+ ["user","① 用户提问 · 模型侧收到消息",
+ '{\n  "role": "user",\n  "content": "北京现在多少度？穿什么合适？"\n}'],
+ ["model","② 模型：不编答案，输出「调用意图 + 参数」",
+ 'assistant 回复（含 tool_calls）：\n{\n  "tool_calls": [{\n    "function": {\n      "name": "get_weather",\n      "arguments": "{\\"city\\":\\"北京\\",\\"unit\\":\\"celsius\\"}"\n    }\n  }]\n}\n\n—— 它没有执行任何东西，只是"点了菜"'],
+ ["app","③ 你的程序：真正执行 get_weather（这步在服务器上）",
+ 'const result = await get_weather("北京", "celsius");\n// 查实时接口 → 返回：\n{ "temp": 26, "condition": "晴", "wind": "北风3级" }'],
+ ["feed","④ 结果以 tool 消息回喂给模型（Observation）",
+ '{\n  "role": "tool",\n  "content": "{ \\"temp\\": 26, \\"condition\\": \\"晴\\", \\"wind\\": \\"北风3级\\" }"\n}'],
+ ["done","⑤ 模型：基于真实结果生成最终回答",
+ '"北京现在 26℃、晴、北风 3 级——白天长袖配薄外套就行。"\n\n🎉 全程模型没碰任何代码：它点菜，你的厨房做菜，端回来它尝一口再说话。']
+];
+var cur=0;
+function renderProg(){document.getElementById('fprog').textContent='第 '+cur+' / '+STEPS.length+' 步';}
+document.getElementById('fnext').onclick=function(){
+  if(cur>=STEPS.length)return;
+  var s=STEPS[cur];cur++;
+  var d=document.createElement('div');
+  d.className='fstep fs-'+s[0];
+  d.innerHTML='<span class="role">'+s[1]+'</span><pre>'+s[2]+'</pre>';
+  document.getElementById('fsteps').appendChild(d);
+  renderProg();
+  if(cur===STEPS.length){this.disabled=true;this.textContent='🎉 播放完毕';}
+};
+document.getElementById('freset').onclick=function(){
+  cur=0;document.getElementById('fsteps').innerHTML='';
+  var b=document.getElementById('fnext');b.disabled=false;b.textContent='▶ 下一步';
+  renderProg();
+};
+renderProg();
+// quiz 即时反馈
+var total=document.querySelectorAll('[data-quiz]').length,got=0,done=0;
+document.querySelectorAll('[data-quiz]').forEach(function(q){
+  var fb=q.querySelector('.fb'),okBtn=q.querySelector('[data-ok]');
+  q.querySelectorAll('.opt').forEach(function(b){
+    b.onclick=function(){
+      q.querySelectorAll('.opt').forEach(function(o){o.classList.remove('right','wrong')});
+      if(b.hasAttribute('data-ok')){b.classList.add('right');fb.className='fb ok';fb.textContent='✅ 正确！'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;got++;done++;}}
+      else{b.classList.add('wrong');fb.className='fb no';fb.textContent='❌ 再想想：'+okBtn.getAttribute('data-why');if(!q.dataset.done){q.dataset.done=1;done++;}}
+      document.getElementById('score').textContent=got;
+      var m=document.getElementById('scoremsg');
+      if(done===total){LIANMO.quiz('L0004',got,total);var _r=LIANMO.get('L0004')||{};m.textContent=(got===total?'🏆 全对！Day 02 双题通关，记得去集卡！':(got>=total-1?'👍 很稳，错的那道回看解析':'📖 建议回看 S2 与 S5 再试（刷新重做）'))+'　📅 已自动打卡 '+(_r.doneDate||'');}
+    };
+  });
+});
+</script>
+</body>
+</html>

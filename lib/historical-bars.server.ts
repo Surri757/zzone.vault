@@ -1,5 +1,6 @@
 import "server-only";
 
+import { fetchEast } from "@/lib/em-transport";
 import { MARKET_TIME_ZONE, scheduledSessionState } from "@/lib/market-session";
 import type { StockInstrument, StockMarket } from "@/lib/stock-catalog";
 import type {
@@ -605,18 +606,7 @@ async function fetchEastmoneyBars(instrument: StockInstrument, config: PeriodCon
   url.searchParams.set("end", "20500000");
   url.searchParams.set("lmt", String(config.limit));
 
-  const response = await fetch(url, {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json,text/plain,*/*",
-      Referer: "https://quote.eastmoney.com/",
-      "User-Agent": "Mozilla/5.0",
-    },
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!response.ok) throw new Error(`Eastmoney K-line HTTP ${response.status}`);
-
-  const payload = (await response.json()) as {
+  const payload = (await fetchEast(url.toString(), 12_000)) as {
     data?: { klines?: string[] } | null;
   };
   const rows = payload.data?.klines ?? [];
