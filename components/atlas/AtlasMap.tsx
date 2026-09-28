@@ -16,7 +16,9 @@ import {
 import { MIC_CC, flagImgFor, dataUri as flagUri } from "./atlas-flags";
 import { createGlobeGL, type GlobeGL } from "./globe-gl";
 import satsJson from "@/data/atlas-satellites.json";
-import { parseTLE, propagate, stale, type SatElement } from "@/lib/atlas-sats";
+import starsJson from "@/data/atlas-stars.json";
+import showersJson from "@/data/atlas-showers.json";
+import { parseTLE, propagate, stale, gmstRad, type SatElement } from "@/lib/atlas-sats";
 
 /**
  * 舆图 —— 墨玉灯球（浑天仪骨架）。Canvas 2D 手写闭式正交投影：
@@ -492,6 +494,70 @@ function modelOf(el: SatElement): { size: number; extent: number; parts: ModelPa
   return SAT_MODELS.wx; // LEO 气象/遥感族（NOAA-19）
 }
 
+/* ---- 真值天球（真值天球律：耶鲁亮星表 BSC5P，公有领域，J2000 历元，岁差未改正）----
+ * 视星等→尺寸/亮度档（保序）；B-V→色桶（色相序保真、彩度压背景档）；星座连线不画
+ * （文化图式非天体事实）。投影用折叠前赤道惯性基：星随相机转、不随地球自转（外置相机
+ * 物理正确），zoom 不缩放（无穷远）。银河带=暗星密度自然成晕，非贴图。 ---- */
+const STAR_SIZE = [2.2, 1.8, 1.5, 1.25, 1.0, 0.85]; // 亮度档 0(最亮)→5 尺寸
+const STARS = (() => {
+  const j = starsJson as { n: number; palette: number[][]; ra: number[]; dec: number[]; m: number[]; c: number[] };
+  const n = j.n;
+  const xyz = new Float32Array(n * 3);
+  const tier = new Uint8Array(n);
+  const styleIdx = new Uint8Array(n);
+  const alphaT = [0.85, 0.7, 0.56, 0.44, 0.33, 0.25];
+  const styles: string[] = [];
+  const styleMap = new Map<string, number>();
+  const tierOf = (m: number) => (m <= 0.5 ? 0 : m <= 1.6 ? 1 : m <= 2.5 ? 2 : m <= 3.5 ? 3 : m <= 4.5 ? 4 : 5);
+  for (let i = 0; i < n; i++) {
+    const ra = (j.ra[i] / 65535) * Math.PI * 2;
+    const dec = (j.dec[i] / 100) * (Math.PI / 180);
+    const cd = Math.cos(dec);
+    xyz[i * 3] = Math.cos(ra) * cd;
+    xyz[i * 3 + 1] = Math.sin(ra) * cd;
+    xyz[i * 3 + 2] = Math.sin(dec);
+    const t = tierOf(j.m[i] / 10);
+    tier[i] = t;
+    const p = j.palette[j.c[i]];
+    const s = `rgba(${p[0]}, ${p[1]}, ${p[2]}, ${alphaT[t].toFixed(2)})`;
+    let sid = styleMap.get(s);
+    if (sid === undefined) {
+      sid = styles.length;
+      styles.push(s);
+      styleMap.set(s, sid);
+    }
+    styleIdx[i] = sid;
+  }
+  const order = Int32Array.from(Array.from({ length: n }, (_, i) => i).sort((a, b) => styleIdx[a] - styleIdx[b]));
+  return { n, order, xyz, tier, styleIdx, styles };
+})();
+
+/* ---- 流星雨历法真值层（辐射点条款修订：禁「虚构」汇聚；活跃窗内自真实辐射点出射合法）----
+ * 窗口/峰日/辐射点(J2000)/v∞/ZHR 取 IMO/AMS 2026 气候均值（爆发不预测）；密度感经展示
+ * 压缩、档位序按真实 ZHR；速度→屏速系数、v∞>50 → 镁蓝绿色谱（快流星高空电离），
+ * 慢流星钠橙（现有烧蚀谱即钠色）+ 慢速大款余迹延长（GMN：慢流星余迹率 19% vs 快 2%）。 ---- */
+interface ShowerDef { code: string; name: string; start: [number, number]; end: [number, number]; peak: [number, number]; ra: number; dec: number; v: number; zhr: number }
+const SHOWERS: ShowerDef[] = (showersJson as unknown as { showers: ShowerDef[] }).showers;
+const doy = (md: [number, number]) => Math.floor(Date.UTC(2001, md[0] - 1, md[1]) / 86400000); // 2001 非闰年做无年基准
+const doyNow = (d: Date) => Math.floor(Date.UTC(2001, d.getUTCMonth(), d.getUTCDate()) / 86400000);
+/** 当日活跃雨（边缘爬升×近峰三角；跨年窗按 365 取模）。null=无活跃雨→偶发流星形制（禁汇聚） */
+function pickShower(d: Date): { sh: ShowerDef; w: number } | null {
+  const today = doyNow(d);
+  let best: { sh: ShowerDef; w: number } | null = null;
+  for (const sh of SHOWERS) {
+    const s = doy(sh.start), e = doy(sh.end), p = doy(sh.peak);
+    const since = (today - s + 365) % 365;
+    const len = (e - s + 365) % 365;
+    if (since > len) continue;
+    const toEnd = (e - today + 365) % 365;
+    const half = Math.max(1, (((p - s + 365) % 365) + ((e - p + 365) % 365)) / 2);
+    const toPeak = Math.min((p - today + 365) % 365, (today - p + 365) % 365);
+    const w = Math.min(1, since / 4, toEnd / 4) * Math.max(0, 1 - toPeak / half);
+    if (w > 0.02 && (!best || w > best.w)) best = { sh, w };
+  }
+  return best;
+}
+
 export default function AtlasMap() {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -607,6 +673,9 @@ export default function AtlasMap() {
 
     /* 帧基向量（每帧 4 次三角）：E=视中心方向 N=屏幕上方 Rt=屏幕右方 */
     let Ex = 1, Ey = 0, Ez = 0, Nx = 0, Ny = 0, Nz = 1, Rx = 0, Ry = 1, Rz = 0;
+    // 天球基（折叠前=赤道惯性系）：真星/流星雨辐射点共用——星随相机转、不随地球自转
+    let UEx = 1, UEy = 0, UEz = 0, UNx = 0, UNy = 0, UNz = 1, URx = 0, URy = 1, URz = 0;
+    let sphereTheta0 = 0; // GMST 冻结偏转（仪表钟一次性取值，星与辐射点同门）
     /* ---- 行星在转：地轴 23.44° 倾角 + 持续自转（用户修正案：不要静止的球） ----
      * 自转折叠进投影基向量（B_eff = R_z(spin)ᵀ·R_x(tilt)ᵀ·B_cam）：晨昏图案地理锚定不动、
      * 地表在下面转——与「加速的地球自转」在屏上不可区分，且城市灯/太阳几何全部真值不变。
@@ -677,6 +746,12 @@ export default function AtlasMap() {
           })(),
           satsVis: SAT_ITEMS.reduce((n, s) => n + (s.vis ? 1 : 0), 0),
           satsAll: SAT_ITEMS.length,
+          stars: starsInited ? STARS.n : 0,
+          starsDrawn: starDrawn,
+          shower: (() => {
+            const q = showerNow();
+            return q ? { c: q.sh.code, w: Math.round(q.w * 100) / 100 } : null;
+          })(),
           sat0: (() => {
             const s = SAT_ITEMS.find((q) => q.vis);
             return s ? { x: Math.round(s.x), y: Math.round(s.y), tier: s.el.tier, b: Math.round(s.boost * 100) / 100 } : null;
@@ -698,6 +773,10 @@ export default function AtlasMap() {
         const y2 = -ss * x + cs * y1;
         return [x2, y2, z1];
       };
+      // 天球基：折叠前的相机基（赤道惯性系）——星野与辐射点用
+      URx = -s0; URy = c0; URz = 0;
+      UNx = -s1 * c0; UNy = -s1 * s0; UNz = c1;
+      UEx = c1 * c0; UEy = c1 * s0; UEz = s1;
       const fe = fold(c1 * c0, c1 * s0, s1);
       Ex = fe[0]; Ey = fe[1]; Ez = fe[2];
       const fn = fold(-s1 * c0, -s1 * s0, c1);
@@ -1165,6 +1244,8 @@ export default function AtlasMap() {
       x: number; y: number; vx: number; vy: number;
       life: number; life0: number; len: number;
       big: boolean;
+      cool: boolean; // 快流星（v∞>50km/s）：镁蓝绿谱（高空电离）替代钠橙
+      slowTrain: boolean; // 慢速大款余迹延长（GMN：慢流星余迹率 19% vs 快 2%）
       f: number; ph: number; prevCyc: number; // 脉冲频率/相位/上一拍周期号（相位卷绕检测，低帧率不漏峰）
       flares: number[]; // 碎裂时刻表（age 秒，升序；大流星 1-3 次是文献常态）
       flareT: number; // 当前碎裂耀斑剩余（头辉增强计时）
@@ -1182,6 +1263,25 @@ export default function AtlasMap() {
     let meteorBigAt = 0; // 大流星让位窗（期间只出微流星）
     let lastMeteorAt = 0; // 上次成功生成时刻（空屏补发用）
     const zoneLastAt: number[] = []; // 覆盖均匀：六区（3×2）轮转——最久未服务区优先
+    /* 当日活跃流星雨（历法缓存，UTC 日切刷新；辐射点向量与真星同门过 GMST 冻结偏转） */
+    let showerCache: { sh: ShowerDef; w: number; uX: number; uY: number; uZ: number } | null = null;
+    let showerCacheKey = -1;
+    function showerNow() {
+      const d = new Date();
+      const key = d.getUTCFullYear() * 512 + doyNow(d);
+      if (key === showerCacheKey) return showerCache;
+      showerCacheKey = key;
+      showerCache = null;
+      const pick = pickShower(d);
+      if (!pick) return null;
+      const ra = (pick.sh.ra / 24) * Math.PI * 2;
+      const dec = pick.sh.dec * (Math.PI / 180);
+      const cd = Math.cos(dec);
+      const uX0 = Math.cos(ra) * cd, uY0 = Math.sin(ra) * cd, uZ = Math.sin(dec);
+      const c = Math.cos(sphereTheta0), s = Math.sin(sphereTheta0); // 与星空同一天球
+      showerCache = { sh: pick.sh, w: pick.w, uX: c * uX0 - s * uY0, uY: s * uX0 + c * uY0, uZ };
+      return showerCache;
+    }
     function meteorCount() {
       let n = 0;
       for (const m of meteorPool) if (m) n++;
@@ -1204,7 +1304,7 @@ export default function AtlasMap() {
         }
       }
     }
-    /** 热史色：冷银 → 暖橙 → 炽橙（接近大气层才暖化——烧蚀谱） */
+    /** 热史色：冷银 → 暖橙 → 炽橙（接近大气层才暖化——烧蚀谱；慢流星钠 589nm 主导） */
     function heatColor(heat: number): [number, number, number] {
       if (heat < 0.5) {
         const t = heat / 0.5;
@@ -1212,6 +1312,16 @@ export default function AtlasMap() {
       }
       const t = (heat - 0.5) / 0.5;
       return [255, 180 - 58 * t, 90 - 21 * t];
+    }
+    /** 雨成员谱：快流星（v∞>50km/s）镁 517-518nm 蓝绿主导——冷段青白 → 热段亮绿 */
+    function heatColorFor(m: Meteor, heat: number): [number, number, number] {
+      if (!m.cool) return heatColor(heat);
+      if (heat < 0.5) {
+        const t = heat / 0.5;
+        return [205 + 25 * t, 238 + 6 * t, 250 - 8 * t];
+      }
+      const t = (heat - 0.5) / 0.5;
+      return [170 + 40 * t, 245 - 5 * t, 225 - 35 * t];
     }
     /** 夜半球门控：流星只认太阳（spawn 中点须在背日半屏——昼面物理上看不见流星） */
     function inNightHalf(x: number, y: number, sunV: { Sx: number; Sy: number; Sz: number }) {
@@ -1227,13 +1337,32 @@ export default function AtlasMap() {
       const big = nowP >= meteorBigAt && Math.random() < 0.32;
       if (big) meteorBigAt = nowP + 5000; // 大流星后 5s 让位（盖满整场演出：点火→碎→碎→终爆）
       const diag = Math.hypot(W, H);
-      const speed = diag * (big ? 0.8 + Math.random() * 0.35 : 0.55 + Math.random() * 0.4);
+      let speed = diag * (big ? 0.8 + Math.random() * 0.35 : 0.55 + Math.random() * 0.4);
       const life0 = big ? 1.8 + Math.random() * 0.8 : 0.9 + Math.random() * 0.5;
+      // 历法流星雨层（辐射点条款修订）：活跃窗内成员自真实辐射点出射——轨迹反向延长
+      // 汇聚真辐射点（真值呈现，非虚构汇聚）；辐射点不在视半球→退偶发形制（禁汇聚）
+      const shw = showerNow();
+      let vInf = 0;
+      let isMember = false;
+      let rpx = 0;
+      let rpy = 0;
+      if (shw && Math.random() < 0.3 + 0.5 * shw.w) {
+        const dE = shw.uX * UEx + shw.uY * UEy + shw.uZ * UEz;
+        if (dE > 0.12) {
+          isMember = true;
+          vInf = shw.sh.v;
+          const fSky = diag / 2;
+          rpx = cx + fSky * (shw.uX * URx + shw.uY * URy + shw.uZ * URz);
+          rpy = cy - fSky * (shw.uX * UNx + shw.uY * UNy + shw.uZ * UNz);
+        }
+      }
+      const speedK = 0.78 + 0.42 * clamp((vInf - 20) / 51, 0, 1); // v∞ 归一屏速（20km/s→0.78×，71→1.2×；偶发=1×中值）
+      if (isMember) speed *= speedK;
       // 全员屏幕空间自由路径（高空焚毁律：烧蚀事件空中发生，禁锚球缘/地表）：
-      // 对角扇区两族随机（禁辐射点汇聚）；**六区轮转保证覆盖均匀**（3×2 网格最久未服务区优先，
+      // 对角扇区两族随机（偶发流星禁汇聚）；**六区轮转保证覆盖均匀**（3×2 网格最久未服务区优先，
       // 区内随机取点过夜半门控，全败退避 2s 让位别区，末两次尝试放开全域）
-      const fan = Math.random() < 0.5;
-      const ang = (fan ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
+      const fanAng = (Math.random() < 0.5 ? 20 + Math.random() * 50 : 110 + Math.random() * 50) * (Math.PI / 180);
+      let ang = fanAng;
       if (zoneLastAt.length === 0) for (let zk = 0; zk < 6; zk++) zoneLastAt.push(0);
       let zi = 0;
       for (let zk = 1; zk < 6; zk++) if (zoneLastAt[zk] < zoneLastAt[zi]) zi = zk;
@@ -1252,6 +1381,8 @@ export default function AtlasMap() {
           sx0 = Math.random() * W;
           sy0 = Math.random() * H * 0.45;
         }
+        // 雨成员：出射方向=远离真实辐射点（±3° 散布=真实辐射源散布角），偶发回扇族
+        ang = isMember ? Math.atan2(sy0 - rpy, sx0 - rpx) + (Math.random() - 0.5) * 0.105 : fanAng;
         const mx = sx0 + Math.cos(ang) * speed * life0 * 0.5;
         const my = sy0 + Math.sin(ang) * speed * life0 * 0.5;
         if (inNightHalf(mx, my, sunV)) {
@@ -1261,9 +1392,11 @@ export default function AtlasMap() {
       }
       if (!placed) return false;
       zoneLastAt[zi] = viaZone ? nowP : nowP + 2000; // 区内全败：退避 2s 让别区先走
-      // 入场点火（渲染层淡入闪，不做「进入大气」隐喻）：大款必出、微款五成
-      if (big || Math.random() < 0.5)
-        pushFx({ kind: 2, x: sx0, y: sy0, born: nowP, dur: 0.15, len: big ? 16 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
+      // 入场点火（渲染层淡入闪，不做「进入大气」隐喻）：大款必出、微款五成（雨成员用 v∞ 谱色）
+      if (big || Math.random() < 0.5) {
+        const ic = vInf > 50 ? [135, 240, 205] : [255, 170, 80];
+        pushFx({ kind: 2, x: sx0, y: sy0, born: nowP, dur: 0.15, len: big ? 16 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.45, cr: ic[0], cg: ic[1], cb: ic[2], lineWidth: 0 });
+      }
       // 碎裂时刻表：大款 1-2 次（窄屏 ≤1）、微款 35% 一次——时机不规则（防恒定节拍）
       const flares: number[] = [];
       if (big) {
@@ -1278,7 +1411,8 @@ export default function AtlasMap() {
           vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
           life: life0, life0,
           len: diag * (big ? 0.46 + Math.random() * 0.14 : 0.16 + Math.random() * 0.08),
-          big, f: big ? 2.6 + Math.random() * 0.8 : 3.0 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2,
+          big, cool: vInf > 50, slowTrain: isMember && vInf > 0 && vInf <= 50 && big,
+          f: big ? 2.6 + Math.random() * 0.8 : 3.0 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2,
           prevCyc: -99, flares, flareT: 0,
         };
         return true;
@@ -1292,12 +1426,13 @@ export default function AtlasMap() {
       const Rz2 = R * zoom;
       const rr = Math.hypot(m.x - cx, m.y - cy) / (Rz2 || 1);
       const ringsOk = rr < 0.92 || rr > 1.3;
-      pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.2, len: m.big ? 36 : 16, dx: 0, dy: 0, rmax: 0, a0: 0.95, cr: 255, cg: 170, cb: 80, lineWidth: 0 });
+      const fc = m.cool ? [135, 240, 205] : [255, 170, 80]; // 终爆谱色：钠橙 / 镁蓝绿
+      pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.2, len: m.big ? 36 : 16, dx: 0, dy: 0, rmax: 0, a0: 0.95, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 0 });
       if (ringsOk) {
         if (m.big) {
           const rings = W < 640 ? 3 : 4;
           for (let k = 0; k < rings; k++)
-            pushFx({ kind: 1, x: m.x, y: m.y, born: nowP + k * 40, dur: 0.5, len: 0, dx: 0, dy: 0, rmax: 160, a0: [0.78, 0.6, 0.45, 0.3][k] ?? 0.3, cr: 255, cg: 170, cb: 80, lineWidth: 2.5 });
+            pushFx({ kind: 1, x: m.x, y: m.y, born: nowP + k * 40, dur: 0.5, len: 0, dx: 0, dy: 0, rmax: 160, a0: [0.78, 0.6, 0.45, 0.3][k] ?? 0.3, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 2.5 });
           const sparks = W < 640 ? 8 : 11;
           for (let k = 0; k < sparks; k++) {
             const a = Math.random() * Math.PI * 2;
@@ -1305,7 +1440,7 @@ export default function AtlasMap() {
             pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.4 + Math.random() * 0.25, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.7, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
           }
         } else {
-          pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.4, len: 0, dx: 0, dy: 0, rmax: 42, a0: 0.5, cr: 255, cg: 170, cb: 80, lineWidth: 1.8 });
+          pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.4, len: 0, dx: 0, dy: 0, rmax: 42, a0: 0.5, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 1.8 });
         }
       }
     }
@@ -1313,8 +1448,9 @@ export default function AtlasMap() {
     function flareUp(m: Meteor, nowP: number) {
       m.flareT = 0.3;
       const mag = Math.hypot(m.vx, m.vy) || 1;
+      const fc = m.cool ? [135, 240, 205] : [255, 170, 80];
       pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.15, len: m.big ? 20 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.8, cr: 255, cg: 190, cb: 100, lineWidth: 0 });
-      pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.42, len: 0, dx: 0, dy: 0, rmax: m.big ? 55 : 30, a0: 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 1.8 });
+      pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.42, len: 0, dx: 0, dy: 0, rmax: m.big ? 55 : 30, a0: 0.45, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 1.8 });
       if (m.big) {
         const sparks = W < 640 ? 4 : 5;
         for (let k = 0; k < sparks; k++) {
@@ -1417,7 +1553,10 @@ export default function AtlasMap() {
       if (meteorTimer <= 0) {
         if (spawnMeteor(sunV)) lastMeteorAt = nowP;
         if (Math.random() < 0.3) spawnMeteor(sunV); // 30% 双发（天象感）
-        const mean = W < 640 ? 0.6 : 0.35;
+        // 雨日加密：密度档位序按真实 ZHR（绝对量展示压缩——ZHR 直上=分钟一颗不可视）
+        const mean0 = W < 640 ? 0.6 : 0.35;
+        const shw = showerNow();
+        const mean = mean0 / (shw ? 1 + 1.1 * shw.w * Math.sqrt(shw.sh.zhr / 150) : 1);
         meteorTimer = Math.max(0.15, -Math.log(Math.max(1e-6, Math.random())) * mean);
       }
       // 常驻补发：空屏超 1s 强制一颗；夜半门控全败 0.5s 后再试
@@ -1467,10 +1606,10 @@ export default function AtlasMap() {
           m.prevCyc = cyc;
           const mag0 = Math.hypot(m.vx, m.vy) || 1;
           if (Math.random() < 0.88) {
-            // 余烬结（12% 跳拍——个体不成节拍器，整体频率随颗随机）
-            const hc = heatColor(heat);
+            // 余烬结（12% 跳拍——个体不成节拍器，整体频率随颗随机；慢速雨成员余迹 ×1.9）
+            const hc = heatColorFor(m, heat);
             pushFx({
-              kind: 0, x: m.x, y: m.y, born: nowP, dur: 0.5 + Math.random() * 0.3,
+              kind: 0, x: m.x, y: m.y, born: nowP, dur: (0.5 + Math.random() * 0.3) * (m.slowTrain ? 1.9 : 1),
               len: (m.big ? 16 + Math.random() * 10 : 8 + Math.random() * 6) * (narrow ? 0.7 : 1),
               dx: m.vx / mag0, dy: m.vy / mag0, rmax: 0,
               a0: narrow ? (m.big ? 0.5 : 0.35) : m.big ? 0.7 : 0.45,
@@ -1483,8 +1622,9 @@ export default function AtlasMap() {
             let beatRings = 0;
             for (const fx of fxPool) if (fx && fx.kind === 1 && fx.rmax <= 28) beatRings++;
             if (beatRings < 6) {
+              const bc = m.cool ? [130, 240, 205] : [255, 170, 80];
               const rr0 = m.big ? (narrow ? 18 : 20 + Math.random() * 6) : narrow ? 13 : 15;
-              pushFx({ kind: 1, x: m.x - (m.vx / mag0) * 4, y: m.y - (m.vy / mag0) * 4, born: nowP, dur: 0.25, len: 0, dx: 0, dy: 0, rmax: rr0, a0: m.big ? 0.6 : 0.45, cr: 255, cg: 170, cb: 80, lineWidth: 1.2 });
+              pushFx({ kind: 1, x: m.x - (m.vx / mag0) * 4, y: m.y - (m.vy / mag0) * 4, born: nowP, dur: 0.25, len: 0, dx: 0, dy: 0, rmax: rr0, a0: m.big ? 0.6 : 0.45, cr: bc[0], cg: bc[1], cb: bc[2], lineWidth: 1.2 });
             }
           }
         }
@@ -1498,8 +1638,8 @@ export default function AtlasMap() {
         const dx = m.vx / mag, dy = m.vy / mag;
         const tx2 = m.x - dx * m.len;
         const ty2 = m.y - dy * m.len;
-        const hc = heatColor(heat);
-        // 基线尾（笔断意连）：冷银 → 头端暖化（烧蚀谱）
+        const hc = heatColorFor(m, heat);
+        // 基线尾（笔断意连）：冷银 → 头端暖化（烧蚀谱）/ 快流星青绿化（镁谱）
         const g = ctx.createLinearGradient(tx2, ty2, m.x, m.y);
         g.addColorStop(0, "rgba(226, 236, 255, 0)");
         g.addColorStop(0.6, `rgba(226, 236, 255, ${(a * 0.6).toFixed(3)})`);
@@ -1524,47 +1664,57 @@ export default function AtlasMap() {
       ctx.restore();
     }
 
-    /* ---- 星野（正交投影无穷远：相机惯性静止，星野屏幕静止是物理正确而非将就） ---- */
-    let starsX: Float32Array | null = null;
-    let starsY: Float32Array | null = null;
-    let starsS: Float32Array | null = null;
-    let starsA: Float32Array | null = null;
-    function bakeStars() {
-      const n = W < 640 ? 90 : 170; // 纯随机散点——不得拼出星座/银河/黄道等可解读方向
-      starsX = new Float32Array(n);
-      starsY = new Float32Array(n);
-      starsS = new Float32Array(n);
-      starsA = new Float32Array(n);
-      for (let k = 0; k < n; k++) {
-        starsX[k] = Math.random() * W;
-        starsY[k] = Math.random() * H;
-        const bucket = Math.random();
-        if (bucket < 0.7) {
-          starsS[k] = 0.7 + Math.random() * 0.4;
-          starsA[k] = 0.16 + Math.random() * 0.14;
-        } else if (bucket < 0.95) {
-          starsS[k] = 1.1 + Math.random() * 0.4;
-          starsA[k] = 0.26 + Math.random() * 0.16;
-        } else {
-          starsS[k] = 1.7;
-          starsA[k] = 0.42 + Math.random() * 0.13;
-        }
+    /* ---- 真值天球：BSC5P 真星（正交无穷远——方向过折叠前赤道基；球盘遮星衬托「球在转」）。
+     * 星随拖拽反向流动（外置相机转头）、不随地球自转（惯性系）；zoom 不缩放；无闪烁
+     * （轨道视角无大气折射，真星恒定——闪烁是 v4.7 随机点时代的氛围近似，真值制下废止）。 ---- */
+    let starsInited = false;
+    let starDrawn = 0;
+    let starDegrade = false; // FPS 阀三级降档：截到 2.5 等内
+    function initStarSphere() {
+      if (starsInited) return;
+      starsInited = true;
+      // GMST 冻结偏转：仪表钟一次性取值；此后星-地相对几何由同一自转演化（单钟律，禁混钟）
+      sphereTheta0 = gmstRad(simMs) - spinAngle * RAD;
+      const c = Math.cos(sphereTheta0), s = Math.sin(sphereTheta0);
+      const xyz = STARS.xyz;
+      for (let i = 0; i < STARS.n; i++) {
+        const x = xyz[i * 3], y = xyz[i * 3 + 1];
+        xyz[i * 3] = c * x - s * y;
+        xyz[i * 3 + 1] = s * x + c * y;
       }
     }
-    function drawStars(nowP: number) {
-      if (!starsX || !starsY || !starsS || !starsA || !bootDone) return;
+    function drawStars() {
+      if (!bootDone || !starsInited) return;
+      const cap = Math.min(W < 640 ? 4 : 5, starDegrade ? 3 : 5); // 移动端 4.5 等 ~967 颗 / 阀降 3.5 等 ~317 颗（真值保序截断）
+      const f = Math.hypot(W, H) / 2; // 无穷远：仅方向投影，不随 zoom 缩放
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, W, H);
       ctx.arc(cx, cy, R * zoom, 0, Math.PI * 2);
-      ctx.clip("evenodd"); // 星在球外：球盘遮星，衬托「球在转」
-      for (let k = 0; k < starsX.length; k++) {
-        let a = starsA[k];
-        if (!reduced && k % 27 === 5) a *= 0.55 + 0.45 * Math.sin(nowP * 0.00045 * (1 + (k % 5) * 0.31) + k); // ≤5 颗慢闪
-        ctx.fillStyle = `rgba(215, 225, 245, ${a.toFixed(3)})`;
-        ctx.fillRect(starsX[k], starsY[k], starsS[k], starsS[k]);
+      ctx.clip("evenodd"); // 星在球外：球盘遮星（地球不透明）
+      let last = -1;
+      let nDrawn = 0;
+      const xyz = STARS.xyz;
+      for (let k = 0; k < STARS.n; k++) {
+        const i = STARS.order[k];
+        if (STARS.tier[i] > cap) continue;
+        const x = xyz[i * 3], y = xyz[i * 3 + 1], z = xyz[i * 3 + 2];
+        if (x * UEx + y * UEy + z * UEz <= 0.05) continue; // 视半球外（天球背面）
+        const px = cx + f * (x * URx + y * URy + z * URz);
+        if (px < -2 || px > W + 2) continue;
+        const py = cy - f * (x * UNx + y * UNy + z * UNz);
+        if (py < -2 || py > H + 2) continue;
+        const sid = STARS.styleIdx[i];
+        if (sid !== last) {
+          ctx.fillStyle = STARS.styles[sid];
+          last = sid;
+        }
+        const sz = STAR_SIZE[STARS.tier[i]];
+        ctx.fillRect(px, py, sz, sz);
+        nDrawn++;
       }
       ctx.restore();
+      starDrawn = nDrawn;
     }
 
     /* ---- 真实卫星层：TLE 平均根数传播（真名/真轨道面/真速率）→ 地固投影 ----
@@ -3094,7 +3244,8 @@ export default function AtlasMap() {
           if (!fpsBadSince) fpsBadSince = nowP;
           else if (nowP - fpsBadSince > 3000) {
             if (!narrowModelsOff) narrowModelsOff = true;
-            else meshDegrade = true; // 二级降档：网骨架 k→1
+            else if (!meshDegrade) meshDegrade = true; // 二级降档：网骨架 k→1
+            else starDegrade = true; // 三级降档：天球截到 2.5 等内（真值保序截断，亮星全保）
           }
         } else fpsBadSince = 0;
       }
@@ -3260,7 +3411,7 @@ export default function AtlasMap() {
         }
       }
 
-      drawStars(nowP); // 星野：最底装饰层（球外裁切）
+      drawStars(); // 真值天球：最底装饰层（球外裁切，随相机惯性同动）
       drawMeteors(dtRaw, sunVec); // 流星：球后裁切的栈底层
       drawGraticule(bf.circleP); // 卫星模式网格走墨衬（见 casing），不再压 alpha
       if (!isGL) {
@@ -3833,7 +3984,7 @@ export default function AtlasMap() {
       glr?.resize(Math.max(1, Math.round(W * DPR)), Math.max(1, Math.round(H * DPR)));
       bakeSphere();
       bakeChips();
-      bakeStars();
+      initStarSphere(); // 真值天球：解码单位向量 + GMST 冻结偏转（一次性）
       updateDial(0);
       repaint = true;
       ensureLoop();

@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "src": "IMO/AMS 2026 流星雨日历（经 Wikipedia List of meteor showers 2026-08 版转引）；辐射点 J2000、v∞ km/s、ZHR 为气候均值（爆发不预测）",
+  "note": "密度感经展示压缩，档位序按真实 ZHR；屏幕空间路径为示意，不指示触地",
+  "showers": [
+    { "code": "QUA", "name": "象限仪", "start": [12, 28], "end": [1, 12], "peak": [1, 3], "ra": 15.3, "dec": 49, "v": 41, "zhr": 80 },
+    { "code": "LYR", "name": "天琴", "start": [4, 14], "end": [4, 30], "peak": [4, 22], "ra": 18.1, "dec": 34, "v": 49, "zhr": 18 },
+    { "code": "ETA", "name": "宝瓶η", "start": [4, 19], "end": [5, 28], "peak": [5, 6], "ra": 22.5, "dec": -1, "v": 66, "zhr": 50 },
+    { "code": "SDA", "name": "宝瓶δ南", "start": [7, 12], "end": [8, 23], "peak": [7, 31], "ra": 22.7, "dec": -16, "v": 41, "zhr": 25 },
+    { "code": "PER", "name": "英仙", "start": [7, 17], "end": [8, 24], "peak": [8, 13], "ra": 3.2, "dec": 58, "v": 59, "zhr": 100 },
+    { "code": "DRA", "name": "天龙", "start": [10, 6], "end": [10, 10], "peak": [10, 9], "ra": 17.5, "dec": 54, "v": 20, "zhr": 5 },
+    { "code": "ORI", "name": "猎户", "start": [10, 2], "end": [11, 7], "peak": [10, 21], "ra": 6.3, "dec": 16, "v": 66, "zhr": 20 },
+    { "code": "LEO", "name": "狮子", "start": [11, 6], "end": [11, 30], "peak": [11, 17], "ra": 10.1, "dec": 22, "v": 71, "zhr": 15 },
+    { "code": "GEM", "name": "双子", "start": [12, 4], "end": [12, 20], "peak": [12, 14], "ra": 7.5, "dec": 33, "v": 35, "zhr": 150 },
+    { "code": "URS", "name": "小熊", "start": [12, 17], "end": [12, 26], "peak": [12, 22], "ra": 14.5, "dec": 76, "v": 33, "zhr": 10 },
+    { "code": "STA", "name": "金牛南", "start": [9, 20], "end": [11, 20], "peak": [11, 5], "ra": 3.5, "dec": 15, "v": 27, "zhr": 7 }
+  ]
+}
