@@ -206,6 +206,125 @@ let inflight: Promise<NotesFlowBundle> | null = null;
 let lastAttemptAt = 0;
 let booted = false;
 
+/* ---------------- 腾讯源（2026-09-28 调研+实测定案）：东财失败时的接棒主力 ----------------
+ * proxy.finance.qq.com 板块级全套（匿名、零封禁记录、收盘态三处数值自洽实测）：
+ *   榜单  rank/pt/getRank?board_type=hy|gn（rank_list[].zljlr = 当日累计主力净流入，万元）
+ *   曲线  fundflow/hsfundtab?code=ptXXXX&type=todayFundTrend（minList 全天分钟点，元，
+ *         时间戳 YYYYMMDDHHMM 自带交易日——跨周末日期也正确）
+ * 口径：主力=超大单+大单（≥20万），与东财同下限；数值不逐点相等、排名高度相关。 */
+
+const TX_BASE = "https://proxy.finance.qq.com/cgi/cgi-bin";
+const TX_HEADERS: Record<string, string> = {
+  Accept: "application/json, text/plain, */*",
+  Referer: "https://gu.qq.com/",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+};
+
+async function txJson(path: string): Promise<unknown> {
+  const res = await fetch(`${TX_BASE}${path}`, {
+    cache: "no-store",
+    headers: TX_HEADERS,
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`tencent ${res.status}`);
+  return res.json();
+}
+
+interface TxBoard {
+  code: string;
+  name: string;
+  /** 今日累计主力净流入，亿元 */
+  flowYi: number;
+}
+
+let txRank: { at: number; boards: TxBoard[] } | null = null;
+const TX_RANK_TTL_MS = 5 * 60_000;
+
+/** 腾讯板块榜：行业+概念全量（5 分钟缓存），语义过滤后选头部——与东财口径同构 */
+async function fetchTxRanking(): Promise<TxBoard[]> {
+  if (txRank && Date.now() - txRank.at < TX_RANK_TTL_MS) return txRank.boards;
+  const boards = new Map<string, TxBoard>();
+  for (const bt of ["hy", "gn"]) {
+    for (let offset = 0; offset <= 1000; offset += 200) {
+      const p = (await txJson(
+        `/rank/pt/getRank?board_type=${bt}&sort_type=priceRatio&direct=down&offset=${offset}&count=200`
+      )) as { data?: { rank_list?: Array<Record<string, unknown>> } };
+      const rows = p?.data?.rank_list ?? [];
+      for (const r of rows) {
+        const code = String(r.code ?? "");
+        const name = String(r.name ?? "");
+        const wan = num(r.zljlr); // 万元
+        if (!code.startsWith("pt") || !name || wan === null) continue;
+        if (isAttrBoard(name)) continue;
+        boards.set(code, { code, name, flowYi: Math.round((wan / 1e4) * 1000) / 1000 });
+      }
+      if (rows.length < 200) break;
+    }
+  }
+  const all = [...boards.values()];
+  const inflow = all.filter((b) => b.flowYi > 0).sort((a, b) => b.flowYi - a.flowYi).slice(0, TOP_IN);
+  const outflow = all.filter((b) => b.flowYi < 0).sort((a, b) => a.flowYi - b.flowYi).slice(0, TOP_OUT);
+  const top = [...inflow, ...outflow].sort((a, b) => Math.abs(b.flowYi) - Math.abs(a.flowYi));
+  if (top.length >= 6) txRank = { at: Date.now(), boards: top };
+  return top;
+}
+
+/** 腾讯板块全天分钟曲线：minList 每次返回整条（无需差分/冷热分离） */
+async function fetchTxBoardDay(code: string): Promise<{ date: string; points: NotesFlowPoint[] }> {
+  const p = (await txJson(`/fundflow/hsfundtab?code=${code}&type=todayFundTrend`)) as {
+    data?: { todayFundTrend?: { minList?: Array<Record<string, unknown>> } };
+  };
+  const rows = p?.data?.todayFundTrend?.minList ?? [];
+  const points: NotesFlowPoint[] = [];
+  let date = "";
+  for (const r of rows) {
+    const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(String(r.time ?? ""));
+    const v = num(r.MainNetInflow); // 元
+    if (!m || v === null) continue;
+    if (!date) date = `${m[1]}-${m[2]}-${m[3]}`;
+    points.push({ t: `${m[4]}:${m[5]}`, v: Math.round((v / 1e8) * 1000) / 1000 });
+  }
+  return { date, points };
+}
+
+/** 腾讯整包：榜单 + 全天曲线（每板一请求、8 并发批，容忍度实测极高） */
+async function buildBundleTencent(): Promise<NotesFlowBundle> {
+  const top = await fetchTxRanking();
+  if (top.length < 6) throw new Error("腾讯板块榜不足");
+  const fetched: Array<{ code: string; name: string; date: string; points: NotesFlowPoint[] }> = [];
+  for (let i = 0; i < top.length; i += 8) {
+    const batch = top.slice(i, i + 8);
+    const results = await Promise.allSettled(batch.map((b) => fetchTxBoardDay(b.code)));
+    results.forEach((r, j) => {
+      if (r.status === "fulfilled" && r.value.points.length >= 2) {
+        fetched.push({ code: batch[j].code, name: batch[j].name, date: r.value.date, points: r.value.points });
+      }
+    });
+  }
+  if (fetched.length < Math.max(12, Math.floor(top.length * 0.7))) {
+    throw new Error(`腾讯分钟线存活 ${fetched.length}/${top.length}`);
+  }
+  // 多数派交易日（minList 自带日期，跨周末正确）
+  const dateCounts = new Map<string, number>();
+  for (const f of fetched) dateCounts.set(f.date, (dateCounts.get(f.date) ?? 0) + 1);
+  let date = "";
+  let best = 0;
+  for (const [d, n] of dateCounts) {
+    if (n > best || (n === best && d > date)) {
+      date = d;
+      best = n;
+    }
+  }
+  const series = fetched.filter((f) => f.date === date).map(({ code, name, points }) => ({ code, name, points }));
+  let lastT = "00:00";
+  for (const s of series) {
+    const t = s.points[s.points.length - 1].t;
+    if (t > lastT) lastT = t;
+  }
+  return { asOf: new Date().toISOString(), date, state: stateOf(date, lastT), series };
+}
+
 async function boot(): Promise<void> {
   if (booted) return;
   booted = true;
@@ -273,7 +392,7 @@ async function buildBundle(prev?: NotesFlowBundle): Promise<NotesFlowBundle> {
 /** 全量手记数据：东财直连为主，镜像（GitHub 中继）兜底；失败保留上一份。
  *  双闸：em-transport 的 IP 封禁冷却（请求级）+ guard 熔断（整包级）。
  *  镜像采纳纪律：完整性校验 + asOf 比本地新 + 采纳即落盘成存粮（共生）。 */
-let lastSource: "em" | "github" = "em";
+let lastSource: "em" | "tencent" | "github" = "em";
 
 async function adoptMirrorIfFresher(): Promise<NotesFlowBundle | null> {
   try {
@@ -290,13 +409,28 @@ async function adoptMirrorIfFresher(): Promise<NotesFlowBundle | null> {
   }
 }
 
+/** 东财不可用时的接棒源一：腾讯原生板块接口（同口径、独立风控域） */
+async function tryTencent(): Promise<NotesFlowBundle | null> {
+  try {
+    const bundle = await buildBundleTencent();
+    cached = { at: Date.now(), bundle };
+    lastSource = "tencent";
+    void persistLastGood(bundle);
+    return bundle;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchNotesFlow(): Promise<NotesFlowBundle> {
   await boot();
   const ttl = cached ? TTL_BY_STATE_MS[cached.bundle.state] : 0;
   if (cached && Date.now() - cached.at < ttl) return cached.bundle;
   if (emBanned() || guard.blocked) {
     void probeWhenCool(); // 冷却到期先探针，探针通过才放整包
-    const mirror = await adoptMirrorIfFresher(); // 东财闭闸期间的供数主力
+    const tx = await tryTencent(); // 接棒源一：腾讯原生板块接口
+    if (tx) return tx;
+    const mirror = await adoptMirrorIfFresher(); // 接棒源二：GitHub 中继镜像
     if (mirror) return mirror;
     if (cached && Date.now() - cached.at < STALE_SERVE_MS) return cached.bundle;
     throw new Error(emBanned() ? "行情源 IP 封禁冷却中" : "行情源熔断退避中");
@@ -317,7 +451,9 @@ export async function fetchNotesFlow(): Promise<NotesFlowBundle> {
       return bundle;
     } catch (e) {
       guard.recordFailure();
-      const mirror = await adoptMirrorIfFresher(); // 东财瞬时抖动也让镜像顶上
+      const tx = await tryTencent(); // 东财瞬时抖动（如晚间 520）也由腾讯接棒
+      if (tx) return tx;
+      const mirror = await adoptMirrorIfFresher(); // 再退 GitHub 镜像
       if (mirror) return mirror;
       if (cached && Date.now() - cached.at < STALE_SERVE_MS) return cached.bundle;
       throw e;
@@ -351,7 +487,7 @@ async function probeWhenCool(): Promise<void> {
 /** 诊断快照：健康端点/响应头用 */
 export function flowHealth(): {
   channel: string;
-  source: "em" | "github";
+  source: "em" | "tencent" | "github";
   banned: boolean;
   banRetryInMs: number;
   breakerFailures: number;
