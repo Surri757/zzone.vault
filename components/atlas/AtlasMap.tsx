@@ -47,6 +47,14 @@ const INKPAPER = "201, 212, 228"; // 点阵冷银蓝
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const rgba = (c: [number, number, number], a: number) => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${clamp(a, 0, 1).toFixed(3)})`;
+/** 种子随机（墨晕烘焙/弧段布局要可复现的伪随机流） */
+const mulberry32 = (a: number) => () => {
+  a |= 0;
+  a = (a + 0x6d2b79f5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
 
 const SCRUB_RANGE_MS = 36 * 3600_000; // 刻度盘拨动钳制 ±36h
 const SPRING_SEC = 0.9; // 松手弹回现在
@@ -748,6 +756,11 @@ export default function AtlasMap() {
           satsAll: SAT_ITEMS.length,
           stars: starsInited ? STARS.n : 0,
           starsDrawn: starDrawn,
+          fxK: (() => {
+            const c = [0, 0, 0, 0, 0, 0, 0];
+            for (const f of fxPool) if (f) c[f.kind]++;
+            return c;
+          })(),
           shower: (() => {
             const q = showerNow();
             return q ? { c: q.sh.code, w: Math.round(q.w * 100) / 100 } : null;
@@ -1246,19 +1259,65 @@ export default function AtlasMap() {
       big: boolean;
       cool: boolean; // 快流星（v∞>50km/s）：镁蓝绿谱（高空电离）替代钠橙
       slowTrain: boolean; // 慢速大款余迹延长（GMN：慢流星余迹率 19% vs 快 2%）
+      gen: number; // 级联代数（级联条款：代数≤2、单颗碎裂≤3、逐代递减）
       f: number; ph: number; prevCyc: number; // 脉冲频率/相位/上一拍周期号（相位卷绕检测，低帧率不漏峰）
       flares: number[]; // 碎裂时刻表（age 秒，升序；大流星 1-3 次是文献常态）
       flareT: number; // 当前碎裂耀斑剩余（头辉增强计时）
     }
     interface Fx {
-      kind: 0 | 1 | 2 | 3; // 0=余烬结 1=焚毁冲击环 2=点爆闪光 3=火花
+      kind: 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0=余烬结 1=节拍环 2=点爆闪光 3=火花/溅点 4=泼墨晕 5=笔触弧 6=焦墨渍
       x: number; y: number; born: number; dur: number;
       len: number; dx: number; dy: number; rmax: number; a0: number;
       cr: number; cg: number; cb: number; lineWidth: number;
+      rot?: number; seed?: number; // 4/5/6 专用：墨晕旋转/种子、弧段布局种子
     }
     const meteorPool: Array<Meteor | null> = new Array(16).fill(null);
     const fxPool: Array<Fx | null> = new Array(160).fill(null);
     const FIRE1: [number, number, number] = [255, 170, 80]; // 火橙烧蚀色（2200-3500K；与金/朱、构造银蓝都留距离）
+    /* 泼墨晕精灵（矿彩落纸）：K=12 顶点谐波噪声边缘的不规则墨团（宣纸洇开感），3 种子
+     * 各异 + 偏心浓斑；128 逻辑 px 烘焙，运行时放大重采样=软糊=洇。焦墨渍用深墨同款。 */
+    const inkSpriteCache = new Map<string, HTMLCanvasElement>();
+    function inkSprite(variant: number, color: [number, number, number], dark = false): HTMLCanvasElement {
+      const key = `${variant}:${color.join(",")}:${dark ? 1 : 0}`;
+      const hit = inkSpriteCache.get(key);
+      if (hit) return hit;
+      const S = 128;
+      const c = document.createElement("canvas");
+      c.width = S;
+      c.height = S;
+      const g = c.getContext("2d");
+      if (g) {
+        const rnd = mulberry32(variant * 7919 + (dark ? 41 : 7));
+        const blob = (cx2: number, cy2: number, r0: number, a0: number) => {
+          const K = 12;
+          const pts: Array<[number, number]> = [];
+          const ph = rnd() * Math.PI * 2;
+          for (let i = 0; i < K; i++) {
+            const th = (i / K) * Math.PI * 2;
+            const rr = r0 * (1 + (rnd() - 0.5) * 0.3 + 0.08 * Math.sin(3 * th + ph)); // 谐波幅度收 ±15%（过则污渍）
+            pts.push([cx2 + Math.cos(th) * rr, cy2 + Math.sin(th) * rr]);
+          }
+          g.beginPath();
+          for (let i = 0; i < K; i++) {
+            const p = pts[i], q = pts[(i + 1) % K];
+            const mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2;
+            if (i === 0) g.moveTo((pts[K - 1][0] + p[0]) / 2, (pts[K - 1][1] + p[1]) / 2);
+            g.quadraticCurveTo(p[0], p[1], mx, my);
+          }
+          g.closePath();
+          const rg = g.createRadialGradient(cx2, cy2, r0 * 0.1, cx2, cy2, r0 * 1.15);
+          rg.addColorStop(0, rgba(dark ? [16, 20, 28] : color, a0));
+          rg.addColorStop(0.7, rgba(dark ? [16, 20, 28] : color, a0 * 0.45));
+          rg.addColorStop(1, rgba(dark ? [16, 20, 28] : color, 0));
+          g.fillStyle = rg;
+          g.fill();
+        };
+        blob(S / 2 + (rnd() - 0.5) * 8, S / 2 + (rnd() - 0.5) * 8, S * 0.34, dark ? 0.5 : 0.42);
+        blob(S / 2 + (rnd() - 0.5) * 30, S / 2 + (rnd() - 0.5) * 30, S * 0.18, dark ? 0.34 : 0.28); // 偏心浓斑
+      }
+      inkSpriteCache.set(key, c);
+      return c;
+    }
     let meteorTimer = 0;
     let meteorBigAt = 0; // 大流星让位窗（期间只出微流星）
     let lastMeteorAt = 0; // 上次成功生成时刻（空屏补发用）
@@ -1411,7 +1470,7 @@ export default function AtlasMap() {
           vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
           life: life0, life0,
           len: diag * (big ? 0.46 + Math.random() * 0.14 : 0.16 + Math.random() * 0.08),
-          big, cool: vInf > 50, slowTrain: isMember && vInf > 0 && vInf <= 50 && big,
+          big, cool: vInf > 50, slowTrain: isMember && vInf > 0 && vInf <= 50 && big, gen: 0,
           f: big ? 2.6 + Math.random() * 0.8 : 3.0 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2,
           prevCyc: -99, flares, flareT: 0,
         };
@@ -1419,55 +1478,110 @@ export default function AtlasMap() {
       }
       return false;
     }
-    /** 空中焚毁 boom（寿命尽处原位）：火橙点爆 + 多环错峰 easeOut + 大款火花雨。
-     * 环的落点护栏：爆点落球缘环带（0.92-1.3R）则只闪不环——boom 永不贴 rim 爆（高空焚毁律）。
-     * 扩张环专形按色温分域：流星=火橙烧蚀环，链路收讫=构造银蓝环。 */
+    /** 子碎片真流星（级联条款：反辐射点形制——沿原向小散角前抛 ±10°（ReVelle/2023 CX1），
+     * 逐代更小更短更暗、gen≤2、同屏 ≤4、入池吃同 cap 天然熔断） */
+    function subMeteorsOnscreen() {
+      let n = 0;
+      for (const m of meteorPool) if (m && m.gen > 0) n++;
+      return n;
+    }
+    function spawnSubMeteor(m: Meteor, gen: number): boolean {
+      for (let k = 0; k < meteorPool.length; k++) {
+        if (meteorPool[k]) continue;
+        const a0 = Math.atan2(m.vy, m.vx) + (Math.random() - 0.5) * 0.35;
+        const sp = Math.hypot(m.vx, m.vy) * (0.55 + Math.random() * 0.3);
+        const lf = 0.4 + Math.random() * 0.3;
+        meteorPool[k] = {
+          x: m.x, y: m.y,
+          vx: Math.cos(a0) * sp, vy: Math.sin(a0) * sp,
+          life: lf, life0: lf,
+          len: Math.hypot(W, H) * (0.035 + Math.random() * 0.035) * (gen === 1 ? 1 : 0.7),
+          big: false, cool: m.cool, slowTrain: false, gen,
+          f: 3.4 + Math.random() * 1.4, ph: Math.random() * Math.PI * 2, prevCyc: -99,
+          flares: gen < 2 && Math.random() < 0.4 ? [lf * (0.4 + Math.random() * 0.3)] : [],
+          flareT: 0,
+        };
+        return true;
+      }
+      return false;
+    }
+    /** 墨点飞溅批（点苔法）：快者细短轻、慢者粗长重，大小悬殊；60% 偏运动前锥 */
+    function splashInk(x: number, y: number, dirA: number, n: number, fc: number[], nowP: number) {
+      for (let k = 0; k < n; k++) {
+        const fast = Math.random() < 0.55;
+        const a = Math.random() < 0.6 ? dirA + (Math.random() - 0.5) * 2.6 : Math.random() * Math.PI * 2;
+        const sp = fast ? 120 + Math.random() * 80 : 30 + Math.random() * 50;
+        pushFx({
+          kind: 3, x, y, born: nowP,
+          dur: fast ? 0.3 + Math.random() * 0.15 : 0.5 + Math.random() * 0.3,
+          len: fast ? 2 + Math.random() * 3 : 8 + Math.random() * 6,
+          dx: Math.cos(a) * sp, dy: Math.sin(a) * sp,
+          rmax: 0, a0: fast ? 0.5 + Math.random() * 0.2 : 0.65 + Math.random() * 0.2,
+          cr: fc[0], cg: fc[1], cb: fc[2],
+          lineWidth: fast ? 1 + Math.random() * 0.6 : 2.5 + Math.random() * 1.5,
+        });
+      }
+    }
+    /** 空中终爆（矿彩落纸·水墨形制）：点爆闪（白芯短瞬）→ 泼墨晕（种子墨团错峰洇开）
+     * + 笔触弧（柱面波前沿迹椭圆、分段提按、写意断口）+ 墨点飞溅 + 焦墨渍（沿迹线驻留）
+     * + 子碎片真流星级联。护栏：爆点落球缘环带（0.92-1.3R）只闪不爆（高空焚毁律）。
+     * 谱色保真（v∞ 钠橙/镁绿），朱/金禁借；爆形永不闭合、永不入银蓝（专形分域三通道）。 */
     function burnUp(m: Meteor, nowP: number) {
       const Rz2 = R * zoom;
       const rr = Math.hypot(m.x - cx, m.y - cy) / (Rz2 || 1);
-      const ringsOk = rr < 0.92 || rr > 1.3;
-      const fc = m.cool ? [135, 240, 205] : [255, 170, 80]; // 终爆谱色：钠橙 / 镁蓝绿
-      pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.2, len: m.big ? 36 : 16, dx: 0, dy: 0, rmax: 0, a0: 0.95, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 0 });
-      if (ringsOk) {
-        if (m.big) {
-          const rings = W < 640 ? 3 : 4;
-          for (let k = 0; k < rings; k++)
-            pushFx({ kind: 1, x: m.x, y: m.y, born: nowP + k * 40, dur: 0.5, len: 0, dx: 0, dy: 0, rmax: 160, a0: [0.78, 0.6, 0.45, 0.3][k] ?? 0.3, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 2.5 });
-          const sparks = W < 640 ? 8 : 11;
-          for (let k = 0; k < sparks; k++) {
-            const a = Math.random() * Math.PI * 2;
-            const sp = 40 + Math.random() * 100;
-            pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.4 + Math.random() * 0.25, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.7, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
-          }
-        } else {
-          pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.4, len: 0, dx: 0, dy: 0, rmax: 42, a0: 0.5, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 1.8 });
+      const mag = Math.hypot(m.vx, m.vy) || 1;
+      const dx = m.vx / mag, dy = m.vy / mag;
+      const dirA = Math.atan2(dy, dx);
+      const fc = m.cool ? [135, 240, 205] : [255, 170, 80];
+      const lite = W < 640 || narrowModelsOff; // 爆效降档形（窄屏/FPS 一级阀）
+      pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.12, len: m.big ? 18 : 10, dx: 0, dy: 0, rmax: 0, a0: 0.62, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 0 });
+      if (rr >= 0.92 && rr <= 1.3) return;
+      const seed = (Math.random() * 999) | 0;
+      if (m.big) {
+        // 泼墨晕：3 张种子墨团 0/60/130ms 错峰，前 40% 洇开、尾段收缩
+        pushFx({ kind: 4, x: m.x, y: m.y, born: nowP, dur: 0.46, len: 0, dx, dy, rmax: lite ? 118 : 160, a0: 0.8, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 0, rot: Math.random() * 6.28, seed });
+        // 笔触弧：柱面波前（沿迹椭圆 1.32:0.72）
+        pushFx({ kind: 5, x: m.x, y: m.y, born: nowP + 30, dur: 0.55, len: 0, dx, dy, rmax: lite ? 110 : 145, a0: 0.8, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 8, seed: seed + 1 });
+        splashInk(m.x, m.y, dirA, lite ? 6 : 12, fc, nowP);
+        // 焦墨渍：沿迹线驻留（真实尘埃余迹秒-分级，展示压缩保序）；主爆后 0.2s 落渍
+        pushFx({ kind: 6, x: m.x, y: m.y, born: nowP + 200, dur: 1.3 + Math.random() * 0.3, len: 0, dx, dy, rmax: 48, a0: 0.11, cr: 0, cg: 0, cb: 0, lineWidth: 0, seed });
+        if (m.gen < 2 && subMeteorsOnscreen() < 4) {
+          const n = lite ? 1 : 2;
+          for (let k = 0; k < n; k++) spawnSubMeteor(m, m.gen + 1);
         }
+      } else {
+        pushFx({ kind: 4, x: m.x, y: m.y, born: nowP, dur: 0.3, len: 0, dx, dy, rmax: 62, a0: 0.55, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 0, rot: Math.random() * 6.28, seed });
+        pushFx({ kind: 5, x: m.x, y: m.y, born: nowP + 20, dur: 0.42, len: 0, dx, dy, rmax: 48, a0: 0.6, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 5, seed: seed + 1 });
+        splashInk(m.x, m.y, dirA, lite ? 3 : 5, fc, nowP);
+        pushFx({ kind: 6, x: m.x, y: m.y, born: nowP + 150, dur: 1.1, len: 0, dx, dy, rmax: 24, a0: 0.09, cr: 0, cg: 0, cb: 0, lineWidth: 0, seed });
+        if (m.gen < 2 && Math.random() < 0.3 && subMeteorsOnscreen() < 4) spawnSubMeteor(m, m.gen + 1);
       }
     }
-    /** 碎裂闪爆（bolide fragmentation，空中、时机不规则）：头耀斑 + 小环 + 火花 + 子碎片流星（带微尾前抛） */
+    /** 碎裂闪爆（bolide fragmentation，空中、时机不规则）：白闪 + 泼墨晕小款 + 笔触弧小款
+     * + 墨点飞溅 + 子碎片真流星级联（池满退 fx 微尾——降级链）。慢流星大款余迹感由 knot 承担。 */
     function flareUp(m: Meteor, nowP: number) {
       m.flareT = 0.3;
       const mag = Math.hypot(m.vx, m.vy) || 1;
+      const dx = m.vx / mag, dy = m.vy / mag;
       const fc = m.cool ? [135, 240, 205] : [255, 170, 80];
+      const lite = W < 640 || narrowModelsOff;
+      const seed = (Math.random() * 999) | 0;
       pushFx({ kind: 2, x: m.x, y: m.y, born: nowP, dur: 0.15, len: m.big ? 20 : 12, dx: 0, dy: 0, rmax: 0, a0: 0.8, cr: 255, cg: 190, cb: 100, lineWidth: 0 });
-      pushFx({ kind: 1, x: m.x, y: m.y, born: nowP, dur: 0.42, len: 0, dx: 0, dy: 0, rmax: m.big ? 55 : 30, a0: 0.45, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 1.8 });
-      if (m.big) {
-        const sparks = W < 640 ? 4 : 5;
-        for (let k = 0; k < sparks; k++) {
-          const a = Math.random() * Math.PI * 2;
-          const sp = 30 + Math.random() * 70;
-          pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.35 + Math.random() * 0.2, len: 0, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, rmax: 0, a0: 0.65, cr: 255, cg: 200, cb: 130, lineWidth: 0 });
-        }
-        // 子碎片流星：微尾短命，沿原向 ±20° 偏折前抛（碎裂后多亮块继续飞——物理正确；窄屏 2 粒）
-        {
-          const n = W < 640 ? 2 : 2 + (Math.random() < 0.5 ? 1 : 0);
-          for (let k = 0; k < n; k++) {
-            const dv = (Math.random() - 0.5) * 0.7; // ±20°
-            const ca = Math.cos(dv), sa = Math.sin(dv);
-            const nvx = ((m.vx / mag) * ca - (m.vy / mag) * sa) * mag * (0.6 + Math.random() * 0.2);
-            const nvy = ((m.vx / mag) * sa + (m.vy / mag) * ca) * mag * (0.6 + Math.random() * 0.2);
-            pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.3 + Math.random() * 0.2, len: 14 + Math.random() * 8, dx: nvx, dy: nvy, rmax: 0, a0: 0.75, cr: 255, cg: 210, cb: 140, lineWidth: 2 });
-          }
+      pushFx({ kind: 4, x: m.x, y: m.y, born: nowP, dur: 0.32, len: 0, dx, dy, rmax: m.big ? 85 : 52, a0: 0.6, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 0, rot: Math.random() * 6.28, seed });
+      pushFx({ kind: 5, x: m.x, y: m.y, born: nowP + 20, dur: 0.42, len: 0, dx, dy, rmax: m.big ? 60 : 36, a0: 0.6, cr: fc[0], cg: fc[1], cb: fc[2], lineWidth: 5, seed: seed + 1 });
+      splashInk(m.x, m.y, Math.atan2(dy, dx), m.big ? (lite ? 3 : 5) : 3, fc, nowP);
+      if (m.gen < 2 && subMeteorsOnscreen() < 4) {
+        const n = m.big && !lite ? 2 : 1;
+        for (let k = 0; k < n; k++) spawnSubMeteor(m, m.gen + 1);
+      } else {
+        // 池满降级：fx 微尾碎片（原路径）
+        const n = W < 640 ? 2 : 2 + (Math.random() < 0.5 ? 1 : 0);
+        for (let k = 0; k < n; k++) {
+          const dv = (Math.random() - 0.5) * 0.35;
+          const ca = Math.cos(dv), sa = Math.sin(dv);
+          const nvx = (dx * ca - dy * sa) * mag * (0.6 + Math.random() * 0.2);
+          const nvy = (dx * sa + dy * ca) * mag * (0.6 + Math.random() * 0.2);
+          pushFx({ kind: 3, x: m.x, y: m.y, born: nowP, dur: 0.3 + Math.random() * 0.2, len: 12 + Math.random() * 8, dx: nvx, dy: nvy, rmax: 0, a0: 0.75, cr: 255, cg: 210, cb: 140, lineWidth: 2 });
         }
       }
     }
@@ -1478,21 +1592,54 @@ export default function AtlasMap() {
       ctx.beginPath();
       ctx.rect(0, 0, W, H);
       ctx.arc(cx, cy, R * zoom, 0, Math.PI * 2);
-      ctx.clip("evenodd"); // 焚毁环只剩球外半环＝「从球后冲出、在球缘烧毁」的正确遮挡
-      ctx.globalCompositeOperation = "lighter";
+      ctx.clip("evenodd"); // 爆效只剩球外半形＝「从球后冲出、在球缘烧毁」的正确遮挡
+      // 墨层（减色）：焦墨渍走 normal 合成——lighter 加法混合画不出暗（合成宪法分族）
+      ctx.globalCompositeOperation = "source-over";
       for (let k = 0; k < fxPool.length; k++) {
         const fx = fxPool[k];
-        if (!fx) continue;
+        if (!fx || fx.kind !== 6) continue;
         const age = (nowP - fx.born) / 1000;
-        if (age < 0) continue; // 错峰环未到点
+        if (age < 0) continue;
         const u = age / fx.dur;
         if (u >= 1) {
           fxPool[k] = null;
           continue;
         }
-        const fade = 1 - u;
+        // 焦墨渍：沿迹线驻留（真实余迹是线非点），主爆后落渍、随风漂移、先洇后收
+        const drift = 10 * age;
+        const gx = fx.x + fx.dx * drift, gy = fx.y + fx.dy * drift;
+        const size = fx.rmax * (0.5 + 0.7 * (1 - Math.pow(1 - Math.min(1, u * 2), 3))) * (1 - 0.18 * smoothstep(0.7, 1, u));
+        const a6 = fx.a0 * smoothstep(0, 0.25, u) * Math.pow(1 - smoothstep(0.45, 1, u), 1.2);
+        const ang6 = Math.atan2(fx.dy, fx.dx);
+        const spr = inkSprite(fx.seed ?? 0, [0, 0, 0], true);
+        ctx.globalAlpha = clamp(a6, 0, 1);
+        ctx.save();
+        ctx.translate(gx - fx.dx * size * 0.9, gy - fx.dy * size * 0.9);
+        ctx.rotate(ang6);
+        ctx.scale((size * 2.3) / 128, (size * 0.85) / 128);
+        ctx.drawImage(spr, -64, -64);
+        ctx.restore();
+        ctx.save();
+        ctx.translate(gx + fx.dx * size * 0.5, gy + fx.dy * size * 0.5);
+        ctx.rotate(ang6);
+        ctx.scale((size * 1.5) / 128, (size * 0.7) / 128);
+        ctx.globalAlpha = clamp(a6 * 0.8, 0, 1);
+        ctx.drawImage(inkSprite((fx.seed ?? 0) + 1, [0, 0, 0], true), -64, -64);
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      }
+      // 光层（加色）：余烬/节拍环/闪/溅点/泼墨晕/笔触弧
+      ctx.globalCompositeOperation = "lighter";
+      for (let k = 0; k < fxPool.length; k++) {
+        const fx = fxPool[k];
+        if (!fx || fx.kind === 6) continue;
+        const age = (nowP - fx.born) / 1000;
+        if (age < 0) continue; // 错峰层未到点
+        const u = age / fx.dur;
+        if (u >= 1) continue; // 已在墨层遍历中回收（kind6 不在则在此回收）
         if (fx.kind === 0) {
           // 余烬结：原地驻留渐隐收缩（喷流 knot；冻结生成时热色＝热史）
+          const fade = 1 - u;
           const bx = fx.x - fx.dx * fx.len * (0.4 + 0.6 * fade);
           const by = fx.y - fx.dy * fx.len * (0.4 + 0.6 * fade);
           ctx.strokeStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
@@ -1502,7 +1649,8 @@ export default function AtlasMap() {
           ctx.lineTo(fx.x + fx.dx * 2, fx.y + fx.dy * 2);
           ctx.stroke();
         } else if (fx.kind === 1) {
-          // 焚毁冲击环：easeOut 扩张、变细变淡（boom 一圈圈）
+          // 节拍能量环（头后尾喷位小环）：easeOut 扩张、变细变淡
+          const fade = 1 - u;
           const eo = 1 - Math.pow(1 - u, 2.2);
           ctx.strokeStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
           ctx.lineWidth = Math.max(0.4, fx.lineWidth * fade);
@@ -1511,6 +1659,7 @@ export default function AtlasMap() {
           ctx.stroke();
         } else if (fx.kind === 2) {
           // 点爆闪光：暖 glow + 白芯快闪
+          const fade = 1 - u;
           const s = fx.len * (0.6 + 0.6 * (1 - fade));
           ctx.globalAlpha = clamp(fx.a0 * fade, 0, 1);
           ctx.drawImage(glowSprite([fx.cr, fx.cg, fx.cb]), fx.x - s, fx.y - s, s * 2, s * 2);
@@ -1519,8 +1668,52 @@ export default function AtlasMap() {
           ctx.beginPath();
           ctx.arc(fx.x, fx.y, 2 + fx.len * 0.08 * fade, 0, Math.PI * 2);
           ctx.fill();
+        } else if (fx.kind === 4) {
+          // 泼墨晕（矿彩落纸）：3 张种子墨团错峰洇开（60/130ms），前 40% 洇开、尾段收缩——墨是被纸吃掉的
+          const nStamp = fx.rmax >= 80 ? 3 : 2;
+          for (let i = 0; i < nStamp; i++) {
+            const t0 = i * 0.06;
+            const ui = clamp((age - t0) / Math.max(0.12, fx.dur - t0), 0, 1);
+            if (ui <= 0) continue;
+            const g4 = smoothstep(0, 0.4, ui);
+            const ctr = 1 - 0.3 * smoothstep(0.5, 1, ui);
+            const sc = (fx.rmax * (0.15 + 0.85 * g4 * ctr) * (1 - i * 0.22)) / 128;
+            ctx.globalAlpha = clamp(fx.a0 * Math.pow(1 - ui, 1.4) * (i === 0 ? 1 : 0.8), 0, 1);
+            ctx.save();
+            ctx.translate(fx.x, fx.y);
+            ctx.rotate((fx.rot ?? 0) + i * 2.4);
+            ctx.scale(sc, sc * (0.9 + 0.12 * i));
+            ctx.drawImage(inkSprite(((fx.seed ?? 0) + i) % 3, [fx.cr, fx.cg, fx.cb]), -64, -64);
+            ctx.restore();
+          }
+          ctx.globalAlpha = 1;
+        } else if (fx.kind === 5) {
+          // 笔触弧（柱面波前）：非闭合弧段沿轨迹椭圆取向，分段变宽（提按）、段间写意断口
+          const fade = 1 - u;
+          const eo = 1 - Math.pow(1 - u, 2.6);
+          const rB = 8 + (fx.rmax - 8) * eo;
+          const rnd5 = mulberry32((fx.seed ?? 1) * 2654435761);
+          let a5 = rnd5() * Math.PI * 2;
+          const spans = fx.rmax >= 100 ? [0.32, 0.26, 0.2] : [0.4, 0.28];
+          ctx.save();
+          ctx.translate(fx.x, fx.y);
+          ctx.rotate(Math.atan2(fx.dy, fx.dx));
+          ctx.scale(1.32, 0.72); // 柱面冲击波沿轨迹拉长（ReVelle 2004）
+          ctx.lineCap = "round";
+          for (let s5 = 0; s5 < spans.length; s5++) {
+            const span = spans[s5] * Math.PI * 2 * (0.85 + rnd5() * 0.3);
+            a5 += 0.22 + rnd5() * 0.55; // 写意断口
+            ctx.strokeStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
+            ctx.lineWidth = Math.max(0.5, fx.lineWidth * (1 - s5 * 0.28) * (0.45 + 0.55 * fade)); // 提按：逐段收细（尾段保厚）
+            ctx.beginPath();
+            ctx.arc(0, 0, rB * (0.98 + rnd5() * 0.04), a5, a5 + span);
+            ctx.stroke();
+            a5 += span;
+          }
+          ctx.restore();
         } else {
-          // 火花/子碎片：外抛阻尼渐隐；len>0 的变体带微尾（碎裂后多亮块继续飞）
+          // 墨点飞溅/子碎片：外抛阻尼渐隐；len>0 变体带拖尾（大小悬殊——快者细短、慢者粗长）
+          const fade = 1 - u;
           fx.x += fx.dx * dt;
           fx.y += fx.dy * dt;
           if (fx.len > 0) {
@@ -1540,9 +1733,16 @@ export default function AtlasMap() {
           }
           ctx.fillStyle = `rgba(${fx.cr}, ${fx.cg}, ${fx.cb}, ${(fx.a0 * fade).toFixed(3)})`;
           ctx.beginPath();
-          ctx.arc(fx.x, fx.y, fx.len > 0 ? 1.8 : 1.3 * fade + 0.4, 0, Math.PI * 2);
+          ctx.arc(fx.x, fx.y, fx.len > 0 ? 1.4 + fx.lineWidth * 0.3 : 1.3 * fade + 0.4, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+      // 光层遍历中统一回收（kind6 已在墨层回收）
+      for (let k = 0; k < fxPool.length; k++) {
+        const fx = fxPool[k];
+        if (!fx) continue;
+        const u = (nowP - fx.born) / 1000 / fx.dur;
+        if (u >= 1) fxPool[k] = null;
       }
       ctx.restore();
     }
@@ -4032,6 +4232,13 @@ export default function AtlasMap() {
         velYaw = 0;
         ensureLoop();
       };
+      // 爆效验收钩子：定点引爆（burn）/空中碎裂（flare）
+      (window as unknown as Record<string, unknown>).__atlasBurst = (x: number, y: number, ang = -0.55, big = true, flare = false) => {
+        const sp = Math.hypot(W, H) * 0.55;
+        const m: Meteor = { x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 0, life0: 1, len: 0, big, cool: false, slowTrain: false, gen: 0, f: 3, ph: 0, prevCyc: -99, flares: [], flareT: 0 };
+        if (flare) flareUp(m, performance.now());
+        else burnUp(m, performance.now());
+      };
     }
     ensureLoop();
 
@@ -4075,6 +4282,7 @@ export default function AtlasMap() {
       cancelAnimationFrame(raf);
       glr?.dispose();
       delete (window as unknown as Record<string, unknown>).__atlasSetView;
+      delete (window as unknown as Record<string, unknown>).__atlasBurst;
       delete (window as unknown as Record<string, unknown>).__atlasView;
       clearTimeout(boundaryTimer);
       clearInterval(safetyTimer);
