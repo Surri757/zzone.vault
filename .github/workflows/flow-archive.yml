@@ -50,17 +50,19 @@ jobs:
           set -e
           DATE=$(python3 -c "import json;print(json.load(open('/tmp/latest.json'))['date'])")
           STATE=$(python3 -c "import json;print(json.load(open('/tmp/latest.json'))['state'])")
+          cd "$GITHUB_WORKSPACE"
+
+          # 无 checkout 的裸工作区：自建 git，孤儿单提交 force-push——仓库体积恒定，不碰部署触发（main）
+          git init -q .
           git config user.name "flow-relay-bot"
           git config user.email "actions@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
-          # 孤儿分支单 commit force-push：仓库体积恒定，不碰部署触发（main）
-          if git fetch --depth 2 origin data/flow; then
-            git checkout -q -B data/flow FETCH_HEAD
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin data/flow; then
+            git checkout -q -f --orphan relay origin/data/flow # 带旧档起步（保住 d/ 历史）
+            git rm -rq --cached . 2>/dev/null || true
           else
-            git checkout -q --orphan data/flow
+            git symbolic-ref HEAD refs/heads/relay
           fi
-          git rm -rq --cached . 2>/dev/null || true
           find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} + 2>/dev/null || true
           mkdir -p d
           cp /tmp/latest.json latest.json
@@ -68,10 +70,10 @@ jobs:
           # 定稿规则：显式要求，或已收盘（15:30 定稿 run / 收盘后的时段快照自然满足）
           if [ "$FORCE_FINALIZE" = "true" ] || [ "$STATE" = "收盘" ]; then
             cp /tmp/latest.json "d/${DATE}.json"
-            ls -1t d/*.json 2>/dev/null | tail -n +41 | xargs -r rm -f # 只留最近 40 个日档
+            ls -1 d/*.json 2>/dev/null | sort | tail -n +41 | xargs -r rm -f # 只留最近 40 个日档
           fi
 
           git add latest.json d
           git commit -q -m "flow relay ${DATE} $(date -u +%H:%M)Z"
-          git push -q --force origin data/flow
+          git push -q --force origin relay:data/flow
           echo "relayed: latest.json$( [ -f "d/${DATE}.json" ] && echo " + d/${DATE}.json (finalized)" )"
