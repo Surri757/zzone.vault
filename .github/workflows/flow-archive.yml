@@ -33,7 +33,7 @@ jobs:
           WORKER_URL: https://zzone-vault.private-trade-console.workers.dev/api/notes/flow
         run: |
           set -e
-          curl -sS --max-time 25 --retry 1 -o /tmp/latest.json "$WORKER_URL"
+          curl -sS --max-time 90 --retry 2 --retry-delay 5 -o /tmp/latest.json "$WORKER_URL"
           python3 - <<'EOF'
           import json
           b = json.load(open('/tmp/latest.json'))
