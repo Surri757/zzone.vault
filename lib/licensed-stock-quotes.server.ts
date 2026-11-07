@@ -104,9 +104,31 @@ function parseTushareTimestamp(row: Record<string, unknown>) {
   return new Date(0);
 }
 
+/** 持牌源出网边界（CWE-918 加固）：env 配置同样要过协议+主机校验——
+ *  仅 https，拒绝环回/私网/链路本地/云元数据端点，防配置被篡改后直打内网。 */
+function tushareEndpoint(): string {
+  const raw = process.env.TUSHARE_API_URL || "https://api.tushare.pro";
+  const u = new URL(raw);
+  const h = u.hostname.toLowerCase();
+  const blocked =
+    u.protocol !== "https:" ||
+    h === "localhost" ||
+    h === "0.0.0.0" ||
+    h === "metadata.google.internal" ||
+    h.endsWith(".local") ||
+    h.endsWith(".internal") ||
+    /^127\./.test(h) ||
+    /^10\./.test(h) ||
+    /^192\.168\./.test(h) ||
+    /^169\.254\./.test(h) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(h);
+  if (blocked) throw new Error(`TUSHARE_API_URL 未过出网边界校验: ${u.host}`);
+  return u.origin;
+}
+
 async function fetchTushareQuotes(instruments: StockInstrument[], token: string) {
   const byCode = new Map(instruments.map((instrument) => [tushareCode(instrument), instrument]));
-  const response = await fetch(process.env.TUSHARE_API_URL || "https://api.tushare.pro", {
+  const response = await fetch(tushareEndpoint(), {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
