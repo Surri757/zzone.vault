@@ -17,12 +17,26 @@ TEXT = "Welcome to Ninglo's World."
 OUT_NAME = "inter-600-subset.ttf"
 SRC_URL = f"https://cdn.jsdelivr.net/npm/@fontsource/{FAMILY}@5.2.8/files/{FAMILY}-latin-{WEIGHT}-normal.woff2"
 
+
+def assert_public_https(url: str) -> str:
+    """出网边界校验：仅 https，仅限字体 CDN 域名白名单（CWE-918 加固）。"""
+    from urllib.parse import urlparse
+
+    allowed_hosts = {"cdn.jsdelivr.net"}
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if parsed.scheme != "https":
+        raise ValueError(f"font source must be https: {url}")
+    if host not in allowed_hosts:
+        raise ValueError(f"font source host not in allowlist: {host}")
+    return url
+
 # Output goes to the repo-root public/, not scripts/public/.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_PATH = os.path.join(REPO_ROOT, "public", OUT_NAME)
 
 req = urllib.request.Request(
-    SRC_URL,
+    assert_public_https(SRC_URL),
     headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
