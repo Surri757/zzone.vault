@@ -96,6 +96,7 @@ const ATTR_EXACT = new Set([
 ]);
 const ATTR_PREFIX = [
   "昨日", "连续", "机构重仓", "基金重仓", "社保重仓", "QFII重仓", "券商重仓", "保险重仓", "信托重仓",
+  "基金减仓", "机构减仓", "主力减仓",
   "融资融券", "转融券", "沪股通", "深股通", "MSCI", "富时", "标普", "标准普尔", "HS", "上证", "沪深", "中证", "深证", "深成",
   "创业板", "科创板", "北交所", "百元", "低价", "高价", "破净", "绩优", "微盘", "ST", "*ST", "次新", "近端",
   "股权激励", "员工持", "回购", "增持", "举牌", "预盈", "预亏", "壳", "注册制", "东方财富", "同花顺", "转债",
@@ -361,6 +362,13 @@ async function buildBundle(prev?: NotesFlowBundle): Promise<NotesFlowBundle> {
   );
 
   const series: NotesFlowSeries[] = [];
+  // 交易日多数派：fflow 整条与差分线都自带真实交易日（周末/盘前给的是上一交易日，
+  // 不能拿墙钟日覆盖——否则周五数据被标成周六、周一盘前被误判「盘中」空转打源）
+  const dateTally = new Map<string, number>();
+  const tally = (d: string) => {
+    if (d) dateTally.set(d, (dateTally.get(d) ?? 0) + 1);
+  };
+  const prevDate = sameDay && prev ? prev.date : "";
   let consecFails = 0;
   for (const b of snapshot) {
     const base = prevByCode.get(b.code);
@@ -371,6 +379,7 @@ async function buildBundle(prev?: NotesFlowBundle): Promise<NotesFlowBundle> {
         points.push({ t: now.hm, v: b.flowYi });
       }
       series.push({ code: b.code, name: b.name, points });
+      tally(prevDate);
       continue;
     }
     // 新面孔/跨日/缓存缺失：整条全天历史（fflow）
@@ -378,6 +387,7 @@ async function buildBundle(prev?: NotesFlowBundle): Promise<NotesFlowBundle> {
       const day = await fetchBoardFlowDay(b.code);
       if (day.points.length >= 2) {
         series.push({ code: b.code, name: b.name, points: day.points });
+        tally(day.date);
         consecFails = 0;
         continue;
       }
@@ -389,18 +399,27 @@ async function buildBundle(prev?: NotesFlowBundle): Promise<NotesFlowBundle> {
     // 别把 Cloudflare 子请求预算（50/次）爬光在必死的循环上
     if (consecFails >= 5) throw new Error("fflow 连续失败，源异常止损");
     // fflow 也拿不到（停牌/新股板块）：至少把快照现值记成单点线
+    // （单点线无日期证据，不参与多数派）
     series.push({ code: b.code, name: b.name, points: [{ t: now.hm, v: b.flowYi }] });
   }
   if (series.length < Math.max(12, Math.floor(snapshot.length * 0.7))) {
     throw new Error(`分钟线存活 ${series.length}/${snapshot.length}，疑被限流`);
   }
 
+  // 交易日 = 多数派（平票取较新，与腾讯整包同法）；全无证据才退墙钟日
+  let date = "";
+  let best = 0;
+  for (const [d, n] of dateTally) {
+    if (n > best || (n === best && d > date)) {
+      date = d;
+      best = n;
+    }
+  }
+  if (!date) date = now.date;
   let lastT = "00:00";
-  let date = sameDay && prev ? prev.date : "";
   for (const s of series) {
     const t = s.points[s.points.length - 1].t;
     if (t > lastT) lastT = t;
-    if (!date) date = now.date; // 差分包以墙钟日为准；fflow 整条日与之同日（快照为今日盘）
   }
   return { asOf: new Date().toISOString(), date, state: stateOf(date, lastT), series };
 }
@@ -451,11 +470,12 @@ export async function fetchNotesFlow(): Promise<NotesFlowBundle> {
     if (cached && Date.now() - cached.at < STALE_SERVE_MS) return cached.bundle;
     throw new Error(emBanned() ? "行情源 IP 封禁冷却中" : "行情源熔断退避中");
   }
+  // 合并先于节流：冷启动整包慢（>5s）时，续击并入 inflight 而非假失败
+  if (inflight) return inflight;
   if (Date.now() - lastAttemptAt < MIN_INTERVAL_MS) {
     if (cached) return cached.bundle;
     throw new Error("行情手记尚未就绪");
   }
-  if (inflight) return inflight;
   lastAttemptAt = Date.now();
   const run = (async () => {
     try {
