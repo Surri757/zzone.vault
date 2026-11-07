@@ -762,7 +762,7 @@ section[id] {
 }
 
 .exit-tint.is-active {
-  opacity: 0.94;
+  opacity: 1;
 }
 
 /* —— BOOT 过渡：Apple 开机式节奏——徽标呼吸 + 发丝进度，随后整层淡出落入大厅 —— */

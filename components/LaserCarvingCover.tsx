@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * 激光点火封面（v10 —— 火花 · 热浪 · 相机 · 挂字猫）
+ * 激光点火封面（v12 —— 锐利焦点 · 火花 · 热浪 · 相机 · 挂字猫）
+ *
+ * 双层光学：主画布 engrave–cool 期失焦 scale(1.02)/blur(3px)，只承载熔池余晖与热浪（热 haze）；
+ * 焦点针尖 / 垂直光束 / anamorphic 横条 / 火花画在永远锐利的 fx 层——背景失焦而焦点锐利，景深与机器感所在。
  *
  * 时间轴与几何解耦，跨设备恒定 ~3.1s：
- *   0         首帧给出"未点亮蓝图"（轮廓 16% + 填充 5%），画布失焦 scale(1.02)/blur(3px)，
- *             相机停在推入起点 scale(1.035)
+ *   0         首帧给出"未点亮蓝图"（轮廓 16% + 填充 5%），相机停在推入起点 scale(1.035)
  *   0–0.70s   一束激光自顶垂下，沿轮廓一次扫过；熔池过曝余晖 + 1/4 降采样 bloom；
  *             激光头持续飞溅火花（加法混合 + 重力），热区按行水平扭动（热浪）
  *   0.70s     熄刀：光束 120ms 内熄灭 + 头部暖白闪 + 一次径向爆花，anamorphic 横条闪 260ms
@@ -21,7 +23,6 @@ import { useRouter } from "next/navigation";
  *             阻尼单摆两三个来回收敛，异瞳点亮（近蓝远金），慢眨 → 微风接管常驻：
  *             悬挂微摆 / 三关节尾巴欢快摇 / 随待机微光眨眼 / 四芒星眼神偶发；
  *             Enter 给摆一个冲量（鞠躬告别）+ 右眼香槟金
- *   荧幕感工艺：engrave–cool 期上下 letterbox 黑边 + 胶片颗粒（fx 层，reveal 后渐退归零）
  *
  * 任意 pointerdown / keydown / wheel 立即跳到终态（coda 则猫一步挂稳）。reduced-motion 直接终态含挂猫。
  */
@@ -284,6 +285,8 @@ export default function LaserCarvingCover() {
     let released = false;
 
     let headX = 0, headY = 0;
+    /** 锐利前景（fx 层）光事件强度：焦点/光束/横条画在无模糊画布上，熔池余晖留在失焦主画布 */
+    let headAlpha = 0, beamAlpha = 0, streakK = 0;
     /** 光标 specular：目标/平滑位置（屏幕坐标），idle 超时后停止唤醒 */
     let specTX = 0, specTY = 0, specX = 0, specY = 0;
     let specAwake = false;
@@ -316,9 +319,6 @@ export default function LaserCarvingCover() {
     let catPX = 0, catPY = 0, catScale = 1, catLen = 0;
     /** live 常驻期隔帧降耗（~30fps），事件帧恢复满帧 */
     let frameParity = 0;
-    /** 胶片颗粒：96px 双色噪声 tile，每 90ms 换随机偏移 */
-    let grainC: HTMLCanvasElement | null = null;
-    let grainOx = 0, grainOy = 0, grainClock = 0;
 
     function makeCanvas(w: number, h: number) {
       const c = document.createElement("canvas");
@@ -327,26 +327,6 @@ export default function LaserCarvingCover() {
       const g = c.getContext("2d")!;
       g.scale(DPR, DPR);
       return { c, g };
-    }
-
-    /** v9 胶片颗粒 tile：双色（黑/白）稀疏像素，α 直接烘焙进位图，运行时零逐像素成本 */
-    function buildGrain() {
-      const s = 96;
-      const c = document.createElement("canvas");
-      c.width = s;
-      c.height = s;
-      const g = c.getContext("2d");
-      if (!g) return;
-      const img = g.createImageData(s, s);
-      for (let i = 0; i < img.data.length; i += 4) {
-        const v = Math.random() < 0.5 ? 255 : 0;
-        img.data[i] = v;
-        img.data[i + 1] = v;
-        img.data[i + 2] = v;
-        img.data[i + 3] = Math.random() < 0.22 ? Math.round(50 + Math.random() * 90) : 0;
-      }
-      g.putImageData(img, 0, 0);
-      grainC = c;
     }
 
     // ===== 离屏文字层（opentype 路径绘制，与雕刻路径完全对齐）=====
@@ -611,8 +591,8 @@ export default function LaserCarvingCover() {
       out.lineCap = "round";
       out.lineJoin = "round";
       const passes: [number, number][] = [
-        [line!.size * 0.2, 0.3],
-        [line!.size * 0.06, 0.95]
+        [line!.size * 0.13, 0.14],
+        [line!.size * 0.05, 0.55]
       ];
       for (const [width, amp] of passes) {
         out.lineWidth = width;
@@ -641,10 +621,10 @@ export default function LaserCarvingCover() {
       g.globalCompositeOperation = "lighter";
       g.lineCap = "round";
       g.lineJoin = "round";
-      g.lineWidth = line!.size * 0.55;
+      g.lineWidth = line!.size * 0.24;
       walk(from, headDist, (sx, sy, ex, ey, d) => {
         const mid = (d + from) * 0.5;
-        const k = Math.exp(-(headDist - mid) / MOLTEN_PX) * 0.5 * scale;
+        const k = Math.exp(-(headDist - mid) / MOLTEN_PX) * 0.18 * scale;
         if (k < 0.01) return;
         g.strokeStyle = `rgba(255,255,255,${k.toFixed(3)})`;
         g.beginPath(); g.moveTo(sx, sy); g.lineTo(ex, ey); g.stroke();
@@ -657,61 +637,73 @@ export default function LaserCarvingCover() {
       ctx.restore();
     }
 
-    /** 一束从顶垂下的激光：机器感的全部来源 */
-    function drawBeam(x: number, y: number, alpha: number) {
+    /** 一束从顶垂下的激光：机器感的全部来源（画在锐利 fx 层） */
+    function drawBeam(out: CanvasRenderingContext2D, x: number, y: number, alpha: number) {
       if (alpha <= 0) return;
-      ctx.save();
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      ctx.globalCompositeOperation = "lighter";
-      const g = ctx.createLinearGradient(0, 0, 0, y);
+      out.save();
+      out.setTransform(DPR, 0, 0, DPR, 0, 0);
+      out.globalCompositeOperation = "lighter";
+      const g = out.createLinearGradient(0, 0, 0, y);
       g.addColorStop(0, "rgba(226,236,255,0)");
-      g.addColorStop(0.72, `rgba(226,236,255,${(0.05 * alpha).toFixed(3)})`);
-      g.addColorStop(1, `rgba(236,242,255,${(0.16 * alpha).toFixed(3)})`);
-      ctx.fillStyle = g;
-      ctx.fillRect(x - 0.75, 0, 1.5, y);
-      ctx.restore();
+      g.addColorStop(0.72, `rgba(226,236,255,${(0.07 * alpha).toFixed(3)})`);
+      g.addColorStop(1, `rgba(236,242,255,${(0.3 * alpha).toFixed(3)})`);
+      out.fillStyle = g;
+      out.fillRect(x - 0.75, 0, 1.5, y);
+      // 外层柔光柱：让光束在纯黑里可读，仍保持针尖细核
+      const halo = out.createLinearGradient(0, 0, 0, y);
+      halo.addColorStop(0, "rgba(226,236,255,0)");
+      halo.addColorStop(1, `rgba(226,236,255,${(0.08 * alpha).toFixed(3)})`);
+      out.fillStyle = halo;
+      out.fillRect(x - 3, 0, 6, y);
+      out.restore();
     }
 
-    /** 光学三层光斑：白热核 + 紧贴 bloom + 环境散射，无 shadowBlur */
-    function drawHead(x: number, y: number, alpha: number) {
+    /** 光学三层光斑：白热核 + 紧贴 bloom + 环境散射，无 shadowBlur（锐利 fx 层） */
+    function drawHead(out: CanvasRenderingContext2D, x: number, y: number, alpha: number) {
       if (alpha <= 0) return;
-      const r = Math.max(1.2, line!.size * 0.016);
-      ctx.save();
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      ctx.globalCompositeOperation = "lighter";
-      const ambient = ctx.createRadialGradient(x, y, 0, x, y, r * 22);
+      const r = Math.max(1.4, line!.size * 0.02);
+      out.save();
+      out.setTransform(DPR, 0, 0, DPR, 0, 0);
+      out.globalCompositeOperation = "lighter";
+      const ambient = out.createRadialGradient(x, y, 0, x, y, r * 22);
       ambient.addColorStop(0, `rgba(226,232,244,${(0.06 * alpha).toFixed(3)})`);
       ambient.addColorStop(1, "rgba(226,232,244,0)");
-      ctx.fillStyle = ambient;
-      ctx.beginPath(); ctx.arc(x, y, r * 22, 0, Math.PI * 2); ctx.fill();
-      const bloom = ctx.createRadialGradient(x, y, 0, x, y, r * 7);
+      out.fillStyle = ambient;
+      out.beginPath(); out.arc(x, y, r * 22, 0, Math.PI * 2); out.fill();
+      const bloom = out.createRadialGradient(x, y, 0, x, y, r * 7);
       bloom.addColorStop(0, `rgba(255,255,255,${(0.34 * alpha).toFixed(3)})`);
       bloom.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = bloom;
-      ctx.beginPath(); ctx.arc(x, y, r * 7, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+      out.fillStyle = bloom;
+      out.beginPath(); out.arc(x, y, r * 7, 0, Math.PI * 2); out.fill();
+      // 紧贴核的锐利亮晕：让针尖从熔池余晖里 punch through，成为画面最亮最锐的点
+      const tight = out.createRadialGradient(x, y, 0, x, y, r * 3.2);
+      tight.addColorStop(0, `rgba(255,255,255,${(0.6 * alpha).toFixed(3)})`);
+      tight.addColorStop(1, "rgba(255,255,255,0)");
+      out.fillStyle = tight;
+      out.beginPath(); out.arc(x, y, r * 3.2, 0, Math.PI * 2); out.fill();
+      out.fillStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
+      out.beginPath(); out.arc(x, y, r, 0, Math.PI * 2); out.fill();
+      out.restore();
     }
 
-    /** 熄刀 anamorphic 横条：只在 kill 窗口出现一次 */
-    function drawStreak(k: number) {
+    /** 熄刀 anamorphic 横条：只在 kill 窗口出现一次（锐利 fx 层） */
+    function drawStreak(out: CanvasRenderingContext2D, k: number) {
       if (k <= 0 || !line) return;
       const y = line.baseY - line.size * 0.32;
       const half = W * 0.9;
       const cx = W / 2;
-      ctx.save();
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      ctx.globalCompositeOperation = "lighter";
-      const g = ctx.createLinearGradient(cx - half, y, cx + half, y);
+      out.save();
+      out.setTransform(DPR, 0, 0, DPR, 0, 0);
+      out.globalCompositeOperation = "lighter";
+      const g = out.createLinearGradient(cx - half, y, cx + half, y);
       const a = 0.42 * k * k;
       g.addColorStop(0, "rgba(214,228,255,0)");
       g.addColorStop(0.5, `rgba(226,236,255,${a.toFixed(3)})`);
       g.addColorStop(1, "rgba(214,228,255,0)");
-      ctx.fillStyle = g;
+      out.fillStyle = g;
       const h = 2.5;
-      ctx.fillRect(cx - half, y - h / 2, half * 2, h);
-      ctx.restore();
+      out.fillRect(cx - half, y - h / 2, half * 2, h);
+      out.restore();
     }
 
     // ===== v8：火花（画在 fx 层，不受场景失焦影响）=====
@@ -786,38 +778,10 @@ export default function LaserCarvingCover() {
         fxCtx.fill();
         fxCtx.globalCompositeOperation = "source-over";
       }
-      drawCinema();
-    }
-
-    /** v9 荧幕感工艺：letterbox 上下黑边（settled 首 0.8s 退出）+ 胶片颗粒（暗期强、显影渐隐归零） */
-    function drawCinema() {
-      const barH = W >= 640 ? clamp(Math.min(H * 0.09, W * 0.14), 44, 110) : 0;
-      if (barH > 0) {
-        let kb = 0;
-        if (phase === "engrave" || phase === "cool" || phase === "reveal") kb = 1;
-        else if (phase === "settled" && phaseT < 0.8) {
-          const q = phaseT / 0.8;
-          const iq = 1 - q;
-          kb = 1 - iq * iq * iq * iq * iq; // quint-out：张开慢于合拢，揭示心理
-        }
-        if (kb > 0.002) {
-          const h = barH * kb;
-          fxCtx.fillStyle = "#000";
-          fxCtx.fillRect(0, 0, W, h);
-          fxCtx.fillRect(0, H - h, W, h);
-        }
-      }
-      let ga = 0;
-      if (phase === "engrave") ga = 1;
-      else if (phase === "cool") ga = 0.7;
-      else if (phase === "reveal") ga = 1 - clamp(phaseT / T_REVEAL, 0, 1);
-      if (ga > 0.01 && grainC) {
-        fxCtx.globalAlpha = 0.085 * ga;
-        for (let gx = grainOx; gx < W; gx += 96) {
-          for (let gy = grainOy; gy < H; gy += 96) fxCtx.drawImage(grainC, gx, gy);
-        }
-        fxCtx.globalAlpha = 1;
-      }
+      // 锐利光事件：横条 → 光束 → 焦点（焦点压在最上，针尖不被光束盖住）
+      drawStreak(fxCtx, streakK);
+      drawBeam(fxCtx, headX, headY, beamAlpha);
+      drawHead(fxCtx, headX, headY, headAlpha);
     }
 
     /** 热浪：冷却中的刻痕与熔池渲进窄带，再按行加水平正弦位移贴回（高斯加权，随温度衰减） */
@@ -906,10 +870,8 @@ export default function LaserCarvingCover() {
       ctx.restore();
     }
 
-    /** 收尾重音：横条 bookend + 一次整体光呼吸 + 一道掠面高光，播完即止 */
+    /** 收尾重音：一次整体光呼吸 + 一道掠面高光，播完即止（横条 bookend 由 fx 层 streakK 驱动） */
     function drawClimax(t: number) {
-      if (t < T_KILL) drawStreak(1 - t / T_KILL);
-
       const pp = clamp(t / 0.3, 0, 1);
       if (pp < 1) {
         const k = Math.sin(pp * Math.PI);
@@ -1363,6 +1325,7 @@ export default function LaserCarvingCover() {
       canvas.classList.add("is-focusing");
       if (stage) stage.style.transform = "";
       sparks = [];
+      headAlpha = 0; beamAlpha = 0; streakK = 0;
       if (fxCanvas) {
         fxCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
         fxCtx.clearRect(0, 0, W, H);
@@ -1454,6 +1417,7 @@ export default function LaserCarvingCover() {
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       ctx.clearRect(0, 0, W, H);
       if (!line) return;
+      headAlpha = 0; beamAlpha = 0; streakK = 0;
 
       if (phase === "engrave") {
         const p = easeEngrave(clamp(phaseT / T_ENGRAVE, 0, 1));
@@ -1470,23 +1434,26 @@ export default function LaserCarvingCover() {
         }
         headX = nx;
         headY = ny;
-        drawBeam(headX, headY, pos.active ? 1 : 0.4);
-        drawHead(headX, headY, pos.active ? 1 : 0.35);
+        beamAlpha = pos.active ? 1 : 0.4;
+        headAlpha = pos.active ? 1 : 0.35;
       } else if (phase === "cool") {
         const coolP = clamp(phaseT / (T_KILL + T_COOL), 0, 1);
         const dieK = clamp(1 - phaseT / 0.12, 0, 1);
         drawGhost();
         drawHotLayers(line.strokeLen, (1 - coolP) * (1 - coolP), 0.85 * (1 - coolP));
-        drawBeam(headX, headY, dieK);
-        drawHead(headX, headY, dieK);
-        drawStreak(clamp(1 - phaseT / T_KILL, 0, 1));
+        beamAlpha = dieK;
+        headAlpha = dieK;
+        streakK = clamp(1 - phaseT / T_KILL, 0, 1);
       } else if (phase === "reveal") {
         const prog = easeReveal(clamp(phaseT / T_REVEAL, 0, 1));
         drawReveal(prog);
         drawCooled(1 - clamp(prog / 0.35, 0, 1));
       } else if (phase === "settled") {
         drawSettled(specAwake);
-        if (phaseT < T_CLIMAX) drawClimax(phaseT);
+        if (phaseT < T_CLIMAX) {
+          streakK = phaseT < T_KILL ? 1 - phaseT / T_KILL : 0;
+          drawClimax(phaseT);
+        }
         if (idleSheenT >= 0) {
           const p = clamp(idleSheenT / IDLE_SHEEN_LEN, 0, 1);
           drawSheen(p, 0.13 * Math.sin(p * Math.PI));
@@ -1610,13 +1577,6 @@ export default function LaserCarvingCover() {
           }
         }
       }
-      // 胶片颗粒换步（~11fps 跳变，胶片感而非电视雪花）
-      grainClock += dt;
-      if (grainClock >= 0.09) {
-        grainClock = 0;
-        grainOx = -Math.floor(Math.random() * 96);
-        grainOy = -Math.floor(Math.random() * 96);
-      }
       advance(dt);
       applyCamera();
       // live 静息期隔帧绘制（~30fps 降耗）；任何事件帧恢复满帧
@@ -1731,7 +1691,6 @@ export default function LaserCarvingCover() {
         clearTimeout(timeout);
       }
     }
-    buildGrain();
     loadFont();
 
     const onPointerMove = (e: PointerEvent) => {
@@ -1908,7 +1867,7 @@ export default function LaserCarvingCover() {
     navigatingRef.current = true;
     catApiRef.current.farewell?.();
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    canvasRef.current?.parentElement?.classList.add("is-exiting");
+    containerRef.current?.classList.add("is-exiting");
     tintRef.current?.classList.add("is-active");
     if (reduce) {
       setTimeout(() => router.push("/modules"), 460);
