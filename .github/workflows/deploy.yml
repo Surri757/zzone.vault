@@ -35,7 +35,7 @@ jobs:
         run: npm run typecheck
 
       - name: Build Cloudflare Worker
-        run: npx opennextjs-cloudflare build
+        run: npx opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion
 
       - name: Deploy Cloudflare Worker
         run: npx wrangler deploy
